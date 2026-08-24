@@ -1,6 +1,5 @@
 package cz.loplex.xembed.core.x11;
 
-import com.sun.jna.platform.unix.X11.Window;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,7 +42,7 @@ class WindowFinderTest {
         frame.setVisible(true);
 
         long pid = ProcessHandle.current().pid();
-        List<Window> found = pollUntilNonEmptyOrTimeout(pid);
+        List<Long> found = pollUntilNonEmptyOrTimeout(pid);
 
         assertFalse(found.isEmpty(), "window manager never published this process's window in _NET_CLIENT_LIST");
     }
@@ -53,9 +52,9 @@ class WindowFinderTest {
      * asynchronously after the window is mapped, so a single immediate
      * lookup is racy.
      */
-    private List<Window> pollUntilNonEmptyOrTimeout(long pid) throws InterruptedException {
+    private List<Long> pollUntilNonEmptyOrTimeout(long pid) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        List<Window> found;
+        List<Long> found;
         do {
             found = WindowFinder.findTopLevelWindowsByPid(display, pid);
             if (!found.isEmpty()) {
