@@ -1,0 +1,68 @@
+package cz.loplex.xembed.core.x11;
+
+import com.sun.jna.platform.unix.X11.Window;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+
+import java.awt.Frame;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+
+/**
+ * Exercises {@link WindowFinder} against a real window manager: opens an
+ * actual AWT window and looks it up by this JVM's own PID, the same way a
+ * host or client would locate its own top-level window.
+ */
+@EnabledIfEnvironmentVariable(named = "DISPLAY", matches = ".+")
+class WindowFinderTest {
+
+    private Frame frame;
+    private X11Display display;
+
+    @BeforeEach
+    void openDisplay() {
+        display = X11Display.open(null);
+    }
+
+    @AfterEach
+    void cleanup() {
+        if (frame != null) {
+            frame.dispose();
+        }
+        display.close();
+    }
+
+    @Test
+    void findsOwnTopLevelWindowByPid() throws InterruptedException {
+        frame = new Frame("xembed-core WindowFinderTest");
+        frame.setSize(50, 50);
+        frame.setVisible(true);
+
+        long pid = ProcessHandle.current().pid();
+        List<Window> found = pollUntilNonEmptyOrTimeout(pid);
+
+        assertFalse(found.isEmpty(), "window manager never published this process's window in _NET_CLIENT_LIST");
+    }
+
+    /**
+     * The window manager reparents and publishes {@code _NET_CLIENT_LIST}
+     * asynchronously after the window is mapped, so a single immediate
+     * lookup is racy.
+     */
+    private List<Window> pollUntilNonEmptyOrTimeout(long pid) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        List<Window> found;
+        do {
+            found = WindowFinder.findTopLevelWindowsByPid(display, pid);
+            if (!found.isEmpty()) {
+                return found;
+            }
+            Thread.sleep(100);
+        } while (System.nanoTime() < deadline);
+        return found;
+    }
+}
