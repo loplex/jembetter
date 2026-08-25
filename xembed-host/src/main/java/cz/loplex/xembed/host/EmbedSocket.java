@@ -260,7 +260,21 @@ public final class EmbedSocket implements AutoCloseable {
     }
 
     private void embedFromHandshake(SocketChannel accepted) {
-        long clientPid = PidHandshake.receive(accepted);
+        embed(PidHandshake.receive(accepted));
+    }
+
+    /**
+     * Embeds a client process whose pid is already known — e.g. one this
+     * host spawned itself — without any Unix domain socket rendezvous.
+     * {@code clientPid}'s single top-level window (see {@link
+     * #expectClientWindowClass} if it owns more than one) must already carry
+     * {@code _XEMBED_INFO}, the same precondition {@link #listen}'s
+     * socket-based accept loop relies on (see {@code
+     * xembed-client.EmbedClient#announce}, which sets that up without
+     * dialing a host socket either).
+     */
+    public void embed(long clientPid) {
+        requireOpen();
         long clientWindowId = resolveClientWindow(clientPid);
         WindowRelease.release(display, clientWindowId);
         Reparenting.reparent(display, clientWindowId, windowId, 0, 0);
