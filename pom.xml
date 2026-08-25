@@ -23,6 +23,7 @@
   <modules>
     <module>xembed-core-common</module>
     <module>xembed-core</module>
+    <module>xembed-core-win32</module>
     <module>xembed-host</module>
     <module>xembed-client</module>
     <module>xembed-demo</module>
