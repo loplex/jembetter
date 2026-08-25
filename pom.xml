@@ -12,6 +12,14 @@
   <name>xembed</name>
   <description>Reparenting of one X11 Java application's window into another via the XEmbed protocol.</description>
 
+  <licenses>
+    <license>
+      <name>Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
   <modules>
     <module>xembed-core</module>
     <module>xembed-host</module>
