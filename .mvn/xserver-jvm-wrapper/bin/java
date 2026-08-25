@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# maven-surefire-plugin's <jvm> executable (see root pom.xml): a plain shell
+# process can set DISPLAY for itself before running `java` with it, something
+# no code running *inside* a JVM can do for its own process - Java caches
+# System.getenv() once at startup, and maven-surefire-plugin's fork (via
+# plexus/maven-shared-utils Commandline) always builds the forked JVM's
+# environment from that cached snapshot rather than the live OS environment,
+# so no in-build trick (a Maven property, even a real libc setenv() call) can
+# hand a JVM launched from within Maven's own JVM a DISPLAY it didn't already
+# have at Maven's own startup. Replacing what surefire launches, instead of
+# reaching into what it launches with, sidesteps that entirely.
+#
+# The test suite is meant to run against a disposable X server, not
+# whatever the caller's own DISPLAY happens to be (tests reparent/focus/move
+# real windows - not something to unleash on a live desktop session). So
+# unless X_SERVER is explicitly set to "" (opting out - same
+# @EnabledIfEnvironmentVariable-driven skip on the X11-touching tests as
+# before this script existed, DISPLAY passed through untouched), this starts
+# its own private Xvfb + openbox pair for this one JVM fork - see README.md's
+# "Running tests" section - and tears both back down once that JVM exits, so
+# nothing outlives the build. openbox is not optional: WindowFinder (used by
+# both EmbedSocket and EmbedClient to locate a window by pid, and exercised
+# directly by WindowFinderTest) matches _NET_WM_PID against the *window
+# manager's* _NET_CLIENT_LIST - a bare X server never publishes that, only a
+# real EWMH window manager does. It's a hard failure (not a silent skip) if
+# X_SERVER names a server that isn't actually on PATH, or openbox isn't:
+# silently falling through would leave the DISPLAY-gated tests silently
+# skipped instead of run, which looks like a green build.
+
+set -euo pipefail
+
+java_bin="${ORIG_JAVA_HOME-}/bin/java"
+
+if ! [[ -x "$java_bin" ]]; then
+  echo "xserver-jvm-wrapper/bin/java: ORIG_JAVA_HOME (${ORIG_JAVA_HOME-<unset>}) doesn't look like a JDK install, no bin/java there" >&2
+  exit 1
+fi
+
+xserver_pid=""
+wm_pid=""
+cleanup() {
+  [[ -n "$wm_pid" ]] && kill "$wm_pid" 2>/dev/null || true
+  [[ -n "$xserver_pid" ]] && kill "$xserver_pid" 2>/dev/null || true
+  wait 2>/dev/null || true
+}
+trap cleanup EXIT
+
+if [[ -n "${X_SERVER:-}" ]]; then
+
+  for comm in "${X_SERVER}" openbox; do
+    if ! command -v "$comm" >/dev/null 2>&1; then
+      echo "xserver-jvm-wrapper/bin/java: X_SERVER=${X_SERVER} but '$comm' isn't on PATH (install it, or set X_SERVER='' to skip the disposable X server and run headless)" >&2
+      exit 1
+    fi
+  done
+
+  # -displayfd has the X server itself pick a free display number (and
+  # claim its lock/socket) atomically, instead of us scanning
+  # /tmp/.X##-lock ourselves and racing another instance of this script.
+  displayfd_pipe=$(mktemp -u)
+  mkfifo -m 600 "$displayfd_pipe"
+  case "${X_SERVER}" in
+    Xephyr)
+      "${X_SERVER}" -displayfd 9 -screen 1280x1024 9>"$displayfd_pipe" >/dev/null 2>&1 &
+      ;;
+    *)
+      "${X_SERVER}" -displayfd 9 -screen 0 1280x1024x24 9>"$displayfd_pipe" >/dev/null 2>&1 &
+      ;;
+  esac
+  xserver_pid=$!
+  display_num=$(timeout 5 cat "$displayfd_pipe" || true)
+  rm -f "$displayfd_pipe"
+
+  if [[ "$display_num" =~ ^[0-9]+$ ]] && kill -0 "$xserver_pid" 2>/dev/null; then
+    chosen_display=":${display_num}"
+
+    up=false
+    for _ in $(seq 1 50); do
+      DISPLAY="$chosen_display" xdpyinfo >/dev/null 2>&1 && { up=true; break; }
+      sleep 0.1
+    done
+
+    if [[ "$up" == true ]]; then
+      DISPLAY="$chosen_display" openbox --sm-disable >/dev/null 2>&1 &
+      wm_pid=$!
+      sleep 0.5
+      DISPLAY="$chosen_display"
+      export DISPLAY
+    else
+      kill "$xserver_pid" 2>/dev/null || true
+      xserver_pid=""
+      echo "xserver-jvm-wrapper/bin/java: ${X_SERVER} on $chosen_display never came up, leaving DISPLAY unset" >&2
+    fi
+  else
+    kill "$xserver_pid" 2>/dev/null || true
+    xserver_pid=""
+    echo "xserver-jvm-wrapper/bin/java: ${X_SERVER} -displayfd never reported a display number, leaving DISPLAY unset" >&2
+  fi
+
+fi
+
+"$java_bin" "$@"
