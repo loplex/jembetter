@@ -211,6 +211,51 @@ class EmbedSocketTest {
         }
     }
 
+    /**
+     * Regression coverage for the known-handle path added alongside {@link
+     * EmbedSocket#embedOpaque}: a host that already knows a client's pid
+     * directly (e.g. one it spawned itself) can embed it via {@link
+     * EmbedSocket#embed(long)} with no {@code listen()}/socket rendezvous at
+     * all, as long as the client has published {@code _XEMBED_INFO} itself —
+     * the same precondition a socket-handshaking client meets via {@code
+     * xembed-client.EmbedClient#announce}.
+     */
+    @Test
+    void embedsAKnownClientPidWithoutASocketHandshake() throws IOException, InterruptedException {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketTest owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+        Thread.sleep(200);
+
+        socket = new EmbedSocket(owner);
+        socket.open(canvas);
+
+        Process clientProcess = startFakeClientProcess();
+        try {
+            long clientPid = clientProcess.pid();
+            long clientWindowId;
+            try (X11Display display = X11Display.open(null)) {
+                clientWindowId = waitForOwnWindow(display, clientPid);
+                XEmbedInfoProperty.write(display.raw(), clientWindowId,
+                        new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
+            }
+
+            socket.embed(clientPid);
+
+            long canvasWindowId = CanvasNativeHandle.extract(canvas);
+            try (X11Display display = X11Display.open(null)) {
+                assertTrue(isDescendantOf(display, clientWindowId, canvasWindowId),
+                        "known-handle embed did not reparent the client under the host canvas");
+            }
+        } finally {
+            clientProcess.destroy();
+            clientProcess.waitFor(5, TimeUnit.SECONDS);
+        }
+    }
+
     private static Process startFakeClientProcess() throws IOException {
         String javaBin = System.getProperty("java.home") + "/bin/java";
         ProcessBuilder processBuilder = new ProcessBuilder(javaBin,
