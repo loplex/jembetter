@@ -10,6 +10,7 @@ import cz.loplex.xembed.core.x11.WindowDeathWatcher;
 import cz.loplex.xembed.core.x11.WindowFinder;
 import cz.loplex.xembed.core.x11.WindowGeometry;
 import cz.loplex.xembed.core.x11.WindowRelease;
+import cz.loplex.xembed.core.x11.WindowTree;
 import cz.loplex.xembed.core.x11.X11Display;
 import cz.loplex.xembed.core.xembed.XEmbedFocus;
 import cz.loplex.xembed.core.xembed.XEmbedInboundWatcher;
@@ -287,6 +288,56 @@ public final class EmbedSocket implements AutoCloseable {
         sendActivated(owner.isFocused());
         deathWatcher.watch(clientWindowId, this::handleClientDetached);
         inbound.watchEmbeddedInfo(clientWindowId);
+    }
+
+    /**
+     * Embeds a client window whose id is already known, without relying on
+     * the client's own cooperation at all: unlike {@link #embed(long)}, this
+     * writes {@code _XEMBED_INFO} on {@code clientWindowId} itself (rather
+     * than requiring the client to have published it) and, since a
+     * toolkit-opaque client (e.g. one whose native connection this process
+     * can't read events on) can't be trusted to react to {@code
+     * EMBEDDED_NOTIFY} or anything else sent its way, confirms the reparent
+     * actually took effect by polling {@link WindowTree#parentOf} up to
+     * {@code maxAttempts} times, {@code pollInterval} apart, instead of
+     * trusting it synchronously. Throws {@link IllegalStateException} if the
+     * reparent is never confirmed within that budget.
+     *
+     * <p>{@code EMBEDDED_NOTIFY} is still sent on a best-effort basis
+     * afterward, in case the client's toolkit does read XEmbed
+     * ClientMessages despite not being relied on to.
+     */
+    public void embedOpaque(long clientWindowId, Duration pollInterval, int maxAttempts) {
+        requireOpen();
+        XEmbedInfoProperty.write(display.raw(), clientWindowId,
+                new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
+        WindowRelease.release(display, clientWindowId);
+        Reparenting.reparent(display, clientWindowId, windowId, 0, 0);
+        embeddedWindowId = clientWindowId;
+        followSizeIntoEmbeddedWindow();
+        settleInitialSize();
+        waitForReparentConfirmed(clientWindowId, pollInterval, maxAttempts);
+        XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
+                XEmbedInfo.PROTOCOL_VERSION);
+        InputFocus.set(display, clientWindowId);
+        sendActivated(owner.isFocused());
+        deathWatcher.watch(clientWindowId, this::handleClientDetached);
+    }
+
+    private void waitForReparentConfirmed(long clientWindowId, Duration pollInterval, int maxAttempts) {
+        for (int attempt = 0; attempt < maxAttempts; attempt++) {
+            if (WindowTree.parentOf(display, clientWindowId) == windowId) {
+                return;
+            }
+            try {
+                Thread.sleep(pollInterval.toMillis());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
+        }
+        throw new IllegalStateException(
+                "Client window " + clientWindowId + " was never confirmed reparented into this socket");
     }
 
     /** Blocks the accept loop until the currently embedded client detaches, or {@link #close()} is called. */
