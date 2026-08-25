@@ -20,6 +20,9 @@ import java.awt.BorderLayout;
  * explicit {@code open(x, y, width, height)}/{@code setBounds(...)} call
  * instead of AWT layout — a real host would drive those calls from a
  * placeholder Swing component's own resize/move listener.
+ *
+ * <p>Kill this host process (including {@code kill -9}) instead to see
+ * {@link ClientDemo}'s symmetrical host-death detection fire on its side.
  */
 public final class HostDemo {
 

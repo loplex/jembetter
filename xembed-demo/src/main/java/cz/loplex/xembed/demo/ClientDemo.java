@@ -30,8 +30,11 @@ public final class ClientDemo {
         System.out.println("Client PID: " + ProcessHandle.current().pid());
         System.out.println("Offering this window to the host...");
 
-        EmbedClient.offer(DemoPaths.socketPath());
+        EmbedClient client = new EmbedClient();
+        client.onHostDetached(() -> System.out.println("Host detached (process exited or crashed)."));
+        client.offer(DemoPaths.socketPath());
 
         System.out.println("Offered. If the host accepted, this window should now be reparented.");
+        System.out.println("Now watching for the host to exit or crash...");
     }
 }

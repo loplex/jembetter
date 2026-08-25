@@ -15,6 +15,18 @@ public interface X11Ext extends X11 {
 
     int XReparentWindow(Display display, Window w, Window parent, int x, int y);
 
+    /**
+     * Adds {@code w} (which must belong to a different client) to this
+     * connection's save-set, so that if this connection closes while
+     * {@code w} is a descendant of a window this connection created, the X
+     * server reparents {@code w} back to its closest surviving ancestor and
+     * maps it instead of destroying it along with the rest of the subtree.
+     * This is what makes host-death detection possible on the embedded
+     * side: without it, an embedded window would simply be destroyed
+     * alongside the embedder window when the host's connection goes away.
+     */
+    int XAddToSaveSet(Display display, Window w);
+
     int XSetInputFocus(Display display, Window focus, int revertTo, NativeLong time);
 
     int XGetInputFocus(Display display, WindowByReference focusReturn, IntByReference revertToReturn);
