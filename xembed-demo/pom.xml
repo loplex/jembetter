@@ -28,4 +28,55 @@
       <version>${project.version}</version>
     </dependency>
   </dependencies>
+
+  <build>
+    <plugins>
+      <!-- maven-dependency-plugin: build-classpath regenerates target/cp.txt on every build, so
+           the plain `java -cp` invocation in README.md never needs its own manual
+           `mvn dependency:build-classpath` step first. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.8.1</version>
+        <executions>
+          <execution>
+            <id>build-classpath</id>
+            <phase>prepare-package</phase>
+            <goals>
+              <goal>build-classpath</goal>
+            </goals>
+            <configuration>
+              <outputFile>${project.build.directory}/cp.txt</outputFile>
+              <includeScope>runtime</includeScope>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- exec-maven-plugin: run either demo straight from Maven, e.g.
+           `mvn -pl xembed-demo exec:java@host` / `exec:java@client` - see README.md's "Try
+           the demo" section. Neither execution is bound to a lifecycle phase, so
+           `mvn package`/`install` never launches them on their own. -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>host</id>
+            <configuration>
+              <mainClass>cz.loplex.xembed.demo.HostDemo</mainClass>
+              <classpathScope>runtime</classpathScope>
+            </configuration>
+          </execution>
+          <execution>
+            <id>client</id>
+            <configuration>
+              <mainClass>cz.loplex.xembed.demo.ClientDemo</mainClass>
+              <classpathScope>runtime</classpathScope>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>
