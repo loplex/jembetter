@@ -62,6 +62,32 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
           <version>3.5.2</version>
+          <configuration>
+            <!-- Launch the forked test JVM through a wrapper script instead of `java`
+                 directly, so DISPLAY can be set (for tests gated on it - see README.md's
+                 "Running tests" section) *before* that JVM starts. It has to happen that
+                 early: a JVM decides whether it's headless from the DISPLAY it sees at
+                 startup, and separately, once Maven's own JVM is running, nothing inside
+                 it can hand the fork a DISPLAY it didn't already have - confirmed while
+                 building this, both via a Maven property (interpolated once when the
+                 reactor's build plan is put together, long before any phase/goal that
+                 could produce a fresh value runs) and via a real libc setenv() call on
+                 Maven's own process (maven-surefire-plugin's fork, via
+                 plexus/maven-shared-utils Commandline, always builds the child's
+                 environment from Java's System.getenv() snapshot - itself frozen at JVM
+                 startup - rather than the live OS environment, so neither route ever
+                 reaches the child). See .mvn/xserver-jvm-wrapper/bin/java for what the
+                 wrapper actually does - it has to live at exactly
+                 "<something>/bin/java<something>" (surefire's SystemUtils.endsWithJavaPath
+                 requires a filename starting with "java" inside a directory literally named
+                 "bin"), mimicking a real JDK install's own bin/java layout. -->
+            <jvm>${maven.multiModuleProjectDirectory}/.mvn/xserver-jvm-wrapper/bin/java</jvm>
+            <environmentVariables>
+              <ORIG_JAVA_HOME>${java.home}</ORIG_JAVA_HOME>
+              <X_SERVER>Xvfb</X_SERVER>
+              <!--<X_SERVER>Xephyr</X_SERVER>-->
+            </environmentVariables>
+          </configuration>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
