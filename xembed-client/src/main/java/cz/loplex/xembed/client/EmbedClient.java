@@ -54,9 +54,19 @@ public final class EmbedClient implements AutoCloseable {
      * afterward.
      */
     public void offer(Path hostSocketPath) {
+        offer(hostSocketPath, null);
+    }
+
+    /**
+     * Same as {@link #offer(Path)}, but for a process with more than one
+     * top-level window: {@code wmClass} disambiguates which one gets
+     * offered, by matching {@code WM_CLASS}'s class component (the same
+     * string {@code xprop WM_CLASS} prints as the second, quoted value).
+     */
+    public void offer(Path hostSocketPath, String wmClass) {
         try {
             long pid = ProcessHandle.current().pid();
-            windowId = waitForOwnWindow(display, pid);
+            windowId = waitForOwnWindow(display, pid, wmClass);
 
             XEmbedInfoProperty.write(display.raw(), windowId,
                     new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
@@ -79,13 +89,28 @@ public final class EmbedClient implements AutoCloseable {
         }
     }
 
-    private static long waitForOwnWindow(X11Display display, long pid) {
+    private static long waitForOwnWindow(X11Display display, long pid, String wmClass) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         List<Long> ownWindows;
         do {
             ownWindows = WindowFinder.findTopLevelWindowsByPid(display, pid);
-            if (!ownWindows.isEmpty()) {
+            if (ownWindows.size() == 1) {
                 return ownWindows.get(0);
+            }
+            if (ownWindows.size() > 1) {
+                if (wmClass == null) {
+                    throw new IllegalStateException("This process has " + ownWindows.size()
+                            + " top-level windows; call offer(path, wmClass) to disambiguate");
+                }
+                List<Long> matches = ownWindows.stream()
+                        .filter(id -> WindowFinder.readWmClass(display, id).map(wmClass::equals).orElse(false))
+                        .toList();
+                if (matches.size() != 1) {
+                    throw new IllegalStateException("This process has " + ownWindows.size()
+                            + " top-level windows and " + matches.size() + " match WM_CLASS \"" + wmClass
+                            + "\" (need exactly 1)");
+                }
+                return matches.get(0);
             }
             sleep();
         } while (System.nanoTime() < deadline);

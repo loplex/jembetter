@@ -71,6 +71,7 @@ public final class EmbedSocket implements AutoCloseable {
     };
     private volatile Runnable onFocusPrev = () -> {
     };
+    private volatile String expectedClientWmClass;
 
     public EmbedSocket(Frame owner) {
         this.owner = owner;
@@ -253,6 +254,19 @@ public final class EmbedSocket implements AutoCloseable {
         onFocusPrev = callback;
     }
 
+    /**
+     * Disambiguates which of a client process's top-level windows gets
+     * embedded, by matching {@code WM_CLASS}'s class component (the same
+     * string {@code xprop WM_CLASS} prints as the second, quoted value).
+     * Only needed when a connecting client can own more than one top-level
+     * window at once; a single-window client resolves unambiguously without
+     * this. Applies to every client accepted from here on, including
+     * re-embeds after a detach.
+     */
+    public void expectClientWindowClass(String wmClass) {
+        expectedClientWmClass = wmClass;
+    }
+
     /** Tells the embedded client it's shadowed by (or no longer shadowed by) a modal dialog. */
     public void setModal(boolean modal) {
         long id = embeddedWindowId;
@@ -312,11 +326,28 @@ public final class EmbedSocket implements AutoCloseable {
     }
 
     private long resolveClientWindow(long clientPid) {
-        List<Long> found = pollUntil(
+        List<Long> candidates = pollUntil(
                 () -> WindowFinder.findTopLevelWindowsByPid(display, clientPid),
                 list -> !list.isEmpty(),
                 "Client process " + clientPid + " never published a top-level window");
-        return found.get(0);
+        if (candidates.size() == 1) {
+            return candidates.get(0);
+        }
+
+        String wmClass = expectedClientWmClass;
+        if (wmClass == null) {
+            throw new IllegalStateException("Client process " + clientPid + " has " + candidates.size()
+                    + " top-level windows; call expectClientWindowClass(...) to disambiguate");
+        }
+        List<Long> matches = candidates.stream()
+                .filter(id -> WindowFinder.readWmClass(display, id).map(wmClass::equals).orElse(false))
+                .toList();
+        if (matches.size() != 1) {
+            throw new IllegalStateException("Client process " + clientPid + " has " + candidates.size()
+                    + " top-level windows and " + matches.size() + " match WM_CLASS \"" + wmClass
+                    + "\" (need exactly 1)");
+        }
+        return matches.get(0);
     }
 
     private void requireOpen() {

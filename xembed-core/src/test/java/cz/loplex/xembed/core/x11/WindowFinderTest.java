@@ -9,7 +9,11 @@ import java.awt.Frame;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Exercises {@link WindowFinder} against a real window manager: opens an
@@ -45,6 +49,27 @@ class WindowFinderTest {
         List<Long> found = pollUntilNonEmptyOrTimeout(pid);
 
         assertFalse(found.isEmpty(), "window manager never published this process's window in _NET_CLIENT_LIST");
+    }
+
+    @Test
+    void findsWindowByPidAndWmClass() throws InterruptedException {
+        frame = new Frame("xembed-core WindowFinderTest");
+        frame.setSize(50, 50);
+        frame.setVisible(true);
+
+        long pid = ProcessHandle.current().pid();
+        List<Long> found = pollUntilNonEmptyOrTimeout(pid);
+        assertFalse(found.isEmpty(), "window manager never published this process's window in _NET_CLIENT_LIST");
+        long windowId = found.get(0);
+
+        Optional<String> wmClass = WindowFinder.readWmClass(display, windowId);
+        assertTrue(wmClass.isPresent(), "AWT window has no WM_CLASS property");
+
+        List<Long> matched = WindowFinder.findTopLevelWindowsByPidAndClass(display, pid, wmClass.get());
+        assertEquals(List.of(windowId), matched);
+
+        List<Long> unmatched = WindowFinder.findTopLevelWindowsByPidAndClass(display, pid, "no-such-class");
+        assertTrue(unmatched.isEmpty());
     }
 
     /**

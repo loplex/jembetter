@@ -1,11 +1,13 @@
 package cz.loplex.xembed.core.x11;
 
+import com.sun.jna.platform.unix.X11;
 import com.sun.jna.platform.unix.X11.Atom;
 import com.sun.jna.platform.unix.X11.Display;
 import com.sun.jna.platform.unix.X11.Window;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Finds a process's own top-level window(s) by matching {@code _NET_WM_PID}
@@ -40,5 +42,31 @@ public final class WindowFinder {
             }
         }
         return matches;
+    }
+
+    /**
+     * Narrows {@link #findTopLevelWindowsByPid} to those whose {@code
+     * WM_CLASS} class component (the same string {@code xprop WM_CLASS}
+     * prints as the second, quoted value) equals {@code wmClass} — for
+     * disambiguating a process that owns more than one top-level window.
+     */
+    public static List<Long> findTopLevelWindowsByPidAndClass(X11Display display, long pid, String wmClass) {
+        List<Long> matches = new ArrayList<>();
+        for (long id : findTopLevelWindowsByPid(display, pid)) {
+            if (readWmClass(display, id).map(wmClass::equals).orElse(false)) {
+                matches.add(id);
+            }
+        }
+        return matches;
+    }
+
+    /**
+     * Reads a window's {@code WM_CLASS} class component (the second of the
+     * two NUL-separated strings the property holds; the first is the
+     * instance name, which this deliberately ignores).
+     */
+    public static Optional<String> readWmClass(X11Display display, long windowId) {
+        List<String> parts = X11Properties.readStringList8(display.raw(), new Window(windowId), X11.XA_WM_CLASS);
+        return parts.size() < 2 ? Optional.empty() : Optional.of(parts.get(1));
     }
 }
