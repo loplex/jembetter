@@ -441,7 +441,7 @@ public final class EmbedSocket implements AutoCloseable {
 
     private void handleInboundMessage(XEmbedMessage message, long detail) {
         switch (message) {
-            case REQUEST_FOCUS -> grantFocus();
+            case REQUEST_FOCUS -> focusClient();
             case FOCUS_NEXT -> onFocusNext.run();
             case FOCUS_PREV -> onFocusPrev.run();
             default -> {
@@ -452,7 +452,15 @@ public final class EmbedSocket implements AutoCloseable {
         }
     }
 
-    private void grantFocus() {
+    /**
+     * Gives the currently embedded client input focus, the same way it
+     * would be granted in response to the client's own {@code
+     * XEMBED_REQUEST_FOCUS} — for a host that wants to push focus into the
+     * embedded window on its own initiative (e.g. the user clicked the
+     * canvas placeholder) instead of waiting for the client to ask for it.
+     * No-op if nothing is currently embedded.
+     */
+    public void focusClient() {
         long id = embeddedWindowId;
         if (id < 0) {
             return;
