@@ -15,8 +15,8 @@ import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 import java.util.function.LongConsumer;
 
 /**
@@ -38,6 +38,7 @@ public final class EmbedClient implements AutoCloseable {
     };
     private volatile LongConsumer onEmbedded = embedderId -> {
     };
+    private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
 
     /**
      * Registers a callback invoked when this window is reparented back to
@@ -101,6 +102,15 @@ public final class EmbedClient implements AutoCloseable {
     }
 
     /**
+     * Overrides how long {@link #offer} waits for this process's own
+     * top-level window to become visible to the window manager before
+     * giving up. Defaults to 5 seconds.
+     */
+    public void setWindowLookupTimeout(Duration timeout) {
+        windowLookupTimeout = timeout;
+    }
+
+    /**
      * Blocks until this process's own top-level window is visible to the
      * window manager, marks it XEmbed-aware, then hands its process id to
      * the host at {@code hostSocketPath} so the host can look the window up
@@ -122,7 +132,7 @@ public final class EmbedClient implements AutoCloseable {
     public void offer(Path hostSocketPath, String wmClass) {
         try {
             long pid = ProcessHandle.current().pid();
-            windowId = waitForOwnWindow(display, pid, wmClass);
+            windowId = waitForOwnWindow(pid, wmClass);
 
             XEmbedInfoProperty.write(display.raw(), windowId,
                     new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
@@ -159,8 +169,8 @@ public final class EmbedClient implements AutoCloseable {
         // right after a release — not an embed, ignore.
     }
 
-    private static long waitForOwnWindow(X11Display display, long pid, String wmClass) {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    private long waitForOwnWindow(long pid, String wmClass) {
+        long deadline = System.nanoTime() + windowLookupTimeout.toNanos();
         List<Long> ownWindows;
         do {
             ownWindows = WindowFinder.findTopLevelWindowsByPid(display, pid);

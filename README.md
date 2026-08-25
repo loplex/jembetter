@@ -106,6 +106,11 @@ both `EmbedSocket` and `EmbedClient` need a `WM_CLASS` (the same value
 `xprop WM_CLASS` prints) to disambiguate which one — see
 `EmbedSocket#expectClientWindowClass` and `EmbedClient#offer(Path, String)`.
 
+Both sides wait up to 5 seconds by default for a window to appear before
+giving up; override that with `EmbedSocket#setWindowLookupTimeout`/
+`EmbedClient#setWindowLookupTimeout` if that's too tight (or too loose) for
+your setup.
+
 ## Try the demo
 
 ```sh
@@ -131,7 +136,5 @@ either process does).
   be swapped out for another via `detachClient()`).
 - No simultaneous-embed testing across multiple `EmbedSocket`s in one
   process.
-- Several timeouts (window lookup, handshake) are hardcoded at 5s, not
-  configurable.
 - No published artifact — `mvn install` to the local repo is the only way to
   consume this today.

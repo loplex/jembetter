@@ -27,8 +27,8 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -72,6 +72,7 @@ public final class EmbedSocket implements AutoCloseable {
     private volatile Runnable onFocusPrev = () -> {
     };
     private volatile String expectedClientWmClass;
+    private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
 
     public EmbedSocket(Frame owner) {
         this.owner = owner;
@@ -294,6 +295,15 @@ public final class EmbedSocket implements AutoCloseable {
         expectedClientWmClass = wmClass;
     }
 
+    /**
+     * Overrides how long a connecting client is given to publish its
+     * top-level window before its handshake attempt is abandoned. Defaults
+     * to 5 seconds. Applies to every client accepted from here on.
+     */
+    public void setWindowLookupTimeout(Duration timeout) {
+        windowLookupTimeout = timeout;
+    }
+
     /** Tells the embedded client it's shadowed by (or no longer shadowed by) a modal dialog. */
     public void setModal(boolean modal) {
         long id = embeddedWindowId;
@@ -383,8 +393,8 @@ public final class EmbedSocket implements AutoCloseable {
         }
     }
 
-    private static <T> T pollUntil(Supplier<T> probe, Predicate<T> done, String timeoutMessage) {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    private <T> T pollUntil(Supplier<T> probe, Predicate<T> done, String timeoutMessage) {
+        long deadline = System.nanoTime() + windowLookupTimeout.toNanos();
         T value;
         do {
             value = probe.get();
