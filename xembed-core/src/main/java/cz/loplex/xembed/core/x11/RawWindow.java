@@ -37,6 +37,25 @@ public final class RawWindow {
         return window.longValue();
     }
 
+    /**
+     * Creates and maps a plain child window at local origin {@code (0,0)}
+     * under {@code parentWindowId} — the shape a socket window needs when
+     * it's a descendant of a real AWT component's own X11 window (e.g. a
+     * {@code Canvas}) instead of a root-level override-redirect sibling:
+     * position stays whatever the parent's coordinate space implies, and
+     * normal X11 stacking/WM behavior treats it as part of the parent
+     * window's subtree.
+     */
+    public static long createChild(X11Display display, long parentWindowId, int width, int height) {
+        Display raw = display.raw();
+
+        Window window = X11Ext.INSTANCE.XCreateWindow(raw, new Window(parentWindowId), 0, 0, width, height, 0,
+                X11Ext.CopyFromParent, X11Ext.InputOutput, null, new NativeLong(0), null);
+        X11Ext.INSTANCE.XMapWindow(raw, window);
+        X11Ext.INSTANCE.XFlush(raw);
+        return window.longValue();
+    }
+
     public static void destroy(X11Display display, long windowId) {
         Display raw = display.raw();
         X11Ext.INSTANCE.XDestroyWindow(raw, new Window(windowId));

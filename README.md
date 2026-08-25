@@ -13,8 +13,8 @@ Built and tested against a real X server (no Xvfb/mocking) on Linux/X11 only
 ## Modules
 
 - **`xembed-core-common`** — platform-independent, JNA-free code shared by
-  both sides (the rendezvous handshake). Not meant to be depended on
-  directly.
+  both sides (the rendezvous handshake, AWT `Canvas`-to-native-handle
+  extraction). Not meant to be depended on directly.
 - **`xembed-core`** — X11 native bindings (via JNA) and the XEmbed protocol
   implementation shared by both sides. Not meant to be depended on directly.
 - **`xembed-host`** — embedder-side API: `EmbedSocket` hosts another
@@ -63,28 +63,37 @@ Then depend on the module(s) you need:
 
 ```java
 JFrame frame = new JFrame("My host app");
-// ... lay out the rest of your UI ...
+Canvas placeholder = new Canvas();
+frame.add(placeholder, BorderLayout.CENTER); // wherever the embedded window should appear
+// ... lay out the rest of your UI, then make the frame visible ...
 
 EmbedSocket socket = new EmbedSocket(frame);
-socket.open(x, y, width, height); // wherever the embedded window should appear
+socket.open(placeholder);
 socket.onClientEmbedded(() -> System.out.println("Client embedded"));
 socket.onClientDetached(() -> System.out.println("Client exited or crashed"));
 socket.listen(Path.of("/run/user/1000/my-app.sock"));
-
-// keep the socket positioned over its placeholder as your UI resizes:
-placeholder.addComponentListener(new ComponentAdapter() {
-    @Override
-    public void componentResized(ComponentEvent e) {
-        Point p = placeholder.getLocationOnScreen();
-        socket.setBounds(p.x, p.y, placeholder.getWidth(), placeholder.getHeight());
-    }
-});
 ```
+
+`open(Canvas)` reparents the embedded window as a genuine X11 child of
+`placeholder`'s own native window — normal X11 stacking (and the window
+manager) then treats it as part of your host window, so a heavyweight
+popup/tooltip/modal dialog from your own UI correctly renders above it. It
+also tracks `placeholder`'s resizes automatically; no `ComponentListener` of
+your own required. This needs the JVM started with `--add-opens
+java.desktop/java.awt=ALL-UNNAMED --add-opens
+java.desktop/sun.awt.X11=ALL-UNNAMED` (see `.mvn/jvm.config` in this repo for
+the flags `mvn exec:java` picks up automatically when running the demo).
 
 `EmbedSocket` keeps accepting clients on the same socket for as long as it's
 open — a client crashing or being voluntarily released via
 `socket.detachClient()` doesn't require restarting the host. Call
 `socket.close()` to shut it down.
+
+**Advanced usage:** if you have no AWT tree to hang a `Canvas` off of,
+`open(x, y, width, height)`/`setBounds(x, y, width, height)` create the
+socket as a root-level, override-redirect window instead, which you're then
+responsible for keeping positioned yourself (e.g. a placeholder component's
+`getLocationOnScreen()` plus a resize/move listener calling `setBounds`).
 
 ### Client side
 

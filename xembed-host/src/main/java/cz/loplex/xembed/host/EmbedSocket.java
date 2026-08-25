@@ -1,6 +1,7 @@
 package cz.loplex.xembed.host;
 
 import com.sun.jna.platform.unix.X11.Display;
+import cz.loplex.xembed.common.CanvasNativeHandle;
 import cz.loplex.xembed.common.ipc.PidHandshake;
 import cz.loplex.xembed.core.x11.InputFocus;
 import cz.loplex.xembed.core.x11.RawWindow;
@@ -17,7 +18,10 @@ import cz.loplex.xembed.core.xembed.XEmbedInfoProperty;
 import cz.loplex.xembed.core.xembed.XEmbedMessage;
 import cz.loplex.xembed.core.xembed.XEmbedMessages;
 
+import java.awt.Canvas;
 import java.awt.Frame;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
@@ -34,9 +38,12 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
- * A raw, override-redirect X11 window that a client process's own top-level
- * window gets reparented into, kept positioned over wherever the host wants
- * it on screen.
+ * A raw X11 window that a client process's own top-level window gets
+ * reparented into: either a real child of an AWT {@link Canvas}'s own
+ * native window ({@link #open(Canvas)}, the recommended path — see its
+ * Javadoc), or a root-level, override-redirect window kept positioned over
+ * wherever the host wants it on screen ({@link #open(int, int, int, int)},
+ * for callers with no AWT tree to hang a {@code Canvas} off of).
  *
  * <p><strong>v4:</strong> unlike v0-v3, this is no longer a {@code
  * java.awt.Window}. AWT manages its own internal X11 connection, so
@@ -45,11 +52,13 @@ import java.util.function.Supplier;
  * on AWT's connection, not this library's — unreadable without reflecting
  * into JDK-internal AWT classes. Owning the window via {@code xembed-core}'s
  * own {@link X11Display} instead means those events can be read directly.
- * The tradeoff: this window is no longer part of the AWT window tree, so the
- * host is responsible for keeping it positioned over wherever it should
- * appear (e.g. a placeholder Swing component's {@code getLocationOnScreen()}
- * plus a resize/move listener calling {@link #setBounds}) rather than laying
- * it out with the rest of its UI.
+ * The tradeoff: this window is not part of AWT's own window tree, so with
+ * {@link #open(int, int, int, int)} the host is responsible for keeping it
+ * positioned over wherever it should appear (e.g. a placeholder Swing
+ * component's {@code getLocationOnScreen()} plus a resize/move listener
+ * calling {@link #setBounds}) rather than laying it out with the rest of
+ * its UI — {@link #open(Canvas)} avoids that entirely by making this
+ * window a genuine X11 child of the placeholder itself.
  */
 public final class EmbedSocket implements AutoCloseable {
 
@@ -93,6 +102,39 @@ public final class EmbedSocket implements AutoCloseable {
     /** Creates the underlying X11 window at the given screen bounds and starts watching it for inbound XEmbed messages. */
     public void open(int x, int y, int width, int height) {
         windowId = RawWindow.createOverrideRedirect(display, x, y, width, height);
+        initInboundWatcher(width, height);
+    }
+
+    /**
+     * Creates the underlying X11 window as a real child of {@code
+     * hostCanvas}'s own native window instead of a root-level
+     * override-redirect sibling, so normal X11 stacking (and the window
+     * manager) treats it as part of the host window — a heavyweight AWT/
+     * Swing popup, tooltip, or modal dialog from the host correctly renders
+     * above it, unlike with {@link #open(int, int, int, int)}. Also attaches
+     * a {@link java.awt.event.ComponentListener} to {@code hostCanvas} that
+     * calls {@link #resize} automatically on every resize, so the caller
+     * doesn't have to track it manually the way {@link #setBounds} requires.
+     *
+     * <p>{@code hostCanvas} must already be displayable (i.e. part of a
+     * visible window). <strong>Known limitation:</strong> disposing {@code
+     * hostCanvas} (or its containing window) without calling {@link #close()}
+     * first leaves this socket's child window orphaned — there is no
+     * automatic cleanup tied to the canvas's own lifecycle yet.
+     */
+    public void open(Canvas hostCanvas) {
+        long canvasWindowId = CanvasNativeHandle.extract(hostCanvas);
+        windowId = RawWindow.createChild(display, canvasWindowId, hostCanvas.getWidth(), hostCanvas.getHeight());
+        initInboundWatcher(hostCanvas.getWidth(), hostCanvas.getHeight());
+        hostCanvas.addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent event) {
+                resize(hostCanvas.getWidth(), hostCanvas.getHeight());
+            }
+        });
+    }
+
+    private void initInboundWatcher(int width, int height) {
         this.width = width;
         this.height = height;
         inbound = new XEmbedInboundWatcher(display, windowId);
@@ -105,6 +147,22 @@ public final class EmbedSocket implements AutoCloseable {
         requireOpen();
         WindowGeometry.moveResize(display, windowId, x, y, width, height);
         WindowGeometry.raise(display, windowId);
+        applySize(width, height);
+    }
+
+    /**
+     * Resizes this socket window in place (local origin stays {@code (0,0)})
+     * and follows the resize into the embedded client, if any. {@link
+     * #open(Canvas)} already calls this automatically on every resize of its
+     * host canvas; call it directly only if driving the resize yourself.
+     */
+    public void resize(int width, int height) {
+        requireOpen();
+        WindowGeometry.moveResize(display, windowId, 0, 0, width, height);
+        applySize(width, height);
+    }
+
+    private void applySize(int width, int height) {
         this.width = width;
         this.height = height;
         followSizeIntoEmbeddedWindow();

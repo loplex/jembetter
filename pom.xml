@@ -94,8 +94,14 @@
               <X_SERVER>${test.xserver}</X_SERVER>
             </environmentVariables>
             <!-- JNA loads its native library via System::load, which triggers a JEP 472
-                 restricted-method warning on JDK 24+. Silence it for the test fork. -->
-            <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                 restricted-method warning on JDK 24+. Silence it for the test fork.
+                 The two "add opens" flags below are for CanvasNativeHandle's reflection
+                 into java.awt.Component's package-private peer field and the X11 peer's
+                 own getWindow() accessor - see that class's Javadoc. .mvn/jvm.config
+                 carries the same two flags for Maven's own JVM (what exec:java runs in),
+                 but that file has no effect on this plugin's forked test JVM, so they're
+                 repeated here. -->
+            <argLine>--enable-native-access=ALL-UNNAMED --add-opens java.desktop/java.awt=ALL-UNNAMED --add-opens java.desktop/sun.awt.X11=ALL-UNNAMED</argLine>
           </configuration>
         </plugin>
         <plugin>
