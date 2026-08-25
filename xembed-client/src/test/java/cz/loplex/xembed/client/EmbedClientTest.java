@@ -120,6 +120,39 @@ class EmbedClientTest {
         }
     }
 
+    /**
+     * Regression coverage for splitting {@link EmbedClient#announce(String)}
+     * out of {@link EmbedClient#offer(Path, String)}: a host that already
+     * knows this process's pid directly (e.g. because it spawned this
+     * process itself) can embed it after only {@code announce()} — no Unix
+     * domain socket rendezvous at all.
+     */
+    @Test
+    void announceSetsUpXEmbedInfoAndWatchersWithoutDialingAHostSocket() throws IOException, InterruptedException {
+        frame = new JFrame("xembed-client EmbedClientTest");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+
+        CountDownLatch embedded = new CountDownLatch(1);
+        AtomicLong reportedEmbedderWindow = new AtomicLong(-1);
+        client = new EmbedClient();
+        client.onEmbedded(id -> {
+            reportedEmbedderWindow.set(id);
+            embedded.countDown();
+        });
+        client.announce();
+
+        long pid = ProcessHandle.current().pid();
+        try (X11Display hostDisplay = X11Display.open(null)) {
+            long embedderWindow = RawWindow.createOverrideRedirect(hostDisplay, 0, 0, 100, 100);
+            long clientWindowId = resolveClientWindow(hostDisplay, pid);
+            Reparenting.reparent(hostDisplay, clientWindowId, embedderWindow, 0, 0);
+
+            assertTrue(embedded.await(5, TimeUnit.SECONDS), "onEmbedded was never invoked after announce()");
+            assertEquals(embedderWindow, reportedEmbedderWindow.get());
+        }
+    }
+
     private void runFakeHostAwaitingFocusRequest(UnixDomainSocketAddress address, CountDownLatch ready,
             AtomicLong embedderWindowOut, CountDownLatch focusRequested) {
         try (X11Display hostDisplay = X11Display.open(null);

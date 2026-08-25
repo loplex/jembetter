@@ -130,24 +130,47 @@ public final class EmbedClient implements AutoCloseable {
      * string {@code xprop WM_CLASS} prints as the second, quoted value).
      */
     public void offer(Path hostSocketPath, String wmClass) {
+        announce(wmClass);
         try {
-            long pid = ProcessHandle.current().pid();
-            windowId = waitForOwnWindow(pid, wmClass);
-
-            XEmbedInfoProperty.write(display.raw(), windowId,
-                    new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
-
-            awaitingEmbed = true;
-            reparentWatcher.watch(windowId, this::handleReparented);
-
             UnixDomainSocketAddress address = UnixDomainSocketAddress.of(hostSocketPath);
             try (SocketChannel channel = SocketChannel.open(StandardProtocolFamily.UNIX)) {
                 channel.connect(address);
-                PidHandshake.send(channel, pid);
+                PidHandshake.send(channel, ProcessHandle.current().pid());
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /**
+     * Same as {@link #announce(String)}, for a process with a single
+     * top-level window.
+     */
+    public void announce() {
+        announce(null);
+    }
+
+    /**
+     * Does everything {@link #offer} does except dial a host socket: blocks
+     * until this process's own top-level window is visible to the window
+     * manager, marks it XEmbed-aware, and starts watching for the host's
+     * death and the initial embed (see {@link #onEmbedded}/{@link
+     * #onHostDetached}). For a host that already knows this process's pid or
+     * window handle directly — e.g. one that spawned this process itself —
+     * without needing a Unix domain socket rendezvous to learn it. {@code
+     * wmClass} disambiguates which top-level window gets announced the same
+     * way {@link #offer(Path, String)}'s does; pass {@code null} for a
+     * single-window process.
+     */
+    public void announce(String wmClass) {
+        long pid = ProcessHandle.current().pid();
+        windowId = waitForOwnWindow(pid, wmClass);
+
+        XEmbedInfoProperty.write(display.raw(), windowId,
+                new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
+
+        awaitingEmbed = true;
+        reparentWatcher.watch(windowId, this::handleReparented);
     }
 
     private void handleReparented(long newParentId) {
