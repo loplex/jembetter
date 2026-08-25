@@ -95,6 +95,33 @@ socket as a root-level, override-redirect window instead, which you're then
 responsible for keeping positioned yourself (e.g. a placeholder component's
 `getLocationOnScreen()` plus a resize/move listener calling `setBounds`).
 
+**Known-handle embedding, no socket:** if the host already knows the
+client's pid directly — e.g. it spawned the client process itself — the
+Unix domain socket rendezvous is unnecessary overhead. Skip `listen()` and
+call `socket.embed(clientPid)` once the client has published `_XEMBED_INFO`
+(see `EmbedClient#announce` below):
+
+```java
+Process clientProcess = new ProcessBuilder(...).start();
+socket.embed(clientProcess.pid());
+```
+
+**Toolkit-opaque embedding:** some toolkits (e.g. JavaFX's Glass layer) own
+their native X11 connection the same way AWT does, so this library can't
+read events targeted at their windows and can't rely on them ever writing
+`_XEMBED_INFO` or reacting to `EMBEDDED_NOTIFY`. `embedOpaque` handles this
+send-best-effort/poll-verify: it writes `_XEMBED_INFO` on the client's
+behalf and confirms the reparent actually happened via `XQueryTree` instead
+of trusting the client's cooperation:
+
+```java
+socket.embedOpaque(clientWindowId, Duration.ofMillis(20), 100);
+```
+
+Throws if the reparent is never confirmed within `pollInterval *
+maxAttempts`. Death detection (`onClientDetached`) still works here — it's
+based on the X server's own `DestroyNotify`, not client cooperation.
+
 ### Client side
 
 ```java
@@ -112,6 +139,18 @@ client.offer(Path.of("/run/user/1000/my-app.sock"));
 `client.requestFocus()` asks the host for input focus once embedded. Call
 `client.close()` when your process is done watching for host death (not
 needed on process exit).
+
+**Known-handle embedding, no socket:** the client-side counterpart of
+`EmbedSocket#embed(long)` above — `announce(wmClass)` does everything
+`offer` does (resolve this process's own window, publish `_XEMBED_INFO`,
+start watching for the embed/host-death) except dial a host socket, for
+when the host already knows this process's pid directly:
+
+```java
+EmbedClient client = new EmbedClient();
+client.onEmbedded(embedderWindowId -> System.out.println("Embedded"));
+client.announce(); // no host socket path
+```
 
 If a process owns more than one top-level window at the point it connects,
 both `EmbedSocket` and `EmbedClient` need a `WM_CLASS` (the same value
