@@ -2,9 +2,6 @@ package cz.loplex.xembed.core.x11;
 
 import com.sun.jna.platform.unix.X11.Display;
 import com.sun.jna.platform.unix.X11.Window;
-import com.sun.jna.platform.unix.X11.WindowByReference;
-import com.sun.jna.ptr.IntByReference;
-import com.sun.jna.ptr.PointerByReference;
 
 /**
  * Releases a window from window manager control before {@link Reparenting}
@@ -56,7 +53,7 @@ public final class WindowRelease {
     private static void waitForRootParent(X11Display display, long windowId) {
         long rootWindowId = display.defaultRootWindow().longValue();
         for (int attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
-            if (parentOf(display, windowId) == rootWindowId) {
+            if (WindowTree.parentOf(display, windowId) == rootWindowId) {
                 return;
             }
             try {
@@ -66,18 +63,5 @@ public final class WindowRelease {
                 return;
             }
         }
-    }
-
-    private static long parentOf(X11Display display, long windowId) {
-        WindowByReference rootReturn = new WindowByReference();
-        WindowByReference parentReturn = new WindowByReference();
-        PointerByReference childrenReturn = new PointerByReference();
-        IntByReference nchildrenReturn = new IntByReference();
-        X11Ext.INSTANCE.XQueryTree(display.raw(), new Window(windowId), rootReturn, parentReturn, childrenReturn,
-                nchildrenReturn);
-        if (childrenReturn.getValue() != null) {
-            X11Ext.INSTANCE.XFree(childrenReturn.getValue());
-        }
-        return parentReturn.getValue().longValue();
     }
 }

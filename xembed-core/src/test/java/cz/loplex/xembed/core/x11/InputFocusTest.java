@@ -2,7 +2,6 @@ package cz.loplex.xembed.core.x11;
 
 import com.sun.jna.platform.unix.X11.Window;
 import com.sun.jna.platform.unix.X11.WindowByReference;
-import com.sun.jna.platform.unix.X11.XWindowAttributes;
 import com.sun.jna.ptr.IntByReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,11 +50,9 @@ class InputFocusTest {
     }
 
     private boolean waitUntilViewable() {
-        XWindowAttributes attributes = new XWindowAttributes();
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         do {
-            X11Ext.INSTANCE.XGetWindowAttributes(display.raw(), window, attributes);
-            if (attributes.map_state == X11Ext.IsViewable) {
+            if (WindowTree.isMapped(display, window.longValue())) {
                 return true;
             }
             sleep();
