@@ -1,14 +1,10 @@
 package cz.loplex.xembed.host;
 
-import com.sun.jna.platform.unix.X11.Window;
-import com.sun.jna.platform.unix.X11.WindowByReference;
-import com.sun.jna.ptr.IntByReference;
-import com.sun.jna.ptr.PointerByReference;
 import cz.loplex.xembed.common.CanvasNativeHandle;
 import cz.loplex.xembed.common.ipc.PidHandshake;
 import cz.loplex.xembed.core.x11.WindowFinder;
+import cz.loplex.xembed.core.x11.WindowTree;
 import cz.loplex.xembed.core.x11.X11Display;
-import cz.loplex.xembed.core.x11.X11Ext;
 import cz.loplex.xembed.core.xembed.XEmbedInfo;
 import cz.loplex.xembed.core.xembed.XEmbedInfoProperty;
 import org.junit.jupiter.api.AfterEach;
@@ -25,6 +21,7 @@ import java.net.UnixDomainSocketAddress;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -256,6 +253,49 @@ class EmbedSocketTest {
         }
     }
 
+    /**
+     * Regression coverage for {@link EmbedSocket#embedOpaque}: a client that
+     * never writes {@code _XEMBED_INFO} itself (standing in for a toolkit-
+     * opaque client whose native connection this process can't read events
+     * on, e.g. JavaFX Glass) still ends up genuinely reparented under the
+     * host canvas, because {@code embedOpaque} writes the property on the
+     * client's behalf and poll-verifies the reparent via {@code
+     * XQueryTree} instead of trusting any cooperative signal from it.
+     */
+    @Test
+    void embedsAToolkitOpaqueClientThatNeverPublishesXEmbedInfoItself() throws IOException, InterruptedException {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketTest owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+        Thread.sleep(200);
+
+        socket = new EmbedSocket(owner);
+        socket.open(canvas);
+
+        Process clientProcess = startFakeClientProcess();
+        try {
+            long clientPid = clientProcess.pid();
+            long clientWindowId;
+            try (X11Display display = X11Display.open(null)) {
+                clientWindowId = waitForOwnWindow(display, clientPid);
+            }
+
+            socket.embedOpaque(clientWindowId, Duration.ofMillis(20), 100);
+
+            long canvasWindowId = CanvasNativeHandle.extract(canvas);
+            try (X11Display display = X11Display.open(null)) {
+                assertTrue(isDescendantOf(display, clientWindowId, canvasWindowId),
+                        "embedOpaque did not reparent the non-cooperative client under the host canvas");
+            }
+        } finally {
+            clientProcess.destroy();
+            clientProcess.waitFor(5, TimeUnit.SECONDS);
+        }
+    }
+
     private static Process startFakeClientProcess() throws IOException {
         String javaBin = System.getProperty("java.home") + "/bin/java";
         ProcessBuilder processBuilder = new ProcessBuilder(javaBin,
@@ -273,7 +313,7 @@ class EmbedSocketTest {
         long rootWindowId = display.defaultRootWindow().longValue();
         long current = windowId;
         for (int i = 0; i < 20 && current != rootWindowId; i++) {
-            long parent = parentOf(display, current);
+            long parent = WindowTree.parentOf(display, current);
             if (parent == ancestorWindowId) {
                 return true;
             }
@@ -307,19 +347,6 @@ class EmbedSocketTest {
             PidHandshake.send(channel, pid);
         }
         return new FakeClient(frame, windowId);
-    }
-
-    private static long parentOf(X11Display display, long windowId) {
-        WindowByReference rootReturn = new WindowByReference();
-        WindowByReference parentReturn = new WindowByReference();
-        PointerByReference childrenReturn = new PointerByReference();
-        IntByReference nchildrenReturn = new IntByReference();
-        X11Ext.INSTANCE.XQueryTree(display.raw(), new Window(windowId), rootReturn, parentReturn, childrenReturn,
-                nchildrenReturn);
-        if (childrenReturn.getValue() != null) {
-            X11Ext.INSTANCE.XFree(childrenReturn.getValue());
-        }
-        return parentReturn.getValue().longValue();
     }
 
     private static long waitForOwnWindow(X11Display display, long pid) throws InterruptedException {
