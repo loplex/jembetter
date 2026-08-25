@@ -92,6 +92,9 @@
               <ORIG_JAVA_HOME>${java.home}</ORIG_JAVA_HOME>
               <X_SERVER>${test.xserver}</X_SERVER>
             </environmentVariables>
+            <!-- JNA loads its native library via System::load, which triggers a JEP 472
+                 restricted-method warning on JDK 24+. Silence it for the test fork. -->
+            <argLine>--enable-native-access=ALL-UNNAMED</argLine>
           </configuration>
         </plugin>
         <plugin>
@@ -103,6 +106,11 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-javadoc-plugin</artifactId>
           <version>3.11.2</version>
+          <configuration>
+            <!-- Don't warn about missing comments/@param/@return; still check that
+                 whatever Javadoc does exist is well-formed. -->
+            <doclint>all,-missing</doclint>
+          </configuration>
         </plugin>
         <plugin>
           <groupId>org.codehaus.mojo</groupId>
