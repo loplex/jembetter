@@ -32,6 +32,12 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <jna.version>5.19.1</jna.version>
     <junit.version>5.11.3</junit.version>
+    <!-- See the maven-surefire-plugin <jvm> configuration below and
+         .mvn/xserver-jvm-wrapper/bin/java. Override on the command line,
+         e.g. `-Dtest.xserver=Xephyr` to watch tests run, or
+         `-Dtest.xserver=` to opt out and run against whatever DISPLAY you
+         already have (or none). -->
+    <test.xserver>Xvfb</test.xserver>
   </properties>
 
   <dependencyManagement>
@@ -84,8 +90,7 @@
             <jvm>${maven.multiModuleProjectDirectory}/.mvn/xserver-jvm-wrapper/bin/java</jvm>
             <environmentVariables>
               <ORIG_JAVA_HOME>${java.home}</ORIG_JAVA_HOME>
-              <X_SERVER>Xvfb</X_SERVER>
-              <!--<X_SERVER>Xephyr</X_SERVER>-->
+              <X_SERVER>${test.xserver}</X_SERVER>
             </environmentVariables>
           </configuration>
         </plugin>
