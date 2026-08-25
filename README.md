@@ -7,8 +7,12 @@ windows can belong to entirely separate JVM processes — the client connects
 to the host over a Unix domain socket to hand off its process id, the host
 resolves that to a window id via X11 and reparents it directly.
 
-Built and tested against a real X server (no Xvfb/mocking) on Linux/X11 only
-— there is no Wayland or non-X11 support.
+Built and tested against a real X server (no Xvfb/mocking) on Linux/X11 —
+there is no Wayland support. `xembed-core-win32` is a Win32 (`SetParent`)
+primitives skeleton for a future Windows backend; it isn't wired into
+`EmbedHost`/`EmbedPlug`/`EmbedSocket`/`EmbedClient` yet and is unverified
+against a real Windows machine — see [Win32 backend
+status](#win32-backend-status) below.
 
 ## Modules
 
@@ -17,6 +21,9 @@ Built and tested against a real X server (no Xvfb/mocking) on Linux/X11 only
   extraction). Not meant to be depended on directly.
 - **`xembed-core`** — X11 native bindings (via JNA) and the XEmbed protocol
   implementation shared by both sides. Not meant to be depended on directly.
+- **`xembed-core-win32`** — Win32 native bindings (via JNA) mirroring
+  `xembed-core`'s X11 primitives 1:1. Not depended on by `xembed-host`/
+  `xembed-client` yet — see [Win32 backend status](#win32-backend-status).
 - **`xembed-host`** — embedder-side API: `EmbedHost` (quick start, a 1:1
   facade for embedding a single self-spawned client) and `EmbedSocket`
   (advanced — multi-client, socket rendezvous) both host another process's
@@ -306,6 +313,34 @@ way either way — without a `-display` of its own — so it nests into
 whatever `DISPLAY` it inherited (your desktop's), opening a visible window
 per test JVM fork that you can watch windows get created/moved/reparented
 in live, instead of on a headless, invisible Xvfb.
+
+## Win32 backend status
+
+`xembed-core-win32` has `Win32Reparent`/`Win32WindowGeometry`/`Win32Focus`/
+`Win32WindowFinder`, mirroring `xembed-core`'s X11 primitives 1:1
+(`SetParent`+style-flip, `MoveWindow`/`ShowWindow`, `SetFocus`,
+`EnumWindows`+`GetWindowThreadProcessId`). **Unverified against a real
+Windows machine.** Its JUnit tests are gated with
+`@EnabledOnOs(OS.WINDOWS)`, so they're skipped (not run, not failed) by this
+repo's own `mvn test` on Linux.
+
+What has actually been checked so far: `.mvn/win32-wine-smoketest/run.sh`
+downloads a real Windows JDK and runs those same JUnit tests under Wine
+(Wine's `winex11.drv` renders Win32 windows as real X11 windows on Linux,
+so a Windows PE JVM process genuinely calls into Wine's `user32.dll`/
+`kernel32.dll` implementations, not just type-checks against JNA's Java-side
+declarations). That confirms the JNA bindings link and that basic
+`SetParent`/`MoveWindow`/`EnumWindows` mechanics plausibly work. It does
+**not** confirm Windows' foreground-lock restriction on `SetFocus` (Wine
+doesn't faithfully replicate that policy — see `Win32Focus`'s Javadoc),
+any real Windows-version-specific behavior, or `ProcessHandle.onExit()`'s
+reliability for a foreign pid on Windows. Answering those needs a real
+Windows machine, not this Wine-based smoke test.
+
+No `os.name` dispatch wires these primitives into `EmbedHost`/`EmbedPlug`/
+`EmbedSocket`/`EmbedClient` yet — that's intentionally deferred until a real
+Windows-machine spike settles the open design questions (host-initiated
+reparent symmetry, `embedOpaque`'s always-on behavior on this backend).
 
 ## Known limitations
 
