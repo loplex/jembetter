@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -89,6 +90,48 @@ class EmbedSocketTest {
         socket.onClientEmbedded(reEmbedded::countDown);
         client2 = offerFakeClient(socketPath, pid);
         assertTrue(reEmbedded.await(5, TimeUnit.SECONDS), "second client was never (re-)embedded on the same socket");
+    }
+
+    @Test
+    void detachClientReleasesTheWindowWithoutFiringOnClientDetached() throws IOException, InterruptedException {
+        owner = new Frame("EmbedSocketTest owner");
+        socket = new EmbedSocket(owner);
+        socket.open(0, 0, 100, 100);
+
+        Path socketPath = Files.createTempFile("xembed-host-test-", ".sock");
+        Files.delete(socketPath);
+
+        CountDownLatch firstEmbed = new CountDownLatch(1);
+        CountDownLatch detached = new CountDownLatch(1);
+        socket.onClientEmbedded(firstEmbed::countDown);
+        socket.onClientDetached(detached::countDown);
+
+        socket.listen(socketPath);
+
+        long pid = ProcessHandle.current().pid();
+        client1 = offerFakeClient(socketPath, pid);
+        assertTrue(firstEmbed.await(5, TimeUnit.SECONDS), "client was never embedded");
+
+        socket.detachClient();
+
+        try (X11Display probe = X11Display.open(null)) {
+            // Throws if the released window never becomes visible to the
+            // window manager as an ordinary top-level window again.
+            waitForOwnWindow(probe, pid);
+        }
+        assertFalse(detached.await(500, TimeUnit.MILLISECONDS), "onClientDetached fired for a voluntary detach");
+
+        client1.dispose();
+        // The earlier detachClient() call already unwatched this window;
+        // disposing it now must not retroactively fire onClientDetached.
+        assertFalse(detached.await(500, TimeUnit.MILLISECONDS),
+                "onClientDetached fired after disposing an already-detached window");
+
+        CountDownLatch reEmbedded = new CountDownLatch(1);
+        socket.onClientEmbedded(reEmbedded::countDown);
+        client2 = offerFakeClient(socketPath, pid);
+        assertTrue(reEmbedded.await(5, TimeUnit.SECONDS),
+                "a new client could not be embedded after the voluntary detach");
     }
 
     private static JFrame offerFakeClient(Path socketPath, long pid) throws IOException, InterruptedException {

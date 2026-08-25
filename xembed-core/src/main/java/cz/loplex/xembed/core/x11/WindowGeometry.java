@@ -2,6 +2,8 @@ package cz.loplex.xembed.core.x11;
 
 import com.sun.jna.platform.unix.X11.Display;
 import com.sun.jna.platform.unix.X11.Window;
+import com.sun.jna.platform.unix.X11.WindowByReference;
+import com.sun.jna.ptr.IntByReference;
 
 /**
  * Thin wrapper around {@code XMoveResizeWindow} operating on a raw window
@@ -29,6 +31,21 @@ public final class WindowGeometry {
         Display raw = display.raw();
         X11Ext.INSTANCE.XRaiseWindow(raw, new Window(windowId));
         X11Ext.INSTANCE.XFlush(raw);
+    }
+
+    /**
+     * Translates {@code windowId}'s own origin (0,0) into the root window's
+     * coordinate space, i.e. its current on-screen position — for
+     * relocating a window from one parent to another (e.g. releasing an
+     * embedded client back to the root window) without it visually jumping.
+     */
+    public static int[] rootPosition(X11Display display, long windowId) {
+        Display raw = display.raw();
+        IntByReference rootX = new IntByReference();
+        IntByReference rootY = new IntByReference();
+        X11Ext.INSTANCE.XTranslateCoordinates(raw, new Window(windowId), display.defaultRootWindow(), 0, 0, rootX,
+                rootY, new WindowByReference());
+        return new int[] { rootX.getValue(), rootY.getValue() };
     }
 
     /** Maps or unmaps {@code windowId}, e.g. in response to a client clearing/setting its own XEMBED_MAPPED flag. */

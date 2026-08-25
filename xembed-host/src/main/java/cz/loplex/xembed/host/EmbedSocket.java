@@ -241,6 +241,33 @@ public final class EmbedSocket implements AutoCloseable {
     }
 
     /**
+     * Voluntarily releases the currently embedded client: reparents its
+     * window back to the root window at its current on-screen position and
+     * maps it as an ordinary top-level window again, so the host can
+     * deliberately swap in a different client afterward — as opposed to
+     * only ever finding out a client is gone after the fact via {@link
+     * #onClientDetached}, which does not fire for this (the caller already
+     * knows). The accept loop goes back to accepting a new client
+     * immediately. No-op if nothing is currently embedded.
+     *
+     * <p>The client's own {@code WindowReparentWatcher}-based host-death
+     * detection fires for this exactly as it would for a real detach —
+     * appropriate, since as far as the client is concerned it genuinely is
+     * no longer embedded.
+     */
+    public void detachClient() {
+        long id = embeddedWindowId;
+        if (id < 0) {
+            return;
+        }
+        int[] rootPosition = WindowGeometry.rootPosition(display, id);
+        deathWatcher.unwatch(id);
+        inbound.stopWatchingEmbeddedInfo();
+        Reparenting.release(display, id, display.defaultRootWindow().longValue(), rootPosition[0], rootPosition[1]);
+        embeddedWindowId = -1;
+    }
+
+    /**
      * Registers a callback invoked when the embedded client's tab chain is
      * exhausted going forward (XEMBED_FOCUS_NEXT) and it hands focus back.
      * Runs on {@link XEmbedInboundWatcher}'s own background thread.

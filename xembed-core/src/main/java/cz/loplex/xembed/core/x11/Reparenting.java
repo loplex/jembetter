@@ -31,4 +31,22 @@ public final class Reparenting {
         // the reparent/map, not just have them written to the wire.
         X11Ext.INSTANCE.XSync(raw, false);
     }
+
+    /**
+     * The reverse of {@link #reparent}: for a host voluntarily releasing a
+     * still-live embedded client, as opposed to only finding out about a
+     * detach after the fact when its own connection closes. Removes {@code
+     * childWindowId} from this connection's save-set first — see {@link
+     * X11Ext#XRemoveFromSaveSet} for why — then reparents it to {@code
+     * newParentWindowId} and maps it.
+     */
+    public static void release(X11Display display, long childWindowId, long newParentWindowId, int x, int y) {
+        Display raw = display.raw();
+        Window child = new Window(childWindowId);
+        Window parent = new Window(newParentWindowId);
+        X11Ext.INSTANCE.XRemoveFromSaveSet(raw, child);
+        X11Ext.INSTANCE.XReparentWindow(raw, child, parent, x, y);
+        X11Ext.INSTANCE.XMapWindow(raw, child);
+        X11Ext.INSTANCE.XSync(raw, false);
+    }
 }

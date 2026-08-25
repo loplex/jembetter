@@ -12,10 +12,15 @@ import java.util.concurrent.CountDownLatch;
  * Manual demo: run this, then run {@link ClientDemo} in a second JVM on
  * the same X display. The client's window should visually jump into the
  * socket area and resize to fill it once the handshake completes, then
- * follow the socket down to a smaller size a couple of seconds later. Kill
- * the client process (including {@code kill -9}) afterwards to see the
- * crash detection fire — the socket goes back to listening automatically, so
- * running {@link ClientDemo} again re-embeds it without restarting this host.
+ * follow the socket down to a smaller size a couple of seconds later, then
+ * get voluntarily released back to being a normal top-level window a couple
+ * of seconds after that — run {@link ClientDemo} again afterward (or a fresh
+ * one) to see the socket accept a new client in its place, without
+ * restarting this host.
+ *
+ * <p>Kill the client process (including {@code kill -9}) instead, at any
+ * point before the voluntary release, to see the crash detection fire — the
+ * socket goes back to listening the same way.
  *
  * <p>The socket area is now a raw, override-redirect X11 window rather than
  * an AWT one (see {@link EmbedSocket}'s Javadoc), so it's positioned with an
@@ -61,6 +66,12 @@ public final class HostDemo {
         socket.setBounds(450, 100, 250, 180);
 
         System.out.println("Socket resized to 250x180; the embedded window should have followed.");
-        System.out.println("Now watching for the client to exit or crash, and accepting reconnects...");
+
+        System.out.println("Voluntarily releasing the client in 2s to demonstrate a host-initiated detach...");
+        Thread.sleep(2000);
+        socket.detachClient();
+
+        System.out.println("Client released; it should now be a normal top-level window again.");
+        System.out.println("Now waiting for a client to (re-)connect...");
     }
 }

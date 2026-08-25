@@ -33,6 +33,7 @@ public final class EmbedClient implements AutoCloseable {
     private final WindowReparentWatcher reparentWatcher = new WindowReparentWatcher();
     private long windowId = -1;
     private volatile long embedderWindowId = -1;
+    private volatile boolean awaitingEmbed = false;
     private volatile Runnable onHostDetached = () -> {
     };
     private volatile LongConsumer onEmbedded = embedderId -> {
@@ -69,8 +70,15 @@ public final class EmbedClient implements AutoCloseable {
      * server-generated event rather than one injected via {@code
      * XSendEvent}, isn't subject to that restriction — it arrives on this
      * class's own connection just as reliably as the "reparented back to
-     * root" event {@link #onHostDetached} already relies on. Runs on
-     * {@link WindowReparentWatcher}'s own background thread.
+     * root" event {@link #onHostDetached} already relies on.
+     *
+     * <p>Only the reparent immediately following {@link #offer}'s handshake
+     * counts: a window manager reparents any ordinary top-level window into
+     * its own decoration frame, including one just released back to the
+     * root window by {@code
+     * cz.loplex.xembed.host.EmbedSocket#detachClient()} — without this
+     * filter, that second, unrelated reparent would be mistaken for a new
+     * embed. Runs on {@link WindowReparentWatcher}'s own background thread.
      */
     public void onEmbedded(LongConsumer callback) {
         onEmbedded = callback;
@@ -119,6 +127,7 @@ public final class EmbedClient implements AutoCloseable {
             XEmbedInfoProperty.write(display.raw(), windowId,
                     new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
 
+            awaitingEmbed = true;
             reparentWatcher.watch(windowId, this::handleReparented);
 
             UnixDomainSocketAddress address = UnixDomainSocketAddress.of(hostSocketPath);
@@ -133,12 +142,21 @@ public final class EmbedClient implements AutoCloseable {
 
     private void handleReparented(long newParentId) {
         if (newParentId == display.defaultRootWindow().longValue()) {
-            embedderWindowId = -1;
-            onHostDetached.run();
-        } else {
+            if (embedderWindowId >= 0) {
+                embedderWindowId = -1;
+                onHostDetached.run();
+            }
+            // else: reparented to root without having been embedded first
+            // (e.g. this window's very first map, before offer() was ever
+            // called) — not a host detaching, nothing to report.
+        } else if (awaitingEmbed) {
+            awaitingEmbed = false;
             embedderWindowId = newParentId;
             onEmbedded.accept(newParentId);
         }
+        // else: some other non-root reparent while not expecting an embed —
+        // e.g. the window manager decorating this window into its own frame
+        // right after a release — not an embed, ignore.
     }
 
     private static long waitForOwnWindow(X11Display display, long pid, String wmClass) {

@@ -27,6 +27,18 @@ public interface X11Ext extends X11 {
      */
     int XAddToSaveSet(Display display, Window w);
 
+    /**
+     * Removes {@code w} from this connection's save-set, undoing {@link
+     * #XAddToSaveSet}. Needed before a host voluntarily reparents an
+     * embedded client away on purpose (as opposed to finding out about the
+     * detach after the fact when its own connection closes): the save-set
+     * membership otherwise outlives that manual reparent, and would still
+     * be checked — against a window this connection no longer has any
+     * claim to embedding — whenever this connection eventually closes for
+     * real.
+     */
+    int XRemoveFromSaveSet(Display display, Window w);
+
     int XSetInputFocus(Display display, Window focus, int revertTo, NativeLong time);
 
     int XGetInputFocus(Display display, WindowByReference focusReturn, IntByReference revertToReturn);
