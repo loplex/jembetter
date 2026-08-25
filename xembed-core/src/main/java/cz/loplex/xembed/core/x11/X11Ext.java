@@ -39,6 +39,23 @@ public interface X11Ext extends X11 {
      */
     int XRemoveFromSaveSet(Display display, Window w);
 
+    /**
+     * ICCCM section 4.1.4's standard "withdraw" convenience function: unmaps
+     * {@code w} and sends a synthetic {@code UnmapNotify} event to the root
+     * window of {@code screenNumber} (with {@code SubstructureNotifyMask |
+     * SubstructureRedirectMask}), which is the specific signal a window
+     * manager needs to treat this as a deliberate client-driven withdrawal
+     * rather than an ordinary unmap it might have caused itself (e.g.
+     * iconification). Needed before {@link Reparenting#reparent} on a window
+     * that is (or was until just now) an ordinary WM-managed top-level
+     * window — without it, some window managers (confirmed with openbox)
+     * react to the implicit unmap {@code XReparentWindow} itself performs on
+     * a mapped window by re-adopting it back under their own decoration
+     * frame right after our own reparent succeeds, since as far as the WM
+     * can tell nothing yet told it to let go.
+     */
+    int XWithdrawWindow(Display display, Window w, int screenNumber);
+
     int XSetInputFocus(Display display, Window focus, int revertTo, NativeLong time);
 
     int XGetInputFocus(Display display, WindowByReference focusReturn, IntByReference revertToReturn);

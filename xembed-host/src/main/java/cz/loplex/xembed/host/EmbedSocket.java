@@ -8,6 +8,7 @@ import cz.loplex.xembed.core.x11.Reparenting;
 import cz.loplex.xembed.core.x11.WindowDeathWatcher;
 import cz.loplex.xembed.core.x11.WindowFinder;
 import cz.loplex.xembed.core.x11.WindowGeometry;
+import cz.loplex.xembed.core.x11.WindowRelease;
 import cz.loplex.xembed.core.x11.X11Display;
 import cz.loplex.xembed.core.xembed.XEmbedFocus;
 import cz.loplex.xembed.core.xembed.XEmbedInboundWatcher;
@@ -203,6 +204,7 @@ public final class EmbedSocket implements AutoCloseable {
     private void embedFromHandshake(SocketChannel accepted) {
         long clientPid = PidHandshake.receive(accepted);
         long clientWindowId = resolveClientWindow(clientPid);
+        WindowRelease.release(display, clientWindowId);
         Reparenting.reparent(display, clientWindowId, windowId, 0, 0);
         embeddedWindowId = clientWindowId;
         followSizeIntoEmbeddedWindow();
