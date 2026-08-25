@@ -1,4 +1,4 @@
-package cz.loplex.xembed.core.ipc;
+package cz.loplex.xembed.common.ipc;
 
 import org.junit.jupiter.api.Test;
 

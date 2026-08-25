@@ -1,7 +1,7 @@
 package cz.loplex.xembed.host;
 
 import com.sun.jna.platform.unix.X11.Display;
-import cz.loplex.xembed.core.ipc.PidHandshake;
+import cz.loplex.xembed.common.ipc.PidHandshake;
 import cz.loplex.xembed.core.x11.InputFocus;
 import cz.loplex.xembed.core.x11.RawWindow;
 import cz.loplex.xembed.core.x11.Reparenting;

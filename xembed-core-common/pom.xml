@@ -10,23 +10,13 @@
     <version>0.0.1-SNAPSHOT</version>
   </parent>
 
-  <artifactId>xembed-client</artifactId>
+  <artifactId>xembed-core-common</artifactId>
   <packaging>jar</packaging>
 
-  <name>xembed-client</name>
-  <description>Client-side API: makes an application's own top-level window embeddable by a host.</description>
+  <name>xembed-core-common</name>
+  <description>Platform-independent, JNA-free code shared by the host and client sides: the rendezvous handshake and AWT Canvas-to-native-handle extraction.</description>
 
   <dependencies>
-    <dependency>
-      <groupId>cz.loplex</groupId>
-      <artifactId>xembed-core</artifactId>
-      <version>${project.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>cz.loplex</groupId>
-      <artifactId>xembed-core-common</artifactId>
-      <version>${project.version}</version>
-    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
