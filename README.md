@@ -153,22 +153,21 @@ both back down once the JVM exits, so nothing outlives the build. openbox
 isn't optional: `WindowFinder` (used by both `EmbedSocket` and
 `EmbedClient` to locate a window by pid) matches `_NET_WM_PID` against the
 *window manager's* `_NET_CLIENT_LIST`, which only a real EWMH window
-manager publishes. Set the `X_SERVER` property surefire is configured with
-(in the root `pom.xml`) to `""` to opt out and run headless/DISPLAY-unset
-(or, if you export `DISPLAY` yourself before running Maven, against that)
-instead — leaving it pointed at a server that isn't actually installed is
-a hard build failure rather than a silent skip, so that a missing
-`Xvfb`/`openbox` can't turn into DISPLAY-gated tests quietly not running.
+manager publishes. Override the `test.xserver` Maven property (defined in
+the root `pom.xml`, defaults to `Xvfb`) to change this: `-Dtest.xserver=`
+(empty) opts out and runs headless/DISPLAY-unset (or, if you export
+`DISPLAY` yourself before running Maven, against that) instead — leaving
+it pointed at a server that isn't actually installed is a hard build
+failure rather than a silent skip, so that a missing `Xvfb`/`openbox`
+can't turn into DISPLAY-gated tests quietly not running.
 
-To watch the X11-touching tests run instead of just trusting them, switch
-that `X_SERVER` property from `Xvfb` to `Xephyr` and run `mvn test` as
-normal, from a terminal on a real desktop session.
-`.mvn/xserver-jvm-wrapper/bin/java` launches `Xephyr` the same way either
-way — without a `-display` of its own — so it nests into whatever
-`DISPLAY` it inherited (your desktop's), opening a visible window per test
-JVM fork that you can watch windows get created/moved/reparented in live,
-instead of on a headless, invisible Xvfb. Switch it back to `Xvfb` (or
-remove the override) once done.
+To watch the X11-touching tests run instead of just trusting them, run
+`mvn test -Dtest.xserver=Xephyr` from a terminal on a real desktop
+session. `.mvn/xserver-jvm-wrapper/bin/java` launches `Xephyr` the same
+way either way — without a `-display` of its own — so it nests into
+whatever `DISPLAY` it inherited (your desktop's), opening a visible window
+per test JVM fork that you can watch windows get created/moved/reparented
+in live, instead of on a headless, invisible Xvfb.
 
 ## Known limitations
 
