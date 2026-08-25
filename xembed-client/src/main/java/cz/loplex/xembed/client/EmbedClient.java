@@ -6,6 +6,8 @@ import cz.loplex.xembed.core.x11.WindowReparentWatcher;
 import cz.loplex.xembed.core.x11.X11Display;
 import cz.loplex.xembed.core.xembed.XEmbedInfo;
 import cz.loplex.xembed.core.xembed.XEmbedInfoProperty;
+import cz.loplex.xembed.core.xembed.XEmbedMessage;
+import cz.loplex.xembed.core.xembed.XEmbedMessages;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -15,23 +17,25 @@ import java.nio.channels.SocketChannel;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongConsumer;
 
 /**
  * Makes this process's own already-visible top-level window available to be
- * reparented by a host listening on a Unix domain socket, then watches for
- * that host dying afterward.
- *
- * <p><strong>v1:</strong> marks the window XEmbed-aware via
- * {@code _XEMBED_INFO} before offering it; see
- * {@code cz.loplex.xembed.host.EmbedSocket} for what is still missing
- * (proper focus protocol from this side).
+ * reparented by a host listening on a Unix domain socket, marks it XEmbed-
+ * aware via {@code _XEMBED_INFO}, then watches for the embed itself (see
+ * {@link #onEmbedded}) and for the host dying afterward (see
+ * {@link #onHostDetached}). {@link #requestFocus()} sends {@code
+ * XEMBED_REQUEST_FOCUS} back to the embedder once embedded.
  */
 public final class EmbedClient implements AutoCloseable {
 
     private final X11Display display = X11Display.open(null);
     private final WindowReparentWatcher reparentWatcher = new WindowReparentWatcher();
     private long windowId = -1;
+    private volatile long embedderWindowId = -1;
     private volatile Runnable onHostDetached = () -> {
+    };
+    private volatile LongConsumer onEmbedded = embedderId -> {
     };
 
     /**
@@ -47,11 +51,55 @@ public final class EmbedClient implements AutoCloseable {
     }
 
     /**
+     * Registers a callback invoked once this window has actually been
+     * reparented into an embedder, with the embedder's window id.
+     *
+     * <p>This deliberately doesn't come from XEmbed's own {@code
+     * EMBEDDED_NOTIFY} ClientMessage: {@code XSendEvent} with a zero event
+     * mask (as XEmbed requires for ClientMessages) is only ever delivered to
+     * the connection that <em>created</em> the destination window — see
+     * {@code cz.loplex.xembed.host.EmbedSocket}'s Javadoc, which is why the
+     * host had to stop being an AWT window in the first place. This
+     * process's own top-level window is created by AWT's internal X11
+     * connection, not by this class's {@link X11Display}, so the same
+     * restriction would make {@code EMBEDDED_NOTIFY} unreadable here without
+     * reflecting into JDK-internal AWT classes. The initial
+     * {@code ReparentNotify} carries the same information (the window's new
+     * parent <em>is</em> the embedder window) and, being a real
+     * server-generated event rather than one injected via {@code
+     * XSendEvent}, isn't subject to that restriction — it arrives on this
+     * class's own connection just as reliably as the "reparented back to
+     * root" event {@link #onHostDetached} already relies on. Runs on
+     * {@link WindowReparentWatcher}'s own background thread.
+     */
+    public void onEmbedded(LongConsumer callback) {
+        onEmbedded = callback;
+    }
+
+    /** The embedder's window id last reported to {@link #onEmbedded}, or -1 if not currently embedded. */
+    public long embedderWindowId() {
+        return embedderWindowId;
+    }
+
+    /**
+     * Sends {@code XEMBED_REQUEST_FOCUS} to the embedder, asking it to give
+     * this window input focus. No-op if not currently embedded.
+     */
+    public void requestFocus() {
+        long id = embedderWindowId;
+        if (id >= 0) {
+            XEmbedMessages.send(display.raw(), id, XEmbedMessage.REQUEST_FOCUS, 0, 0, 0);
+        }
+    }
+
+    /**
      * Blocks until this process's own top-level window is visible to the
      * window manager, marks it XEmbed-aware, then hands its process id to
      * the host at {@code hostSocketPath} so the host can look the window up
-     * and reparent it. Starts watching for the host's death immediately
-     * afterward.
+     * and reparent it. Starts watching for the host's death — and the
+     * initial embed, see {@link #onEmbedded} — immediately beforehand, to
+     * close the race against the host reparenting this window before the
+     * watch is in place.
      */
     public void offer(Path hostSocketPath) {
         offer(hostSocketPath, null);
@@ -71,13 +119,13 @@ public final class EmbedClient implements AutoCloseable {
             XEmbedInfoProperty.write(display.raw(), windowId,
                     new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
 
+            reparentWatcher.watch(windowId, this::handleReparented);
+
             UnixDomainSocketAddress address = UnixDomainSocketAddress.of(hostSocketPath);
             try (SocketChannel channel = SocketChannel.open(StandardProtocolFamily.UNIX)) {
                 channel.connect(address);
                 PidHandshake.send(channel, pid);
             }
-
-            reparentWatcher.watch(windowId, this::handleReparented);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -85,7 +133,11 @@ public final class EmbedClient implements AutoCloseable {
 
     private void handleReparented(long newParentId) {
         if (newParentId == display.defaultRootWindow().longValue()) {
+            embedderWindowId = -1;
             onHostDetached.run();
+        } else {
+            embedderWindowId = newParentId;
+            onEmbedded.accept(newParentId);
         }
     }
 

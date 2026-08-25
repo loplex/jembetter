@@ -5,6 +5,8 @@ import cz.loplex.xembed.core.x11.RawWindow;
 import cz.loplex.xembed.core.x11.Reparenting;
 import cz.loplex.xembed.core.x11.WindowFinder;
 import cz.loplex.xembed.core.x11.X11Display;
+import cz.loplex.xembed.core.xembed.XEmbedInboundWatcher;
+import cz.loplex.xembed.core.xembed.XEmbedMessage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -21,7 +23,9 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -74,6 +78,72 @@ class EmbedClientTest {
             assertTrue(detached.await(5, TimeUnit.SECONDS), "onHostDetached was never invoked");
         } finally {
             Files.deleteIfExists(socketPath);
+        }
+    }
+
+    @Test
+    void learnsEmbedderWindowIdAndCanRequestFocus() throws IOException, InterruptedException {
+        frame = new JFrame("xembed-client EmbedClientTest");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+
+        Path socketPath = Files.createTempFile("xembed-client-test-", ".sock");
+        Files.delete(socketPath);
+        UnixDomainSocketAddress address = UnixDomainSocketAddress.of(socketPath);
+
+        try {
+            CountDownLatch hostReady = new CountDownLatch(1);
+            AtomicLong hostEmbedderWindow = new AtomicLong(-1);
+            CountDownLatch focusRequested = new CountDownLatch(1);
+            Thread host = new Thread(() -> runFakeHostAwaitingFocusRequest(address, hostReady, hostEmbedderWindow,
+                    focusRequested));
+            host.setDaemon(true);
+            host.start();
+            assertTrue(hostReady.await(5, TimeUnit.SECONDS), "fake host never started listening");
+
+            CountDownLatch embedded = new CountDownLatch(1);
+            AtomicLong clientReportedEmbedderWindow = new AtomicLong(-1);
+            client = new EmbedClient();
+            client.onEmbedded(id -> {
+                clientReportedEmbedderWindow.set(id);
+                embedded.countDown();
+            });
+            client.offer(socketPath);
+
+            assertTrue(embedded.await(5, TimeUnit.SECONDS), "onEmbedded was never invoked");
+            assertEquals(hostEmbedderWindow.get(), clientReportedEmbedderWindow.get());
+
+            client.requestFocus();
+            assertTrue(focusRequested.await(5, TimeUnit.SECONDS), "host never received XEMBED_REQUEST_FOCUS");
+        } finally {
+            Files.deleteIfExists(socketPath);
+        }
+    }
+
+    private void runFakeHostAwaitingFocusRequest(UnixDomainSocketAddress address, CountDownLatch ready,
+            AtomicLong embedderWindowOut, CountDownLatch focusRequested) {
+        try (X11Display hostDisplay = X11Display.open(null);
+                ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
+            server.bind(address);
+            ready.countDown();
+
+            long embedderWindow = RawWindow.createOverrideRedirect(hostDisplay, 0, 0, 100, 100);
+            embedderWindowOut.set(embedderWindow);
+            try (XEmbedInboundWatcher inbound = new XEmbedInboundWatcher(hostDisplay, embedderWindow)) {
+                inbound.onClientMessage((message, detail) -> {
+                    if (message == XEmbedMessage.REQUEST_FOCUS) {
+                        focusRequested.countDown();
+                    }
+                });
+                try (SocketChannel accepted = server.accept()) {
+                    long clientPid = PidHandshake.receive(accepted);
+                    long clientWindowId = resolveClientWindow(hostDisplay, clientPid);
+                    Reparenting.reparent(hostDisplay, clientWindowId, embedderWindow, 0, 0);
+                }
+                focusRequested.await(5, TimeUnit.SECONDS);
+            }
+        } catch (IOException | InterruptedException e) {
+            throw new RuntimeException(e);
         }
     }
 
