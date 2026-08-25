@@ -138,3 +138,7 @@ either process does).
   process.
 - No published artifact — `mvn install` to the local repo is the only way to
   consume this today.
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
