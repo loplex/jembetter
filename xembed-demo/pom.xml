@@ -75,6 +75,13 @@
               <classpathScope>runtime</classpathScope>
             </configuration>
           </execution>
+          <execution>
+            <id>host-facade</id>
+            <configuration>
+              <mainClass>cz.loplex.xembed.demo.HostFacadeDemo</mainClass>
+              <classpathScope>runtime</classpathScope>
+            </configuration>
+          </execution>
         </executions>
       </plugin>
     </plugins>
