@@ -1,6 +1,6 @@
 package cz.loplex.xembed.host;
 
-import cz.loplex.xembed.core.ipc.PidHandshake;
+import cz.loplex.xembed.common.ipc.PidHandshake;
 import cz.loplex.xembed.core.x11.WindowFinder;
 import cz.loplex.xembed.core.x11.X11Display;
 import cz.loplex.xembed.core.xembed.XEmbedInfo;

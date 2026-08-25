@@ -12,6 +12,9 @@ Built and tested against a real X server (no Xvfb/mocking) on Linux/X11 only
 
 ## Modules
 
+- **`xembed-core-common`** — platform-independent, JNA-free code shared by
+  both sides (the rendezvous handshake). Not meant to be depended on
+  directly.
 - **`xembed-core`** — X11 native bindings (via JNA) and the XEmbed protocol
   implementation shared by both sides. Not meant to be depended on directly.
 - **`xembed-host`** — embedder-side API: `EmbedSocket` hosts another

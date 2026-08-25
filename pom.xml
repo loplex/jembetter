@@ -21,6 +21,7 @@
   </licenses>
 
   <modules>
+    <module>xembed-core-common</module>
     <module>xembed-core</module>
     <module>xembed-host</module>
     <module>xembed-client</module>

@@ -1,6 +1,6 @@
 package cz.loplex.xembed.client;
 
-import cz.loplex.xembed.core.ipc.PidHandshake;
+import cz.loplex.xembed.common.ipc.PidHandshake;
 import cz.loplex.xembed.core.x11.WindowFinder;
 import cz.loplex.xembed.core.x11.WindowReparentWatcher;
 import cz.loplex.xembed.core.x11.X11Display;
