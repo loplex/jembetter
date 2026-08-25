@@ -60,7 +60,12 @@ public final class EmbedSocket implements AutoCloseable {
     private volatile int width = -1;
     private volatile int height = -1;
     private volatile long embeddedWindowId = -1;
+    private volatile boolean listening = false;
+    private ServerSocketChannel server;
+    private Thread acceptThread;
     private volatile Runnable onClientDetached = () -> {
+    };
+    private volatile Runnable onClientEmbedded = () -> {
     };
     private volatile Runnable onFocusNext = () -> {
     };
@@ -130,36 +135,99 @@ public final class EmbedSocket implements AutoCloseable {
     }
 
     /**
-     * Listens on {@code socketPath}, accepts exactly one client connection,
-     * and reparents that client's top-level window into this one.
+     * Starts listening on {@code socketPath} on a background thread and
+     * keeps accepting client connections there for as long as this
+     * EmbedSocket stays open. Each accepted client is reparented in exactly
+     * as a one-shot accept would do it; once it detaches (see {@link
+     * #onClientDetached}), the socket goes back to accepting the next one
+     * instead of being good for exactly one embed.
      */
-    public void acceptOnce(Path socketPath) {
+    public void listen(Path socketPath) {
         requireOpen();
+        if (listening) {
+            throw new IllegalStateException("Already listening");
+        }
         try {
             Files.deleteIfExists(socketPath);
-            UnixDomainSocketAddress address = UnixDomainSocketAddress.of(socketPath);
-            try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
-                server.bind(address);
-                try (SocketChannel accepted = server.accept()) {
-                    long clientPid = PidHandshake.receive(accepted);
-                    long clientWindowId = resolveClientWindow(clientPid);
-                    Reparenting.reparent(display, clientWindowId, windowId, 0, 0);
-                    embeddedWindowId = clientWindowId;
-                    followSizeIntoEmbeddedWindow();
-                    settleInitialSize();
-                    XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
-                            XEmbedInfo.PROTOCOL_VERSION);
-                    InputFocus.set(display, clientWindowId);
-                    sendActivated(owner.isFocused());
-                    deathWatcher.watch(clientWindowId, this::handleClientDetached);
-                    inbound.watchEmbeddedInfo(clientWindowId);
-                }
-            } finally {
-                Files.deleteIfExists(socketPath);
-            }
+            server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
+            server.bind(UnixDomainSocketAddress.of(socketPath));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+        listening = true;
+        acceptThread = new Thread(() -> acceptLoop(socketPath), "xembed-socket-accept-loop");
+        acceptThread.setDaemon(true);
+        acceptThread.start();
+    }
+
+    private void acceptLoop(Path socketPath) {
+        try {
+            while (listening) {
+                SocketChannel accepted;
+                try {
+                    accepted = server.accept();
+                } catch (IOException e) {
+                    // close() closes the server channel to unblock this
+                    // accept() as its shutdown signal; anything else is a
+                    // real failure.
+                    if (!listening) {
+                        return;
+                    }
+                    throw new UncheckedIOException(e);
+                }
+                try {
+                    try (accepted) {
+                        embedFromHandshake(accepted);
+                    }
+                } catch (RuntimeException | IOException e) {
+                    // A failed/aborted handshake must not take the accept
+                    // loop down; the socket keeps listening for the next
+                    // client.
+                    e.printStackTrace();
+                    continue;
+                }
+                onClientEmbedded.run();
+                awaitDetach();
+            }
+        } finally {
+            try {
+                Files.deleteIfExists(socketPath);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+    }
+
+    private void embedFromHandshake(SocketChannel accepted) {
+        long clientPid = PidHandshake.receive(accepted);
+        long clientWindowId = resolveClientWindow(clientPid);
+        Reparenting.reparent(display, clientWindowId, windowId, 0, 0);
+        embeddedWindowId = clientWindowId;
+        followSizeIntoEmbeddedWindow();
+        settleInitialSize();
+        XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
+                XEmbedInfo.PROTOCOL_VERSION);
+        InputFocus.set(display, clientWindowId);
+        sendActivated(owner.isFocused());
+        deathWatcher.watch(clientWindowId, this::handleClientDetached);
+        inbound.watchEmbeddedInfo(clientWindowId);
+    }
+
+    /** Blocks the accept loop until the currently embedded client detaches, or {@link #close()} is called. */
+    private void awaitDetach() {
+        while (listening && embeddedWindowId >= 0) {
+            sleep();
+        }
+    }
+
+    /**
+     * Registers a callback invoked each time a client finishes being
+     * embedded — the initial one, and again after any later re-embed
+     * following a previous detach. Runs on the accept loop's own background
+     * thread.
+     */
+    public void onClientEmbedded(Runnable callback) {
+        onClientEmbedded = callback;
     }
 
     /**
@@ -281,6 +349,21 @@ public final class EmbedSocket implements AutoCloseable {
 
     @Override
     public void close() {
+        listening = false;
+        if (server != null) {
+            try {
+                server.close();
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        if (acceptThread != null) {
+            try {
+                acceptThread.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
         if (inbound != null) {
             inbound.close();
         }
