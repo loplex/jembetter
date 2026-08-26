@@ -299,6 +299,62 @@ class EmbedSocketTest {
     }
 
     /**
+     * Regression coverage for a real bug hit embedding a real JavaFX/Glass
+     * child into a host whose placeholder {@code Canvas} was still at its
+     * default {@code 0x0} size when {@link EmbedSocket#open(Canvas)} ran
+     * (e.g. because it lives in a not-yet-active {@code CardLayout} card):
+     * {@link cz.loplex.jembetter.core.x11.RawWindow#createChild} used to
+     * pass that size straight through to {@code XCreateWindow}, which X11
+     * rejects with {@code BadValue} for a zero width or height — Xlib still
+     * hands back a client-side-allocated window id regardless, so the
+     * socket window {@code EmbedSocket} believed it owned never actually
+     * existed on the server. Every later operation against it silently
+     * failed, including reparenting a client into it, so {@code
+     * embedOpaque} would poll until it gave up and threw, and — because
+     * {@link cz.loplex.jembetter.core.x11.Reparenting#reparent} still went
+     * on to map the client window regardless of whether the reparent
+     * itself took effect — the window manager would immediately re-adopt
+     * the client as an ordinary top-level window again.
+     */
+    @Test
+    void embedsAToolkitOpaqueClientIntoAHostCanvasThatWasNotYetLaidOut() throws IOException, InterruptedException {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketTest owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+        Thread.sleep(200);
+        // Forces the exact bug condition regardless of layout/WM specifics:
+        // a displayable Canvas (native peer already exists) shrunk back to
+        // its default 0x0 size, as if its container hadn't laid it out yet.
+        canvas.setSize(0, 0);
+
+        socket = new EmbedSocket(owner);
+        socket.open(canvas);
+
+        Process clientProcess = startFakeClientProcess();
+        try {
+            long clientPid = clientProcess.pid();
+            long clientWindowId;
+            try (X11Display display = X11Display.open(null)) {
+                clientWindowId = waitForOwnWindow(display, clientPid);
+            }
+
+            socket.embedOpaque(clientWindowId, Duration.ofMillis(20), 100);
+
+            long canvasWindowId = CanvasNativeHandle.extract(canvas);
+            try (X11Display display = X11Display.open(null)) {
+                assertTrue(isDescendantOf(display, clientWindowId, canvasWindowId),
+                        "embedOpaque did not reparent the client under a host canvas that hadn't been laid out yet");
+            }
+        } finally {
+            clientProcess.destroy();
+            clientProcess.waitFor(5, TimeUnit.SECONDS);
+        }
+    }
+
+    /**
      * Regression coverage for a real bug found while building the
      * auto-cleanup wiring below: {@link EmbedSocket#close()} used to destroy
      * a still-embedded client's window outright instead of releasing it,

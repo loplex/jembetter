@@ -15,10 +15,12 @@ public final class WindowGeometry {
     private WindowGeometry() {
     }
 
+    /** {@code width}/{@code height} are clamped to at least 1: {@code XMoveResizeWindow} rejects zero with {@code BadValue}. */
     public static void moveResize(X11Display display, long windowId, int x, int y, int width, int height) {
         Display raw = display.raw();
         synchronized (X11Display.GLOBAL_LOCK) {
-            X11Ext.INSTANCE.XMoveResizeWindow(raw, new Window(windowId), x, y, width, height);
+            X11Ext.INSTANCE.XMoveResizeWindow(raw, new Window(windowId), x, y, Math.max(1, width),
+                    Math.max(1, height));
             // XSync, not just XFlush: callers immediately read this window's
             // geometry back on the same connection (e.g. to decide whether a
             // follow-up resize is still needed), which needs the server to have
