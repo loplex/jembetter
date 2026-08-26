@@ -29,9 +29,9 @@ public final class RawWindow {
         attributes.override_redirect = 1;
 
         synchronized (X11Display.GLOBAL_LOCK) {
-            Window window = X11Ext.INSTANCE.XCreateWindow(raw, display.defaultRootWindow(), x, y, width, height, 0,
-                    X11Ext.CopyFromParent, X11Ext.InputOutput, null, new NativeLong(X11Ext.CWOverrideRedirect),
-                    attributes);
+            Window window = X11Ext.INSTANCE.XCreateWindow(raw, display.defaultRootWindow(), x, y,
+                    Math.max(1, width), Math.max(1, height), 0, X11Ext.CopyFromParent, X11Ext.InputOutput, null,
+                    new NativeLong(X11Ext.CWOverrideRedirect), attributes);
             X11Ext.INSTANCE.XMapWindow(raw, window);
             X11Ext.INSTANCE.XRaiseWindow(raw, window);
             X11Ext.INSTANCE.XFlush(raw);
@@ -47,13 +47,26 @@ public final class RawWindow {
      * position stays whatever the parent's coordinate space implies, and
      * normal X11 stacking/WM behavior treats it as part of the parent
      * window's subtree.
+     *
+     * <p>{@code width}/{@code height} are clamped to at least 1: {@code
+     * XCreateWindow} rejects zero with {@code BadValue}, and a {@code
+     * Canvas} that's displayable but not yet laid out by its container
+     * (e.g. one added to an inactive {@code CardLayout} card) reports a
+     * size of {@code 0x0} — Xlib still hands back a client-side-allocated
+     * window id in that case even though the server never actually created
+     * the window, so every later operation against it (in particular
+     * reparenting a client into it) would silently fail against a window
+     * that doesn't exist. The eventual real size arrives, as always, via
+     * the caller's own resize-follow (see {@code EmbedSocket#open(Canvas)}'s
+     * {@code ComponentListener}).
      */
     public static long createChild(X11Display display, long parentWindowId, int width, int height) {
         Display raw = display.raw();
 
         synchronized (X11Display.GLOBAL_LOCK) {
-            Window window = X11Ext.INSTANCE.XCreateWindow(raw, new Window(parentWindowId), 0, 0, width, height, 0,
-                    X11Ext.CopyFromParent, X11Ext.InputOutput, null, new NativeLong(0), null);
+            Window window = X11Ext.INSTANCE.XCreateWindow(raw, new Window(parentWindowId), 0, 0, Math.max(1, width),
+                    Math.max(1, height), 0, X11Ext.CopyFromParent, X11Ext.InputOutput, null, new NativeLong(0),
+                    null);
             X11Ext.INSTANCE.XMapWindow(raw, window);
             X11Ext.INSTANCE.XFlush(raw);
             return window.longValue();
