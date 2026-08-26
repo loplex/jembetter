@@ -23,6 +23,7 @@ import java.awt.Canvas;
 import java.awt.Frame;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.HierarchyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
@@ -84,6 +85,7 @@ public final class EmbedSocket implements AutoCloseable {
     };
     private volatile String expectedClientWmClass;
     private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
+    private volatile boolean closed = false;
 
     public EmbedSocket(Frame owner) {
         this.owner = owner;
@@ -112,16 +114,54 @@ public final class EmbedSocket implements AutoCloseable {
      * override-redirect sibling, so normal X11 stacking (and the window
      * manager) treats it as part of the host window — a heavyweight AWT/
      * Swing popup, tooltip, or modal dialog from the host correctly renders
-     * above it, unlike with {@link #open(int, int, int, int)}. Also attaches
-     * a {@link java.awt.event.ComponentListener} to {@code hostCanvas} that
-     * calls {@link #resize} automatically on every resize, so the caller
-     * doesn't have to track it manually the way {@link #setBounds} requires.
+     * above it, unlike with {@link #open(int, int, int, int)}. Also attaches,
+     * to {@code hostCanvas}:
+     *
+     * <ul>
+     *   <li>a {@link java.awt.event.ComponentListener} that calls {@link
+     *       #resize} automatically on every resize, so the caller doesn't
+     *       have to track it manually the way {@link #setBounds} requires;
+     *   <li>a {@link java.awt.event.HierarchyListener} that calls {@link
+     *       #close()} once {@code hostCanvas} becomes non-displayable (e.g.
+     *       because it, or its containing window, was disposed), guarding
+     *       against a double-close if the caller also calls {@link #close()}
+     *       itself — so an app that forgets to release this socket
+     *       explicitly no longer leaks its own X11 connection and the two
+     *       background threads it drives for the rest of the process's
+     *       lifetime. (The child X11 window itself was never really the
+     *       leak: disposing {@code hostCanvas} already destroys its native
+     *       peer, and this socket's child window — along with, transitively,
+     *       whatever client is still embedded in it — goes with it as
+     *       ordinary X11 subtree destruction, before this listener even
+     *       runs. {@link #close()} still calls {@link #detachClient()}
+     *       first for exactly this reason: a client still embedded when
+     *       {@code close()} runs some other way — the canvas hasn't been
+     *       disposed, just released explicitly — ends up released rather
+     *       than destroyed, since X11's save-set only rescues a
+     *       reparented-in window like that by reparenting it back to root
+     *       when the owning connection itself closes, not when that
+     *       connection destroys one of its own windows while staying open.)
+     * </ul>
      *
      * <p>{@code hostCanvas} must already be displayable (i.e. part of a
-     * visible window). <strong>Known limitation:</strong> disposing {@code
-     * hostCanvas} (or its containing window) without calling {@link #close()}
-     * first leaves this socket's child window orphaned — there is no
-     * automatic cleanup tied to the canvas's own lifecycle yet.
+     * visible window). <strong>Known limitation:</strong> {@link
+     * #focusClient()} is only ever called automatically once, right after
+     * {@link #embed}/{@link #embedOpaque} — if the user clicks away from the
+     * embedded area (e.g. into the host's own menu bar) and back, focus does
+     * not return on its own. A plain {@code MouseListener} on {@code
+     * hostCanvas} cannot fix this: the embedded client's window is a real
+     * X11 window sized to cover the canvas exactly, and per X11 event
+     * propagation rules a button press stops at the first window in the
+     * hierarchy that selected for it — virtually every real client selects
+     * {@code ButtonPress} on its own window, so the press never bubbles up
+     * to an ancestor {@code Canvas} listener (confirmed by live testing
+     * against a real X server: such a listener never fires for a genuine
+     * click on the embedded area, only for one synthetically dispatched
+     * in-process). A real fix needs a passive {@code XGrabButton} on the
+     * embedded client's window (installed on embed, removed on detach),
+     * intercepting the press before the client sees it and replaying it
+     * afterward via {@code XAllowEvents(ReplayPointer)} so the client's own
+     * interactivity isn't broken.
      */
     public void open(Canvas hostCanvas) {
         long canvasWindowId = CanvasNativeHandle.extract(hostCanvas);
@@ -131,6 +171,12 @@ public final class EmbedSocket implements AutoCloseable {
             @Override
             public void componentResized(ComponentEvent event) {
                 resize(hostCanvas.getWidth(), hostCanvas.getHeight());
+            }
+        });
+        hostCanvas.addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & HierarchyEvent.DISPLAYABILITY_CHANGED) != 0
+                    && !hostCanvas.isDisplayable()) {
+                close();
             }
         });
     }
@@ -550,6 +596,10 @@ public final class EmbedSocket implements AutoCloseable {
 
     @Override
     public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
         listening = false;
         if (server != null) {
             try {
@@ -565,6 +615,16 @@ public final class EmbedSocket implements AutoCloseable {
                 Thread.currentThread().interrupt();
             }
         }
+        // A still-embedded client's window is a genuine X11 child of
+        // windowId at this point; save-set rescue only rescues it from
+        // XDestroyWindow below by reparenting it back to root if that
+        // happens as a side effect of *this connection closing* - an
+        // explicit XDestroyWindow on windowId while this connection stays
+        // open destroys the whole subtree outright instead, client included.
+        // Releasing it the same way a voluntary detachClient() would avoids
+        // relying on that distinction and leaves the client exactly as
+        // uninvolved as an explicit detach would.
+        detachClient();
         if (inbound != null) {
             inbound.close();
         }
