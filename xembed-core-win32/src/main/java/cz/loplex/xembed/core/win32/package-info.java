@@ -5,7 +5,9 @@
  * {@link cz.loplex.xembed.core.win32.Win32WindowGeometry} for {@code
  * WindowGeometry}, {@link cz.loplex.xembed.core.win32.Win32Focus} for {@code
  * InputFocus}, {@link cz.loplex.xembed.core.win32.Win32WindowFinder} for
- * {@code WindowFinder}.
+ * {@code WindowFinder}, and {@link
+ * cz.loplex.xembed.core.win32.Win32ReparentWatcher} for {@code
+ * WindowReparentWatcher} (poll-based here — see its own Javadoc for why).
  *
  * <p><b>Confirmed against a real Windows machine (2026-08-26).</b> A
  * Wine-based smoke test (see {@code .mvn/win32-wine-smoketest} in this
@@ -35,12 +37,14 @@
  * quirks beyond what the spike exercised remain unconfirmed.
  *
  * <p>{@code os.name} dispatch now wires these primitives into {@code
- * EmbedHost} ({@code xembed-host.EmbedHostWin32}) per the spike's findings:
- * host-initiated reparent stays symmetric with X11 (confirmed by question 1
- * above), and {@code embedOpaque}'s always-on behavior on this backend
- * collapses with plain {@code embed} into the same operation, since there is
- * no {@code _XEMBED_INFO} equivalent to make them differ. {@code EmbedPlug}/
- * {@code EmbedSocket}/{@code EmbedClient} aren't wired to a Win32 backend
- * yet.
+ * EmbedHost}/{@code EmbedPlug} ({@code xembed-host.EmbedHostWin32}, {@code
+ * xembed-client.EmbedPlugWin32}) per the spike's findings: host-initiated
+ * reparent stays symmetric with X11 (confirmed by question 1 above), and
+ * {@code embedOpaque}'s always-on behavior on this backend collapses with
+ * plain {@code embed} into the same operation, since there is no {@code
+ * _XEMBED_INFO} equivalent to make them differ. {@link
+ * cz.loplex.xembed.core.win32.Win32ReparentWatcher}, used by {@code
+ * EmbedPlugWin32} to detect being embedded/the host detaching, is poll-based
+ * and was <b>not</b> exercised by the spike — see its own Javadoc.
  */
 package cz.loplex.xembed.core.win32;
