@@ -5,7 +5,7 @@
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>cz.loplex</groupId>
-  <artifactId>xembed-parent</artifactId>
+  <artifactId>jembetter-parent</artifactId>
   <version>0.0.1-SNAPSHOT</version>
   <packaging>pom</packaging>
 
@@ -21,12 +21,12 @@
   </licenses>
 
   <modules>
-    <module>xembed-core-common</module>
-    <module>xembed-core</module>
-    <module>xembed-core-win32</module>
-    <module>xembed-host</module>
-    <module>xembed-client</module>
-    <module>xembed-demo</module>
+    <module>jembetter-core-common</module>
+    <module>jembetter-core</module>
+    <module>jembetter-core-win32</module>
+    <module>jembetter-host</module>
+    <module>jembetter-client</module>
+    <module>jembetter-demo</module>
   </modules>
 
   <properties>

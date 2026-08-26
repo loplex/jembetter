@@ -1,0 +1,144 @@
+package cz.loplex.jembetter.client;
+
+import cz.loplex.jembetter.common.ipc.PidHandshake;
+import cz.loplex.jembetter.core.win32.Win32Reparent;
+import cz.loplex.jembetter.core.win32.Win32WindowFinder;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
+
+import javax.swing.JFrame;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.net.StandardProtocolFamily;
+import java.net.UnixDomainSocketAddress;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.SocketChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Exercises {@link EmbedPlug}'s Win32 backend ({@code EmbedPlugWin32})
+ * against real HWNDs — mirrors {@link EmbedPlugTest}'s X11 coverage, using
+ * {@link Win32Reparent} directly in place of a real host (this module has
+ * no Win32 host facade of its own to drive from here) and {@link
+ * Win32TestWindow} in place of {@code RawWindow.createOverrideRedirect}.
+ */
+@EnabledOnOs(OS.WINDOWS)
+class EmbedPlugWin32Test {
+
+    private JFrame frame;
+    private EmbedPlug plug;
+    private long fakeHostHwnd = -1;
+
+    @AfterEach
+    void cleanup() {
+        if (plug != null) {
+            plug.close();
+        }
+        if (frame != null) {
+            frame.dispose();
+        }
+        if (fakeHostHwnd >= 0 && Win32TestWindow.exists(fakeHostHwnd)) {
+            Win32TestWindow.destroy(fakeHostHwnd);
+        }
+    }
+
+    @Test
+    void announcesAndDetectsBeingReparentedByAHost() throws InterruptedException {
+        frame = new JFrame("EmbedPlugWin32Test");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+
+        CountDownLatch embedded = new CountDownLatch(1);
+        AtomicLong reportedEmbedderWindow = new AtomicLong(-1);
+        plug = EmbedPlug.create();
+        plug.onEmbedded(id -> {
+            reportedEmbedderWindow.set(id);
+            embedded.countDown();
+        });
+        plug.announce(null);
+
+        long ownHwnd = waitForOwnWindow(ProcessHandle.current().pid());
+        fakeHostHwnd = Win32TestWindow.create("EmbedPlugWin32Test fake host");
+        Win32Reparent.reparent(ownHwnd, fakeHostHwnd, 0, 0);
+
+        assertTrue(embedded.await(5, TimeUnit.SECONDS), "onEmbedded was never invoked after announce(wmClass)");
+        assertEquals(fakeHostHwnd, reportedEmbedderWindow.get());
+    }
+
+    @Test
+    void announcesOverAHostSocketAndDetectsHostDeath() throws Exception {
+        frame = new JFrame("EmbedPlugWin32Test");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+
+        Path socketPath = Files.createTempFile("jembetter-client-win32-facade-test-", ".sock");
+        Files.delete(socketPath);
+        UnixDomainSocketAddress address = UnixDomainSocketAddress.of(socketPath);
+
+        try {
+            CountDownLatch hostReady = new CountDownLatch(1);
+            CountDownLatch hostDone = new CountDownLatch(1);
+            Thread host = new Thread(() -> runFakeHost(address, hostReady, hostDone));
+            host.setDaemon(true);
+            host.start();
+            assertTrue(hostReady.await(5, TimeUnit.SECONDS), "fake host never started listening");
+
+            CountDownLatch detached = new CountDownLatch(1);
+            plug = EmbedPlug.create();
+            plug.onHostDetached(detached::countDown);
+            plug.announce(socketPath, null);
+
+            assertTrue(hostDone.await(5, TimeUnit.SECONDS), "fake host never finished embedding and dying");
+            assertTrue(detached.await(5, TimeUnit.SECONDS), "onHostDetached was never invoked");
+        } finally {
+            Files.deleteIfExists(socketPath);
+        }
+    }
+
+    private void runFakeHost(UnixDomainSocketAddress address, CountDownLatch ready, CountDownLatch done) {
+        long hostHwnd = Win32TestWindow.create("EmbedPlugWin32Test fake host (socket)");
+        try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
+            server.bind(address);
+            ready.countDown();
+
+            try (SocketChannel accepted = server.accept()) {
+                long clientPid = PidHandshake.receive(accepted);
+                long clientHwnd = waitForOwnWindow(clientPid);
+                Win32Reparent.reparent(clientHwnd, hostHwnd, 0, 0);
+            }
+            // Destroying the fake host's HWND cascades to destroy the
+            // client's own (now-child) HWND too, real Win32 semantics with
+            // no X11 save-set equivalent - see EmbedPlugWin32's Javadoc.
+            Win32TestWindow.destroy(hostHwnd);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            done.countDown();
+        }
+    }
+
+    private static long waitForOwnWindow(long pid) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        List<Long> found;
+        do {
+            found = Win32WindowFinder.findTopLevelWindowsByPid(pid);
+            if (!found.isEmpty()) {
+                return found.get(0);
+            }
+            Thread.sleep(50);
+        } while (System.nanoTime() < deadline);
+        throw new IllegalStateException("Client process " + pid + " never published a top-level window");
+    }
+}
