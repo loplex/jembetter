@@ -1,0 +1,30 @@
+name: Linux (X11) CI
+
+# Runs the full reactor's test suite against a real, disposable Xvfb + openbox
+# pair - see README.md's "Running tests" section and
+# .mvn/xserver-jvm-wrapper/bin/java for how that's wired up. Win32-only tests
+# (@EnabledOnOs(OS.WINDOWS)) are skipped here, not run - see windows-ci.yml.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Install Xvfb + openbox
+        run: sudo apt-get update && sudo apt-get install -y xvfb openbox
+
+      - name: mvn test
+        run: mvn -B test
