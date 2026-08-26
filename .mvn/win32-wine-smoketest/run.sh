@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-off (not wired into `mvn test`) verification that xembed-core-win32's
+# One-off (not wired into `mvn test`) verification that jembetter-core-win32's
 # JNA calls actually reach real user32.dll/kernel32.dll entry points, using
 # a real Windows PE JVM (a downloaded Windows JDK, NOT the host Linux JDK)
 # run under Wine - this is a smoke test, not a substitute for verifying the
@@ -15,7 +15,7 @@
 # replicate that policy) or any real-Windows-version-specific behavior - see
 # Win32Focus's Javadoc.
 #
-# It runs the real JUnit test classes in xembed-core-win32 (the same ones
+# It runs the real JUnit test classes in jembetter-core-win32 (the same ones
 # @EnabledOnOs(OS.WINDOWS)-gated out of this repo's normal `mvn test` on
 # Linux) via junit-platform-console-standalone, a self-contained jar that
 # bundles the JUnit engine so no dependency resolution has to happen inside
@@ -70,8 +70,8 @@ if [[ ! -s "$junit_console_jar" ]]; then
   mv "${junit_console_jar}.part" "$junit_console_jar"
 fi
 
-echo "win32-wine-smoketest: compiling xembed-core-win32 (+ its main-code deps)..." >&2
-mvn -q -f "$REPO_ROOT/pom.xml" -pl xembed-core-common,xembed-core-win32 -am test-compile
+echo "win32-wine-smoketest: compiling jembetter-core-win32 (+ its main-code deps)..." >&2
+mvn -q -f "$REPO_ROOT/pom.xml" -pl jembetter-core-common,jembetter-core-win32 -am test-compile
 
 jna_jar="$(find "$HOME/.m2/repository/net/java/dev/jna/jna" -name 'jna-*.jar' \
   ! -name '*sources*' ! -name '*javadoc*' | sort -V | tail -1)"
@@ -83,9 +83,9 @@ if [[ -z "$jna_jar" || -z "$jna_platform_jar" ]]; then
 fi
 
 cp_unix=(
-  "$REPO_ROOT/xembed-core-win32/target/classes"
-  "$REPO_ROOT/xembed-core-win32/target/test-classes"
-  "$REPO_ROOT/xembed-core-common/target/classes"
+  "$REPO_ROOT/jembetter-core-win32/target/classes"
+  "$REPO_ROOT/jembetter-core-win32/target/test-classes"
+  "$REPO_ROOT/jembetter-core-common/target/classes"
   "$jna_jar"
   "$jna_platform_jar"
   "$junit_console_jar"
@@ -133,7 +133,7 @@ openbox --sm-disable >/dev/null 2>&1 &
 wm_pid=$!
 sleep 0.5
 
-echo "win32-wine-smoketest: running xembed-core-win32's JUnit tests under Wine on $DISPLAY..." >&2
+echo "win32-wine-smoketest: running jembetter-core-win32's JUnit tests under Wine on $DISPLAY..." >&2
 export WINEDEBUG=-all
 wine "$jdk_home/bin/java.exe" -cp "$cp_win" org.junit.platform.console.ConsoleLauncher \
-  --select-package cz.loplex.xembed.core.win32 --details=tree "$@"
+  --select-package cz.loplex.jembetter.core.win32 --details=tree "$@"
