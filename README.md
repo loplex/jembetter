@@ -1,4 +1,6 @@
-# xembed
+# Jembetter
+
+*A Java window embedder. Just better.*
 
 Reparents one X11 Java application's top-level window into another's, using
 the [XEmbed](https://specifications.freedesktop.org/xembed-spec/xembed-spec-latest.html)
