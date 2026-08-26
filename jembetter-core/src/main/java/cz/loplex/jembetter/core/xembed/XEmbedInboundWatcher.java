@@ -6,6 +6,7 @@ import com.sun.jna.platform.unix.X11.Window;
 import com.sun.jna.platform.unix.X11.XClientMessageEvent;
 import com.sun.jna.platform.unix.X11.XEvent;
 import com.sun.jna.platform.unix.X11.XPropertyEvent;
+import cz.loplex.jembetter.core.x11.ButtonGrab;
 import cz.loplex.jembetter.core.x11.X11Display;
 import cz.loplex.jembetter.core.x11.X11Ext;
 
@@ -18,6 +19,11 @@ import java.util.function.LongConsumer;
  * ClientMessages ({@code XEMBED_REQUEST_FOCUS}, {@code XEMBED_FOCUS_NEXT}/
  * {@code PREV}, ...) targeted at the embedder window itself, and
  * PropertyNotify on the currently embedded client's {@code _XEMBED_INFO}.
+ * Also watches for a grabbed {@code ButtonPress} on the currently embedded
+ * client window (see {@link #watchButtonPress}) — the click-to-focus
+ * mechanism, since a real click on the embedded area never reaches
+ * anything this library owns otherwise (ordinary X11 event propagation
+ * stops at the client's own window).
  *
  * <p><strong>Must be constructed with the exact {@link X11Display} that
  * created (owns) the embedder window.</strong> XEmbed ClientMessages are
@@ -43,9 +49,12 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
     private final Thread thread;
 
     private volatile long embeddedInfoWindowId = -1;
+    private volatile long buttonGrabWindowId = -1;
     private volatile BiConsumer<XEmbedMessage, Long> onClientMessage = (message, detail) -> {
     };
     private volatile LongConsumer onEmbeddedInfoChanged = windowId -> {
+    };
+    private volatile Runnable onButtonPress = () -> {
     };
 
     public XEmbedInboundWatcher(X11Display display, long embedderWindowId) {
@@ -70,6 +79,17 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
         onEmbeddedInfoChanged = handler;
     }
 
+    /**
+     * Handler invoked, on this watcher's own thread, for a grabbed {@code
+     * ButtonPress} on the currently watched client window (see {@link
+     * #watchButtonPress}) — after this handler returns (whether normally or
+     * via an exception), the press is always replayed through to the client
+     * so its own interactivity isn't broken.
+     */
+    public void onButtonPress(Runnable handler) {
+        onButtonPress = handler;
+    }
+
     /** Starts tracking {@code _XEMBED_INFO} PropertyNotify for the currently embedded client window. */
     public void watchEmbeddedInfo(long clientWindowId) {
         synchronized (X11Display.GLOBAL_LOCK) {
@@ -83,6 +103,26 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
     /** Stops tracking {@code _XEMBED_INFO}, e.g. once the embedded client has detached. */
     public void stopWatchingEmbeddedInfo() {
         embeddedInfoWindowId = -1;
+    }
+
+    /**
+     * Installs a passive {@link ButtonGrab} on the currently embedded client
+     * window and starts watching for the resulting grabbed {@code
+     * ButtonPress}, the click-to-focus mechanism — call once a client is
+     * embedded, alongside {@link #watchEmbeddedInfo}.
+     */
+    public void watchButtonPress(long clientWindowId) {
+        ButtonGrab.install(display, clientWindowId);
+        buttonGrabWindowId = clientWindowId;
+    }
+
+    /** Undoes {@link #watchButtonPress}, e.g. once the embedded client has detached. */
+    public void stopWatchingButtonPress() {
+        long windowId = buttonGrabWindowId;
+        buttonGrabWindowId = -1;
+        if (windowId >= 0) {
+            ButtonGrab.uninstall(display, windowId);
+        }
     }
 
     private void loop() {
@@ -107,6 +147,18 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
                 }
                 if (propertyNotifyPending) {
                     dispatchPropertyNotify(event, watchedId);
+                    handled = true;
+                }
+            }
+            long grabbedId = buttonGrabWindowId;
+            if (grabbedId >= 0) {
+                boolean buttonPressPending;
+                synchronized (X11Display.GLOBAL_LOCK) {
+                    buttonPressPending = X11Ext.INSTANCE.XCheckTypedWindowEvent(display.raw(),
+                            new Window(grabbedId), X11Ext.ButtonPress, event);
+                }
+                if (buttonPressPending) {
+                    dispatchButtonPress();
                     handled = true;
                 }
             }
@@ -142,6 +194,25 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
             onEmbeddedInfoChanged.accept(windowId);
         } catch (RuntimeException e) {
             e.printStackTrace();
+        }
+    }
+
+    /**
+     * The event itself carries no useful payload (a grabbed press on the
+     * whole window, not a specific button/coordinate the handler needs), so
+     * this only needs to know one landed, then invoke the handler and
+     * replay it through to the client. The replay runs in a {@code finally}
+     * block, unconditionally, so a misbehaving handler can never leave the
+     * pointer frozen for the rest of the X server.
+     */
+    private void dispatchButtonPress() {
+        try {
+            onButtonPress.run();
+        } catch (RuntimeException e) {
+            // A misbehaving handler must not take the watcher thread down.
+            e.printStackTrace();
+        } finally {
+            ButtonGrab.replay(display);
         }
     }
 

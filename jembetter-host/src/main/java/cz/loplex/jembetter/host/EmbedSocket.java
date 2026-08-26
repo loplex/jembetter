@@ -145,24 +145,25 @@ public final class EmbedSocket implements AutoCloseable {
      * </ul>
      *
      * <p>{@code hostCanvas} must already be displayable (i.e. part of a
-     * visible window). <strong>Known limitation:</strong> {@link
-     * #focusClient()} is only ever called automatically once, right after
-     * {@link #embed}/{@link #embedOpaque} — if the user clicks away from the
-     * embedded area (e.g. into the host's own menu bar) and back, focus does
-     * not return on its own. A plain {@code MouseListener} on {@code
-     * hostCanvas} cannot fix this: the embedded client's window is a real
-     * X11 window sized to cover the canvas exactly, and per X11 event
-     * propagation rules a button press stops at the first window in the
-     * hierarchy that selected for it — virtually every real client selects
-     * {@code ButtonPress} on its own window, so the press never bubbles up
-     * to an ancestor {@code Canvas} listener (confirmed by live testing
-     * against a real X server: such a listener never fires for a genuine
-     * click on the embedded area, only for one synthetically dispatched
-     * in-process). A real fix needs a passive {@code XGrabButton} on the
-     * embedded client's window (installed on embed, removed on detach),
-     * intercepting the press before the client sees it and replaying it
-     * afterward via {@code XAllowEvents(ReplayPointer)} so the client's own
-     * interactivity isn't broken.
+     * visible window). Clicking away from the embedded area (e.g. into the
+     * host's own menu bar) and back returns input focus to the embedded
+     * client automatically: a passive {@code XGrabButton} on the client
+     * window (installed on embed, removed on detach — see {@link
+     * cz.loplex.jembetter.core.x11.ButtonGrab}) intercepts the resulting
+     * {@code ButtonPress} before the client's own toolkit ever sees it,
+     * calls {@link #focusClient()}, then replays the press via {@code
+     * XAllowEvents(ReplayPointer)} so the client's own interactivity isn't
+     * broken. A plain {@code MouseListener} on {@code hostCanvas} cannot do
+     * this on its own: the embedded client's window is a real X11 window
+     * sized to cover the canvas exactly, and per X11 event propagation
+     * rules a button press stops at the first window in the hierarchy that
+     * selected for it — virtually every real client selects {@code
+     * ButtonPress} on its own window, so the press never bubbles up to an
+     * ancestor {@code Canvas} listener (confirmed by live testing against a
+     * real X server: such a listener never fires for a genuine click on the
+     * embedded area, only for one synthetically dispatched in-process,
+     * which is why the grab, not a listener, is what does the interception
+     * here).
      */
     public void open(Canvas hostCanvas) {
         long canvasWindowId = CanvasNativeHandle.extract(hostCanvas);
@@ -188,6 +189,7 @@ public final class EmbedSocket implements AutoCloseable {
         inbound = new XEmbedInboundWatcher(display, windowId);
         inbound.onClientMessage(this::handleInboundMessage);
         inbound.onEmbeddedInfoChanged(this::handleEmbeddedInfoChanged);
+        inbound.onButtonPress(this::focusClient);
     }
 
     /** Repositions/resizes this socket window and follows the resize into the embedded client, if any. */
@@ -337,6 +339,7 @@ public final class EmbedSocket implements AutoCloseable {
         sendActivated(owner.isFocused());
         deathWatcher.watch(clientWindowId, this::handleClientDetached);
         inbound.watchEmbeddedInfo(clientWindowId);
+        inbound.watchButtonPress(clientWindowId);
     }
 
     /**
@@ -375,6 +378,7 @@ public final class EmbedSocket implements AutoCloseable {
         InputFocus.set(display, clientWindowId);
         sendActivated(owner.isFocused());
         deathWatcher.watch(clientWindowId, this::handleClientDetached);
+        inbound.watchButtonPress(clientWindowId);
     }
 
     private void waitForReparentConfirmed(long clientWindowId, Duration pollInterval, int maxAttempts) {
@@ -442,6 +446,7 @@ public final class EmbedSocket implements AutoCloseable {
         int[] rootPosition = WindowGeometry.rootPosition(display, id);
         deathWatcher.unwatch(id);
         inbound.stopWatchingEmbeddedInfo();
+        inbound.stopWatchingButtonPress();
         Reparenting.release(display, id, display.defaultRootWindow().longValue(), rootPosition[0], rootPosition[1]);
         embeddedWindowId = -1;
     }
@@ -537,6 +542,7 @@ public final class EmbedSocket implements AutoCloseable {
     private void handleClientDetached(long detachedWindowId) {
         embeddedWindowId = -1;
         inbound.stopWatchingEmbeddedInfo();
+        inbound.stopWatchingButtonPress();
         onClientDetached.run();
     }
 

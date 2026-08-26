@@ -21,5 +21,8 @@ class X11ExtTest {
         assertDoesNotThrow(() -> library.getFunction("XReparentWindow"));
         assertDoesNotThrow(() -> library.getFunction("XSetInputFocus"));
         assertDoesNotThrow(() -> library.getFunction("XGetInputFocus"));
+        assertDoesNotThrow(() -> library.getFunction("XGrabButton"));
+        assertDoesNotThrow(() -> library.getFunction("XUngrabButton"));
+        assertDoesNotThrow(() -> library.getFunction("XAllowEvents"));
     }
 }

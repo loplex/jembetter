@@ -41,6 +41,32 @@ import java.util.List;
  * no hand-rolled {@code Kernel32.OpenProcess}/{@code WaitForSingleObject}
  * watcher is needed. The {@link #onDetached} callback runs on whichever
  * thread completes that future (a JDK-internal thread, not the EDT).
+ *
+ * <p><strong>Known limitation:</strong> unlike {@code EmbedSocket}'s X11
+ * backend (see its Javadoc), a click on the embedded area does not return
+ * input focus here on its own — {@link #requestFocus()} still has to be
+ * called explicitly. X11's fix (a passive {@code XGrabButton} that
+ * intercepts the press before the client's own toolkit sees it, then
+ * replays it) has no drop-in Win32 equivalent: ordinary window subclassing
+ * ({@code SetWindowSubclass}) only works within the subclassing process's
+ * own address space, since it installs a callback the target thread would
+ * have to execute — it cannot reach across into a genuinely separate
+ * process's HWND the way this class embeds one. The real Win32 mechanism
+ * for observing clicks system-wide without injecting a DLL into the
+ * embedded process is a low-level mouse hook ({@code
+ * SetWindowsHookEx(WH_MOUSE_LL, ...)}, which — unlike a non-low-level hook —
+ * runs in the hooking process itself): watch every {@code WM_LBUTTONDOWN},
+ * check whether its screen coordinates fall inside the embedded HWND's
+ * rect, and call {@link Win32Focus#set} if so. Structurally different from
+ * the X11 fix (observe-and-react rather than intercept-and-replay — nothing
+ * needs replaying, since a low-level hook never blocks the click), and with
+ * its own real caveats {@code SetWindowsHookEx}'s own documentation calls
+ * out (added latency on every mouse event system-wide while installed;
+ * UIPI can block hooking a higher-integrity-level window). Deliberately not
+ * implemented here without a real-machine spike to confirm it the way every
+ * other Win32 mechanism in this class was (see this module's package-info)
+ * — reasoned about from documented Win32 semantics, not verified live, so
+ * not shipped as a guess. See {@code docs/win32-status.md}.
  */
 final class EmbedHostWin32 implements EmbedHost {
 

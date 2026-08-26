@@ -23,8 +23,8 @@ jobs:
           java-version: "21"
           cache: maven
 
-      - name: Install Xvfb + openbox
-        run: sudo apt-get update && sudo apt-get install -y xvfb openbox
+      - name: Install Xvfb + openbox + xdotool
+        run: sudo apt-get update && sudo apt-get install -y xvfb openbox xdotool
 
       - name: mvn test
         run: mvn -B test
