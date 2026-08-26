@@ -27,6 +27,16 @@
       <artifactId>jembetter-client</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- jembetter-core's X11ErrorHandler only logs (no println); the
+         library itself ships no binding so embedding apps can pick their
+         own. This demo IS the "normal run" a person actually launches, so
+         it supplies one - see resources/simplelogger.properties for the
+         DEBUG threshold that keeps X11 error visibility matching the old
+         unconditional System.err.println behavior. -->
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+    </dependency>
   </dependencies>
 
   <build>

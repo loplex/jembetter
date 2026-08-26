@@ -39,7 +39,7 @@ class X11ErrorHandlerTest {
             }
 
             String logged = captured.toString(StandardCharsets.UTF_8);
-            assertTrue(logged.contains("[jembetter] X11 error:"), "expected the error handler to log; got: " + logged);
+            assertTrue(logged.contains("X11 error:"), "expected the error handler to log; got: " + logged);
         }
     }
 }

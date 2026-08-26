@@ -34,6 +34,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <jna.version>5.19.1</jna.version>
     <junit.version>5.11.3</junit.version>
+    <slf4j.version>2.0.18</slf4j.version>
     <!-- See the maven-surefire-plugin <jvm> configuration below and
          .mvn/xserver-jvm-wrapper/bin/java. Override on the command line,
          e.g. `-Dtest.xserver=Xephyr` to watch tests run, or
@@ -53,6 +54,16 @@
         <groupId>net.java.dev.jna</groupId>
         <artifactId>jna-platform</artifactId>
         <version>${jna.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-api</artifactId>
+        <version>${slf4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-simple</artifactId>
+        <version>${slf4j.version}</version>
       </dependency>
       <dependency>
         <groupId>org.junit.jupiter</groupId>
