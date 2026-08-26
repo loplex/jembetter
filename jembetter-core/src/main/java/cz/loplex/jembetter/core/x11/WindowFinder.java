@@ -29,19 +29,21 @@ public final class WindowFinder {
 
     public static List<Long> findTopLevelWindowsByPid(X11Display display, long pid) {
         Display raw = display.raw();
-        Atom netClientList = X11Ext.INSTANCE.XInternAtom(raw, "_NET_CLIENT_LIST", false);
-        Atom netWmPid = X11Ext.INSTANCE.XInternAtom(raw, "_NET_WM_PID", false);
+        synchronized (X11Display.GLOBAL_LOCK) {
+            Atom netClientList = X11Ext.INSTANCE.XInternAtom(raw, "_NET_CLIENT_LIST", false);
+            Atom netWmPid = X11Ext.INSTANCE.XInternAtom(raw, "_NET_WM_PID", false);
 
-        long[] clientWindowIds = X11Properties.readCardinal32(raw, display.defaultRootWindow(), netClientList);
+            long[] clientWindowIds = X11Properties.readCardinal32(raw, display.defaultRootWindow(), netClientList);
 
-        List<Long> matches = new ArrayList<>();
-        for (long id : clientWindowIds) {
-            long[] windowPid = X11Properties.readCardinal32(raw, new Window(id), netWmPid);
-            if (windowPid.length == 1 && windowPid[0] == pid) {
-                matches.add(id);
+            List<Long> matches = new ArrayList<>();
+            for (long id : clientWindowIds) {
+                long[] windowPid = X11Properties.readCardinal32(raw, new Window(id), netWmPid);
+                if (windowPid.length == 1 && windowPid[0] == pid) {
+                    matches.add(id);
+                }
             }
+            return matches;
         }
-        return matches;
     }
 
     /**
@@ -66,7 +68,10 @@ public final class WindowFinder {
      * instance name, which this deliberately ignores).
      */
     public static Optional<String> readWmClass(X11Display display, long windowId) {
-        List<String> parts = X11Properties.readStringList8(display.raw(), new Window(windowId), X11.XA_WM_CLASS);
+        List<String> parts;
+        synchronized (X11Display.GLOBAL_LOCK) {
+            parts = X11Properties.readStringList8(display.raw(), new Window(windowId), X11.XA_WM_CLASS);
+        }
         return parts.size() < 2 ? Optional.empty() : Optional.of(parts.get(1));
     }
 }

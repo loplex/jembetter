@@ -44,9 +44,11 @@ public final class WindowRelease {
     public static void release(X11Display display, long windowId) {
         Display raw = display.raw();
         Window window = new Window(windowId);
-        int screen = X11Ext.INSTANCE.XDefaultScreen(raw);
-        X11Ext.INSTANCE.XWithdrawWindow(raw, window, screen);
-        X11Ext.INSTANCE.XSync(raw, false);
+        synchronized (X11Display.GLOBAL_LOCK) {
+            int screen = X11Ext.INSTANCE.XDefaultScreen(raw);
+            X11Ext.INSTANCE.XWithdrawWindow(raw, window, screen);
+            X11Ext.INSTANCE.XSync(raw, false);
+        }
         waitForRootParent(display, windowId);
     }
 

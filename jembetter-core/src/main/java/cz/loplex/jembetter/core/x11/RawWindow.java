@@ -28,13 +28,15 @@ public final class RawWindow {
         RawWindowAttributes attributes = new RawWindowAttributes();
         attributes.override_redirect = 1;
 
-        Window window = X11Ext.INSTANCE.XCreateWindow(raw, display.defaultRootWindow(), x, y, width, height, 0,
-                X11Ext.CopyFromParent, X11Ext.InputOutput, null, new NativeLong(X11Ext.CWOverrideRedirect),
-                attributes);
-        X11Ext.INSTANCE.XMapWindow(raw, window);
-        X11Ext.INSTANCE.XRaiseWindow(raw, window);
-        X11Ext.INSTANCE.XFlush(raw);
-        return window.longValue();
+        synchronized (X11Display.GLOBAL_LOCK) {
+            Window window = X11Ext.INSTANCE.XCreateWindow(raw, display.defaultRootWindow(), x, y, width, height, 0,
+                    X11Ext.CopyFromParent, X11Ext.InputOutput, null, new NativeLong(X11Ext.CWOverrideRedirect),
+                    attributes);
+            X11Ext.INSTANCE.XMapWindow(raw, window);
+            X11Ext.INSTANCE.XRaiseWindow(raw, window);
+            X11Ext.INSTANCE.XFlush(raw);
+            return window.longValue();
+        }
     }
 
     /**
@@ -49,16 +51,20 @@ public final class RawWindow {
     public static long createChild(X11Display display, long parentWindowId, int width, int height) {
         Display raw = display.raw();
 
-        Window window = X11Ext.INSTANCE.XCreateWindow(raw, new Window(parentWindowId), 0, 0, width, height, 0,
-                X11Ext.CopyFromParent, X11Ext.InputOutput, null, new NativeLong(0), null);
-        X11Ext.INSTANCE.XMapWindow(raw, window);
-        X11Ext.INSTANCE.XFlush(raw);
-        return window.longValue();
+        synchronized (X11Display.GLOBAL_LOCK) {
+            Window window = X11Ext.INSTANCE.XCreateWindow(raw, new Window(parentWindowId), 0, 0, width, height, 0,
+                    X11Ext.CopyFromParent, X11Ext.InputOutput, null, new NativeLong(0), null);
+            X11Ext.INSTANCE.XMapWindow(raw, window);
+            X11Ext.INSTANCE.XFlush(raw);
+            return window.longValue();
+        }
     }
 
     public static void destroy(X11Display display, long windowId) {
         Display raw = display.raw();
-        X11Ext.INSTANCE.XDestroyWindow(raw, new Window(windowId));
-        X11Ext.INSTANCE.XFlush(raw);
+        synchronized (X11Display.GLOBAL_LOCK) {
+            X11Ext.INSTANCE.XDestroyWindow(raw, new Window(windowId));
+            X11Ext.INSTANCE.XFlush(raw);
+        }
     }
 }

@@ -145,7 +145,9 @@ public final class EmbedClient implements AutoCloseable {
     public void requestFocus() {
         long id = embedderWindowId;
         if (id >= 0) {
-            XEmbedMessages.send(display.raw(), id, XEmbedMessage.REQUEST_FOCUS, 0, 0, 0);
+            synchronized (X11Display.GLOBAL_LOCK) {
+                XEmbedMessages.send(display.raw(), id, XEmbedMessage.REQUEST_FOCUS, 0, 0, 0);
+            }
         }
     }
 
@@ -214,8 +216,10 @@ public final class EmbedClient implements AutoCloseable {
         long pid = ProcessHandle.current().pid();
         windowId = waitForOwnWindow(pid, wmClass);
 
-        XEmbedInfoProperty.write(display.raw(), windowId,
-                new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
+        synchronized (X11Display.GLOBAL_LOCK) {
+            XEmbedInfoProperty.write(display.raw(), windowId,
+                    new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
+        }
 
         awaitingEmbed = true;
         reparentWatcher.watch(windowId, this::handleReparented);

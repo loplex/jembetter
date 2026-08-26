@@ -51,8 +51,10 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
     public XEmbedInboundWatcher(X11Display display, long embedderWindowId) {
         this.display = display;
         this.embedderWindow = new Window(embedderWindowId);
-        this.xembedAtom = X11Ext.INSTANCE.XInternAtom(display.raw(), XEmbedAtoms.XEMBED, false);
-        this.xembedInfoAtom = X11Ext.INSTANCE.XInternAtom(display.raw(), XEmbedAtoms.XEMBED_INFO, false);
+        synchronized (X11Display.GLOBAL_LOCK) {
+            this.xembedAtom = X11Ext.INSTANCE.XInternAtom(display.raw(), XEmbedAtoms.XEMBED, false);
+            this.xembedInfoAtom = X11Ext.INSTANCE.XInternAtom(display.raw(), XEmbedAtoms.XEMBED_INFO, false);
+        }
         this.thread = new Thread(this::loop, "xembed-inbound-watcher");
         thread.setDaemon(true);
         thread.start();
@@ -70,9 +72,11 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
 
     /** Starts tracking {@code _XEMBED_INFO} PropertyNotify for the currently embedded client window. */
     public void watchEmbeddedInfo(long clientWindowId) {
-        X11Ext.INSTANCE.XSelectInput(display.raw(), new Window(clientWindowId),
-                new NativeLong(X11Ext.PropertyChangeMask));
-        X11Ext.INSTANCE.XFlush(display.raw());
+        synchronized (X11Display.GLOBAL_LOCK) {
+            X11Ext.INSTANCE.XSelectInput(display.raw(), new Window(clientWindowId),
+                    new NativeLong(X11Ext.PropertyChangeMask));
+            X11Ext.INSTANCE.XFlush(display.raw());
+        }
         embeddedInfoWindowId = clientWindowId;
     }
 
@@ -85,15 +89,26 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
         XEvent event = new XEvent();
         while (!Thread.currentThread().isInterrupted()) {
             boolean handled = false;
-            if (X11Ext.INSTANCE.XCheckTypedWindowEvent(display.raw(), embedderWindow, X11Ext.ClientMessage, event)) {
+            boolean clientMessagePending;
+            synchronized (X11Display.GLOBAL_LOCK) {
+                clientMessagePending = X11Ext.INSTANCE.XCheckTypedWindowEvent(display.raw(), embedderWindow,
+                        X11Ext.ClientMessage, event);
+            }
+            if (clientMessagePending) {
                 dispatchClientMessage(event);
                 handled = true;
             }
             long watchedId = embeddedInfoWindowId;
-            if (watchedId >= 0 && X11Ext.INSTANCE.XCheckTypedWindowEvent(display.raw(), new Window(watchedId),
-                    X11Ext.PropertyNotify, event)) {
-                dispatchPropertyNotify(event, watchedId);
-                handled = true;
+            if (watchedId >= 0) {
+                boolean propertyNotifyPending;
+                synchronized (X11Display.GLOBAL_LOCK) {
+                    propertyNotifyPending = X11Ext.INSTANCE.XCheckTypedWindowEvent(display.raw(),
+                            new Window(watchedId), X11Ext.PropertyNotify, event);
+                }
+                if (propertyNotifyPending) {
+                    dispatchPropertyNotify(event, watchedId);
+                    handled = true;
+                }
             }
             if (!handled) {
                 idle();
