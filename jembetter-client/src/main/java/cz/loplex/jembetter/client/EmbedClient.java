@@ -1,6 +1,8 @@
 package cz.loplex.jembetter.client;
 
 import cz.loplex.jembetter.common.ipc.PidHandshake;
+import cz.loplex.jembetter.core.x11.SizeListener;
+import cz.loplex.jembetter.core.x11.WindowConfigureWatcher;
 import cz.loplex.jembetter.core.x11.WindowFinder;
 import cz.loplex.jembetter.core.x11.WindowReparentWatcher;
 import cz.loplex.jembetter.core.x11.X11Display;
@@ -31,12 +33,15 @@ public final class EmbedClient implements AutoCloseable {
 
     private final X11Display display = X11Display.open(null);
     private final WindowReparentWatcher reparentWatcher = new WindowReparentWatcher();
+    private final WindowConfigureWatcher configureWatcher = new WindowConfigureWatcher();
     private long windowId = -1;
     private volatile long embedderWindowId = -1;
     private volatile boolean awaitingEmbed = false;
     private volatile Runnable onHostDetached = () -> {
     };
     private volatile LongConsumer onEmbedded = embedderId -> {
+    };
+    private volatile SizeListener onResized = (width, height) -> {
     };
     private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
 
@@ -88,6 +93,49 @@ public final class EmbedClient implements AutoCloseable {
     /** The embedder's window id last reported to {@link #onEmbedded}, or -1 if not currently embedded. */
     public long embedderWindowId() {
         return embedderWindowId;
+    }
+
+    /**
+     * Registers a callback invoked whenever this window's own size changes,
+     * with its new width/height in pixels — in particular, when a host
+     * follows its own resize into the embedded window (see {@code
+     * EmbedSocket#resize}), the same way it would for a cooperative,
+     * XEmbed-aware client. Unlike {@link #onEmbedded}/{@link
+     * #onHostDetached}'s {@code ReparentNotify}-based mechanism, this needs
+     * no {@link #announce} at all — {@link #watchOwnWindow} is enough — so a
+     * toolkit-opaque client (e.g. JavaFX, embedded via {@code
+     * EmbedSocket#embedOpaque}) can still learn its own on-screen size
+     * without any handshake, and drive its own scene-graph relayout from it
+     * instead of a side channel of the caller's own (e.g. a stdin protocol)
+     * that would otherwise have to be kept in sync with the embedder's
+     * geometry by hand. Runs on {@link WindowConfigureWatcher}'s own
+     * background thread.
+     */
+    public void onResized(SizeListener callback) {
+        onResized = callback;
+        if (windowId >= 0) {
+            configureWatcher.watch(windowId, (width, height) -> onResized.resized(width, height));
+        }
+    }
+
+    /**
+     * Starts watching this process's own already-known top-level window
+     * ({@code windowId}) for {@link #onEmbedded}/{@link #onHostDetached}/
+     * {@link #onResized} — everything {@link #announce} does except
+     * resolving the window by pid/{@code WM_CLASS} and publishing {@code
+     * _XEMBED_INFO}, both unneeded for a toolkit-opaque client whose host
+     * embeds it via {@code EmbedSocket#embedOpaque} (which writes {@code
+     * _XEMBED_INFO} on the client's behalf and doesn't require the client to
+     * have announced itself at all). Use this when the client process
+     * already knows its own native window handle directly (the same one it
+     * hands the host out-of-band, e.g. on its own stdout) rather than
+     * needing this class to resolve it.
+     */
+    public void watchOwnWindow(long windowId) {
+        this.windowId = windowId;
+        awaitingEmbed = true;
+        reparentWatcher.watch(windowId, this::handleReparented);
+        configureWatcher.watch(windowId, (width, height) -> onResized.resized(width, height));
     }
 
     /**
@@ -171,6 +219,7 @@ public final class EmbedClient implements AutoCloseable {
 
         awaitingEmbed = true;
         reparentWatcher.watch(windowId, this::handleReparented);
+        configureWatcher.watch(windowId, (width, height) -> onResized.resized(width, height));
     }
 
     private void handleReparented(long newParentId) {
@@ -232,6 +281,7 @@ public final class EmbedClient implements AutoCloseable {
     @Override
     public void close() {
         reparentWatcher.close();
+        configureWatcher.close();
         display.close();
     }
 }
