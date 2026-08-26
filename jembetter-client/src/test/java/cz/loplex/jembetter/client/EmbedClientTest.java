@@ -4,6 +4,7 @@ import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.x11.RawWindow;
 import cz.loplex.jembetter.core.x11.Reparenting;
 import cz.loplex.jembetter.core.x11.WindowFinder;
+import cz.loplex.jembetter.core.x11.WindowGeometry;
 import cz.loplex.jembetter.core.x11.X11Display;
 import cz.loplex.jembetter.core.xembed.XEmbedInboundWatcher;
 import cz.loplex.jembetter.core.xembed.XEmbedMessage;
@@ -150,6 +151,70 @@ class EmbedClientTest {
 
             assertTrue(embedded.await(5, TimeUnit.SECONDS), "onEmbedded was never invoked after announce()");
             assertEquals(embedderWindow, reportedEmbedderWindow.get());
+        }
+    }
+
+    /**
+     * Regression coverage for {@link EmbedClient#watchOwnWindow}/{@link
+     * EmbedClient#onResized}: a toolkit-opaque client embedded via {@code
+     * EmbedSocket#embedOpaque} never calls {@link EmbedClient#announce}, so
+     * this is the only path that wires {@link
+     * cz.loplex.jembetter.core.x11.WindowConfigureWatcher} up for it.
+     */
+    @Test
+    void watchOwnWindowInvokesOnResizedWhenAnotherConnectionResizesTheWindow() throws InterruptedException {
+        try (X11Display rawDisplay = X11Display.open(null)) {
+            long windowId = RawWindow.createOverrideRedirect(rawDisplay, 0, 0, 10, 10);
+            try {
+                CountDownLatch resized = new CountDownLatch(1);
+                AtomicLong reportedWidth = new AtomicLong(-1);
+                AtomicLong reportedHeight = new AtomicLong(-1);
+                client = new EmbedClient();
+                client.onResized((width, height) -> {
+                    reportedWidth.set(width);
+                    reportedHeight.set(height);
+                    resized.countDown();
+                });
+                client.watchOwnWindow(windowId);
+
+                // Stands in for a host following its own resize into an
+                // embedded window (WindowGeometry#moveResize), on a
+                // connection distinct from both the client's and the raw
+                // window's creator above.
+                try (X11Display hostDisplay = X11Display.open(null)) {
+                    WindowGeometry.moveResize(hostDisplay, windowId, 0, 0, 42, 24);
+                }
+
+                assertTrue(resized.await(5, TimeUnit.SECONDS), "onResized was never invoked");
+                assertEquals(42, reportedWidth.get());
+                assertEquals(24, reportedHeight.get());
+            } finally {
+                RawWindow.destroy(rawDisplay, windowId);
+            }
+        }
+    }
+
+    /** Covers {@link EmbedClient#onResized}'s rewatch branch: registering the callback after {@link EmbedClient#watchOwnWindow} must still wire it up. */
+    @Test
+    void onResizedRegisteredAfterWatchOwnWindowStillReceivesCallbacks() throws InterruptedException {
+        try (X11Display rawDisplay = X11Display.open(null)) {
+            long windowId = RawWindow.createOverrideRedirect(rawDisplay, 0, 0, 10, 10);
+            try {
+                client = new EmbedClient();
+                client.watchOwnWindow(windowId);
+
+                CountDownLatch resized = new CountDownLatch(1);
+                client.onResized((width, height) -> resized.countDown());
+
+                try (X11Display hostDisplay = X11Display.open(null)) {
+                    WindowGeometry.moveResize(hostDisplay, windowId, 0, 0, 33, 18);
+                }
+
+                assertTrue(resized.await(5, TimeUnit.SECONDS),
+                        "onResized registered after watchOwnWindow was never invoked");
+            } finally {
+                RawWindow.destroy(rawDisplay, windowId);
+            }
         }
     }
 
