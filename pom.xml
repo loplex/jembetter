@@ -41,6 +41,14 @@
          `-Dtest.xserver=` to opt out and run against whatever DISPLAY you
          already have (or none). -->
     <test.xserver>Xvfb</test.xserver>
+    <!-- Tests tagged "visual" (e.g. jembetter-host's VisualEmbedDemoTest)
+         narrate themselves with Thread.sleep between steps for a human to
+         watch - unattended runs like `mvn test`/`install` must skip them.
+         To actually run one: `mvn test -Dtest.xserver=Xephyr -Dgroups=visual
+         -Dtest.excludedGroups=` (the empty override is required - leaving
+         the default in place would exclude the very tests -Dgroups=visual
+         asks for). -->
+    <test.excludedGroups>visual</test.excludedGroups>
   </properties>
 
   <dependencyManagement>
@@ -91,6 +99,7 @@
                  but that file has no effect on this plugin's forked test JVM, so they're
                  repeated here. -->
             <argLine>--enable-native-access=ALL-UNNAMED --add-opens java.desktop/java.awt=ALL-UNNAMED --add-opens java.desktop/sun.awt.X11=ALL-UNNAMED</argLine>
+            <excludedGroups>${test.excludedGroups}</excludedGroups>
           </configuration>
         </plugin>
         <plugin>

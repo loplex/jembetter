@@ -214,6 +214,24 @@ whatever `DISPLAY` it inherited (your desktop's), opening a visible window
 per test JVM fork that you can watch windows get created/moved/reparented
 in live, instead of on a headless, invisible Xvfb.
 
+That said, the real test suite is tuned for speed, not for watching: most
+windows are 10-100px and every step happens in well under a second, so on
+a 1280x1024 Xephyr screen you'll mostly see a blink in the top-left corner.
+For an actual guided look, run the one test written for that purpose —
+`jembetter-host`'s `VisualEmbedDemoTest` — which is tagged `visual` and
+excluded from every normal run (`test.excludedGroups` in the root `pom.xml`)
+because it narrates itself with `Thread.sleep` between steps:
+
+```
+mvn test -pl jembetter-host -Dtest.xserver=Xephyr -Dgroups=visual -Dtest.excludedGroups= -Dtest=VisualEmbedDemoTest
+```
+
+It opens a human-sized host window and a separate client process, then
+walks through embedding, a host-driven resize, and a simulated client
+crash — each step printed to the console before it happens — so you can
+actually watch the reparent/resize/detach mechanics play out in the Xephyr
+window.
+
 ## Win32 backend status
 
 `EmbedHost`/`EmbedPlug`'s Win32 (`SetParent`) backend — what's confirmed
