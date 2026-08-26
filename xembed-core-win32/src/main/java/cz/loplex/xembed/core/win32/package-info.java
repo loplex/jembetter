@@ -7,22 +7,37 @@
  * InputFocus}, {@link cz.loplex.xembed.core.win32.Win32WindowFinder} for
  * {@code WindowFinder}.
  *
- * <p><b>Unverified against a real Windows machine.</b> A Wine-based smoke
- * test (see {@code .mvn/win32-wine-smoketest} in this repo) confirmed these
- * JNA calls actually reach real {@code user32.dll}/{@code kernel32.dll}
- * entry points and that basic {@code SetParent}/{@code MoveWindow}/{@code
- * EnumWindows} mechanics plausibly work, since Wine's {@code winex11.drv}
- * renders Win32 windows as real X11 windows on Linux. Wine does not
- * faithfully replicate Windows' foreground-lock restriction on {@code
- * SetForegroundWindow}/{@code SetFocus} from a non-foreground process (see
- * {@link cz.loplex.xembed.core.win32.Win32Focus}), Windows-version-specific
- * {@code explorer.exe}/{@code dwm.exe} policy quirks, or the process model
- * {@link java.lang.ProcessHandle#onExit()} relies on for a foreign (not
- * self-spawned) pid — none of that is confirmed by anything run so far. No
- * {@code os.name} dispatch wires these primitives into {@code EmbedHost}/
- * {@code EmbedPlug}/{@code EmbedSocket}/{@code EmbedClient} yet; that's
- * deferred until a real Windows machine spike answers the open questions
- * (host-initiated-reparent symmetry, {@code embedOpaque}'s always-on
- * behavior on this backend).
+ * <p><b>Confirmed against a real Windows machine (2026-08-26).</b> A
+ * Wine-based smoke test (see {@code .mvn/win32-wine-smoketest} in this
+ * repo) had already confirmed these JNA calls reach real {@code
+ * user32.dll}/{@code kernel32.dll} entry points and that basic {@code
+ * SetParent}/{@code MoveWindow}/{@code EnumWindows} mechanics plausibly
+ * work. A one-off real-machine spike, run against real {@code
+ * windows-latest} CI (not Wine), then confirmed, on genuine Windows, the
+ * following:
+ *
+ * <ol>
+ *   <li>{@code SetParent}+style-flip+poll-verify between a real AWT
+ *       {@code Canvas} HWND and a separate JVM's window — confirmed
+ *       working.</li>
+ *   <li>{@code SetFocus}/{@code SetForegroundWindow}'s foreground-lock
+ *       restriction from a non-foreground process — confirmed to actually
+ *       bite (a silent no-op, {@code SetForegroundWindow} can return
+ *       {@code true} without the foreground changing); see
+ *       {@link cz.loplex.xembed.core.win32.Win32Focus}'s Javadoc for the
+ *       workaround this led to.</li>
+ *   <li>{@link java.lang.ProcessHandle#onExit()} for a foreign (not
+ *       self-spawned) pid — confirmed reliable.</li>
+ *   <li>{@code AF_UNIX} rendezvous between two JVMs — confirmed working.</li>
+ * </ol>
+ *
+ * Windows-version-specific {@code explorer.exe}/{@code dwm.exe} policy
+ * quirks beyond what the spike exercised remain unconfirmed. No {@code
+ * os.name} dispatch wires these primitives into {@code EmbedHost}/{@code
+ * EmbedPlug}/{@code EmbedSocket}/{@code EmbedClient} yet; that remains a
+ * separate follow-up now that the spike's findings settle the open design
+ * questions (host-initiated reparent stays symmetric with X11, confirmed by
+ * question 1 above; {@code embedOpaque}'s always-on behavior on this
+ * backend is unaffected by any of the four questions).
  */
 package cz.loplex.xembed.core.win32;

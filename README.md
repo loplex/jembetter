@@ -321,28 +321,39 @@ in live, instead of on a headless, invisible Xvfb.
 `xembed-core-win32` has `Win32Reparent`/`Win32WindowGeometry`/`Win32Focus`/
 `Win32WindowFinder`, mirroring `xembed-core`'s X11 primitives 1:1
 (`SetParent`+style-flip, `MoveWindow`/`ShowWindow`, `SetFocus`,
-`EnumWindows`+`GetWindowThreadProcessId`). **Unverified against a real
-Windows machine.** Its JUnit tests are gated with
+`EnumWindows`+`GetWindowThreadProcessId`). Its JUnit tests are gated with
 `@EnabledOnOs(OS.WINDOWS)`, so they're skipped (not run, not failed) by this
 repo's own `mvn test` on Linux.
 
-What has actually been checked so far: `.mvn/win32-wine-smoketest/run.sh`
-downloads a real Windows JDK and runs those same JUnit tests under Wine
-(Wine's `winex11.drv` renders Win32 windows as real X11 windows on Linux,
-so a Windows PE JVM process genuinely calls into Wine's `user32.dll`/
-`kernel32.dll` implementations, not just type-checks against JNA's Java-side
-declarations). That confirms the JNA bindings link and that basic
-`SetParent`/`MoveWindow`/`EnumWindows` mechanics plausibly work. It does
-**not** confirm Windows' foreground-lock restriction on `SetFocus` (Wine
-doesn't faithfully replicate that policy — see `Win32Focus`'s Javadoc),
-any real Windows-version-specific behavior, or `ProcessHandle.onExit()`'s
-reliability for a foreign pid on Windows. Answering those needs a real
-Windows machine, not this Wine-based smoke test.
+`.mvn/win32-wine-smoketest/run.sh` had already confirmed the JNA bindings
+link against real `user32.dll`/`kernel32.dll` entry points under Wine, and
+that basic `SetParent`/`MoveWindow`/`EnumWindows` mechanics plausibly work.
+A one-off real-machine spike, run against real `windows-latest` CI on
+2026-08-26, then confirmed, on genuine Windows rather than Wine, the
+following:
+
+1. `SetParent`+style-flip+poll-verify between a real AWT `Canvas` HWND and a
+   separate JVM's window — **confirmed working**.
+2. `SetFocus`/`SetForegroundWindow`'s foreground-lock restriction from a
+   non-foreground process — **confirmed to actually bite** (a silent
+   no-op; `SetForegroundWindow` can even return `true` without the
+   foreground actually changing). `Win32Focus.set` now falls back to
+   `AttachThreadInput` to work around it — see `Win32Focus`'s Javadoc for
+   what the spike itself confirmed versus what's an implementation choice
+   made afterward.
+3. `ProcessHandle.onExit()` for a foreign (not self-spawned) pid —
+   **confirmed reliable**.
+4. `AF_UNIX` rendezvous between two JVMs on Windows — **confirmed working**.
+
+Windows-version-specific `explorer.exe`/`dwm.exe` policy quirks beyond what
+the spike exercised remain unconfirmed.
 
 No `os.name` dispatch wires these primitives into `EmbedHost`/`EmbedPlug`/
-`EmbedSocket`/`EmbedClient` yet — that's intentionally deferred until a real
-Windows-machine spike settles the open design questions (host-initiated
-reparent symmetry, `embedOpaque`'s always-on behavior on this backend).
+`EmbedSocket`/`EmbedClient` yet — that's a separate follow-up now that the
+spike's findings settle the open design questions (host-initiated reparent
+stays symmetric with X11, confirmed by question 1 above; `embedOpaque`'s
+always-on behavior on this backend is unaffected by any of the four
+questions).
 
 ## Known limitations
 
