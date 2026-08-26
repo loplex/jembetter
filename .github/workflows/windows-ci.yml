@@ -1,0 +1,29 @@
+name: Windows (Win32) CI
+
+# Runs the full reactor's test suite on real windows-latest, not Wine
+# (.mvn/win32-wine-smoketest/) or the since-deleted throwaway Win32 spike -
+# this is what actually exercises EmbedHostWin32Test/EmbedPlugWin32Test/
+# Win32ReparentWatcherTest end to end. X11-only tests
+# (@EnabledIfEnvironmentVariable(named = "DISPLAY", ...)) are skipped here,
+# not run, since there's no DISPLAY on Windows - see linux-ci.yml.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: mvn test
+        run: mvn -B test

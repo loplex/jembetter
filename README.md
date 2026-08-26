@@ -373,8 +373,14 @@ rather than reasoned about:
 
 `EmbedHostWin32Test`/`EmbedPlugWin32Test`/`Win32ReparentWatcherTest` cover
 this wiring, gated `@EnabledOnOs(OS.WINDOWS)` like the rest of this module's
-tests — written and passing compilation on Linux, but not yet run against a
-real Windows machine themselves.
+tests, and run on every push via `.github/workflows/windows-ci.yml`, a
+persistent `windows-latest` job. `.github/workflows/linux-ci.yml` runs the
+same reactor's tests the other way, against a real Xvfb + openbox pair.
+
+`maven-surefire-plugin`'s `<jvm>` wrapper (see `.mvn/xserver-jvm-wrapper/bin/java`
+above) only applies under an `os.family=unix`-activated Maven profile: it's a
+bash script, and Windows can't launch it as the forked test JVM's executable
+at all, so plain `mvn test` needs the default fork there instead.
 
 ## Known limitations
 
