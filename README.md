@@ -10,22 +10,22 @@ to the host over a Unix domain socket to hand off its process id, the host
 resolves that to a window id via X11 and reparents it directly.
 
 Built and tested against a real X server (no Xvfb/mocking) on Linux/X11 —
-there is no Wayland support. `xembed-core-win32` is a Win32 (`SetParent`)
-primitives skeleton for a future Windows backend; it isn't wired into
-`EmbedHost`/`EmbedPlug`/`EmbedSocket`/`EmbedClient` yet and is unverified
-against a real Windows machine — see [Win32 backend
-status](#win32-backend-status) below.
+there is no Wayland support. `EmbedHost`/`EmbedPlug` also dispatch to a Win32
+(`SetParent`) backend by `os.name`, confirmed against a real Windows machine
+for the primitives it's built from — see [Win32 backend
+status](#win32-backend-status) below for exactly what was confirmed versus
+what's a reasoned-about implementation choice on top.
 
 ## Modules
 
 - **`xembed-core-common`** — platform-independent, JNA-free code shared by
   both sides (the rendezvous handshake, AWT `Canvas`-to-native-handle
-  extraction). Not meant to be depended on directly.
+  extraction, `os.name` dispatch). Not meant to be depended on directly.
 - **`xembed-core`** — X11 native bindings (via JNA) and the XEmbed protocol
   implementation shared by both sides. Not meant to be depended on directly.
 - **`xembed-core-win32`** — Win32 native bindings (via JNA) mirroring
-  `xembed-core`'s X11 primitives 1:1. Not depended on by `xembed-host`/
-  `xembed-client` yet — see [Win32 backend status](#win32-backend-status).
+  `xembed-core`'s X11 primitives 1:1. Backs `xembed-host`/`xembed-client`'s
+  Win32 implementations — see [Win32 backend status](#win32-backend-status).
 - **`xembed-host`** — embedder-side API: `EmbedHost` (quick start, a 1:1
   facade for embedding a single self-spawned client) and `EmbedSocket`
   (advanced — multi-client, socket rendezvous) both host another process's
@@ -348,12 +348,33 @@ following:
 Windows-version-specific `explorer.exe`/`dwm.exe` policy quirks beyond what
 the spike exercised remain unconfirmed.
 
-No `os.name` dispatch wires these primitives into `EmbedHost`/`EmbedPlug`/
-`EmbedSocket`/`EmbedClient` yet — that's a separate follow-up now that the
-spike's findings settle the open design questions (host-initiated reparent
-stays symmetric with X11, confirmed by question 1 above; `embedOpaque`'s
-always-on behavior on this backend is unaffected by any of the four
-questions).
+`os.name` dispatch now wires these primitives into `EmbedHost`/`EmbedPlug`
+(`EmbedHostWin32`/`EmbedPlugWin32`), settling the two design questions that
+were still open pending this spike: host-initiated reparent stays symmetric
+with X11 (confirmed by question 1 above), and `embedOpaque`/`embed` collapse
+into the exact same `SetParent`+poll-verify operation on this backend, since
+there's no `_XEMBED_INFO` equivalent to make them differ. `EmbedSocket`/
+`EmbedClient` (the advanced, multi-client X11 API) have no Win32 counterpart.
+
+Two things this wiring adds that the spike itself didn't exercise, both
+reasoned about from documented Win32 semantics rather than confirmed live —
+worth a dedicated real-machine check if either ever needs to be verified
+rather than reasoned about:
+
+- `Win32Focus.set`'s `AttachThreadInput` fallback (see its own Javadoc) —
+  the spike only tried the `AllowSetForegroundWindow` workaround.
+- `Win32ReparentWatcher`, a poll-based stand-in for X11's event-driven
+  `WindowReparentWatcher` that `EmbedPlugWin32` uses to detect being embedded
+  and the host detaching, since Win32 has no externally-observable reparent
+  event and no save-set mechanism — destroying a parent HWND destroys its
+  children outright, unlike X11 reparenting a released child back to the
+  root window alive. See `Win32ReparentWatcher`'s and `EmbedPlugWin32`'s
+  Javadoc for that asymmetry.
+
+`EmbedHostWin32Test`/`EmbedPlugWin32Test`/`Win32ReparentWatcherTest` cover
+this wiring, gated `@EnabledOnOs(OS.WINDOWS)` like the rest of this module's
+tests — written and passing compilation on Linux, but not yet run against a
+real Windows machine themselves.
 
 ## Known limitations
 
