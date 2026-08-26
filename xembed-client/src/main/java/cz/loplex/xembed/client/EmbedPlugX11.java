@@ -4,9 +4,9 @@ import java.nio.file.Path;
 import java.util.function.LongConsumer;
 
 /**
- * {@link EmbedPlug}'s only implementation today — X11, via {@link
- * EmbedClient}. See {@code xembed-host.EmbedHostX11}'s Javadoc for why this
- * isn't yet OS-dispatched.
+ * {@link EmbedPlug}'s X11 implementation, via {@link EmbedClient} — see
+ * {@link EmbedPlugWin32} for the Win32 counterpart {@link EmbedPlug#create}
+ * dispatches to instead on Windows.
  */
 final class EmbedPlugX11 implements EmbedPlug {
 

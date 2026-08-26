@@ -1,25 +1,37 @@
 package cz.loplex.xembed.client;
 
+import cz.loplex.xembed.common.Platform;
+
 import java.nio.file.Path;
 import java.util.function.LongConsumer;
 
 /**
- * Simplified 1:1 client-side facade over {@link EmbedClient}, matching
- * {@code xembed-host.EmbedHost} on the other side. Composed entirely from
- * {@link EmbedClient}; nothing here re-implements X11 handling of its own.
+ * Simplified 1:1 client-side facade dispatched by {@code os.name} to either
+ * an X11 backend ({@link EmbedPlugX11}, over {@link EmbedClient}) or a
+ * Win32 backend ({@link EmbedPlugWin32}), matching {@code
+ * xembed-host.EmbedHost} on the other side.
+ *
+ * <p>Reparenting is host-initiated on both backends (confirmed for Win32 by
+ * a real-machine spike — see {@code xembed-core-win32}'s package-info), so
+ * this class's role is the same either way: make this process's own
+ * top-level window findable/watchable and wait for the host to act. {@code
+ * wmClass} disambiguation (see {@link #announce(String)}) has no Win32
+ * equivalent — {@link EmbedPlugWin32} requires it to be {@code null}.
  */
 public interface EmbedPlug extends AutoCloseable {
 
-    /** Creates a plug backed by this process's default X11 client implementation. */
+    /** Creates a plug backed by this process's default client implementation for the current OS. */
     static EmbedPlug create() {
-        return new EmbedPlugX11();
+        return Platform.isWindows() ? new EmbedPlugWin32() : new EmbedPlugX11();
     }
 
     /**
      * Does everything needed to become embeddable except dial a host
      * socket, for a host that already knows this process's pid directly —
      * see {@link EmbedClient#announce(String)}. Pass {@code null} for a
-     * process with a single top-level window.
+     * process with a single top-level window (required on the Win32
+     * backend, which has no {@code WM_CLASS} equivalent to disambiguate
+     * with).
      */
     void announce(String wmClass);
 
@@ -27,7 +39,8 @@ public interface EmbedPlug extends AutoCloseable {
      * Hands this process's pid to the host listening at {@code hostSocket}
      * so it can look this process's window up and reparent it — see {@link
      * EmbedClient#offer(Path, String)}. Pass {@code null} for {@code
-     * wmClass} for a process with a single top-level window.
+     * wmClass} for a process with a single top-level window (required on
+     * the Win32 backend).
      */
     void announce(Path hostSocket, String wmClass);
 
