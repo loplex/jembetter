@@ -37,6 +37,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.IntFunction;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -564,6 +565,21 @@ public final class EmbedSocket implements AutoCloseable {
     }
 
     private long resolveClientWindow(long clientPid) {
+        String wmClass = expectedClientWmClass;
+        if (wmClass != null) {
+            // Filter by WM_CLASS from the first poll, rather than waiting
+            // for *any* candidate and only then checking its class: a
+            // multi-window client's sibling windows can still be unmapped at
+            // that first sight, so stopping as soon as exactly one candidate
+            // exists (regardless of class) can return the wrong window
+            // before the expected one has even appeared.
+            return pollForSingleMatch(
+                    () -> WindowFinder.findTopLevelWindowsByPidAndClass(display, clientPid, wmClass),
+                    "Client process " + clientPid + " never published a top-level window matching WM_CLASS \""
+                            + wmClass + "\"",
+                    count -> "Client process " + clientPid + " has " + count + " top-level windows matching WM_CLASS \""
+                            + wmClass + "\" (need exactly 1)");
+        }
         List<Long> candidates = pollUntil(
                 () -> WindowFinder.findTopLevelWindowsByPid(display, clientPid),
                 list -> !list.isEmpty(),
@@ -571,21 +587,31 @@ public final class EmbedSocket implements AutoCloseable {
         if (candidates.size() == 1) {
             return candidates.get(0);
         }
+        throw new IllegalStateException("Client process " + clientPid + " has " + candidates.size()
+                + " top-level windows; call expectClientWindowClass(...) to disambiguate");
+    }
 
-        String wmClass = expectedClientWmClass;
-        if (wmClass == null) {
-            throw new IllegalStateException("Client process " + clientPid + " has " + candidates.size()
-                    + " top-level windows; call expectClientWindowClass(...) to disambiguate");
-        }
-        List<Long> matches = candidates.stream()
-                .filter(id -> WindowFinder.readWmClass(display, id).map(wmClass::equals).orElse(false))
-                .toList();
-        if (matches.size() != 1) {
-            throw new IllegalStateException("Client process " + clientPid + " has " + candidates.size()
-                    + " top-level windows and " + matches.size() + " match WM_CLASS \"" + wmClass
-                    + "\" (need exactly 1)");
-        }
-        return matches.get(0);
+    /**
+     * Polls {@code probe} until it returns exactly one match, failing fast
+     * (before {@code windowLookupTimeout} elapses) if it ever returns more
+     * than one — an ambiguous match won't resolve itself by waiting longer —
+     * but retrying on zero, since the expected match may simply not have
+     * appeared yet.
+     */
+    private long pollForSingleMatch(Supplier<List<Long>> probe, String timeoutMessage,
+            IntFunction<String> ambiguousMessage) {
+        long deadline = System.nanoTime() + windowLookupTimeout.toNanos();
+        do {
+            List<Long> matches = probe.get();
+            if (matches.size() == 1) {
+                return matches.get(0);
+            }
+            if (matches.size() > 1) {
+                throw new IllegalStateException(ambiguousMessage.apply(matches.size()));
+            }
+            sleep();
+        } while (System.nanoTime() < deadline);
+        throw new IllegalStateException(timeoutMessage);
     }
 
     private void requireOpen() {
