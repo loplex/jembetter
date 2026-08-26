@@ -71,29 +71,6 @@
           <artifactId>maven-surefire-plugin</artifactId>
           <version>3.5.2</version>
           <configuration>
-            <!-- Launch the forked test JVM through a wrapper script instead of `java`
-                 directly, so DISPLAY can be set (for tests gated on it - see README.md's
-                 "Running tests" section) *before* that JVM starts. It has to happen that
-                 early: a JVM decides whether it's headless from the DISPLAY it sees at
-                 startup, and separately, once Maven's own JVM is running, nothing inside
-                 it can hand the fork a DISPLAY it didn't already have - confirmed while
-                 building this, both via a Maven property (interpolated once when the
-                 reactor's build plan is put together, long before any phase/goal that
-                 could produce a fresh value runs) and via a real libc setenv() call on
-                 Maven's own process (maven-surefire-plugin's fork, via
-                 plexus/maven-shared-utils Commandline, always builds the child's
-                 environment from Java's System.getenv() snapshot - itself frozen at JVM
-                 startup - rather than the live OS environment, so neither route ever
-                 reaches the child). See .mvn/xserver-jvm-wrapper/bin/java for what the
-                 wrapper actually does - it has to live at exactly
-                 "<something>/bin/java<something>" (surefire's SystemUtils.endsWithJavaPath
-                 requires a filename starting with "java" inside a directory literally named
-                 "bin"), mimicking a real JDK install's own bin/java layout. -->
-            <jvm>${maven.multiModuleProjectDirectory}/.mvn/xserver-jvm-wrapper/bin/java</jvm>
-            <environmentVariables>
-              <ORIG_JAVA_HOME>${java.home}</ORIG_JAVA_HOME>
-              <X_SERVER>${test.xserver}</X_SERVER>
-            </environmentVariables>
             <!-- JNA loads its native library via System::load, which triggers a JEP 472
                  restricted-method warning on JDK 24+. Silence it for the test fork.
                  The two "add opens" flags below are for CanvasNativeHandle's reflection
@@ -161,4 +138,58 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- The Xvfb/openbox wrapper only makes sense on Linux/X11 - Windows has
+         no DISPLAY, no Xvfb, and can't launch a shebang script as the forked
+         test JVM's executable in the first place (CreateProcess needs a real
+         PE binary, not a bash script). So this is a separate, unix-only
+         profile rather than base pluginManagement: on windows-latest CI (or
+         any Windows dev machine), the forked test JVM is surefire's own
+         plain default fork, and the @EnabledOnOs(OS.WINDOWS)/DISPLAY-gated
+         tests sort themselves out from there. -->
+    <profile>
+      <id>xserver-jvm-wrapper</id>
+      <activation>
+        <os>
+          <family>unix</family>
+        </os>
+      </activation>
+      <build>
+        <pluginManagement>
+          <plugins>
+            <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-surefire-plugin</artifactId>
+              <configuration>
+                <!-- Launch the forked test JVM through a wrapper script instead of `java`
+                     directly, so DISPLAY can be set (for tests gated on it - see README.md's
+                     "Running tests" section) *before* that JVM starts. It has to happen that
+                     early: a JVM decides whether it's headless from the DISPLAY it sees at
+                     startup, and separately, once Maven's own JVM is running, nothing inside
+                     it can hand the fork a DISPLAY it didn't already have - confirmed while
+                     building this, both via a Maven property (interpolated once when the
+                     reactor's build plan is put together, long before any phase/goal that
+                     could produce a fresh value runs) and via a real libc setenv() call on
+                     Maven's own process (maven-surefire-plugin's fork, via
+                     plexus/maven-shared-utils Commandline, always builds the child's
+                     environment from Java's System.getenv() snapshot - itself frozen at JVM
+                     startup - rather than the live OS environment, so neither route ever
+                     reaches the child). See .mvn/xserver-jvm-wrapper/bin/java for what the
+                     wrapper actually does - it has to live at exactly
+                     "<something>/bin/java<something>" (surefire's SystemUtils.endsWithJavaPath
+                     requires a filename starting with "java" inside a directory literally named
+                     "bin"), mimicking a real JDK install's own bin/java layout. -->
+                <jvm>${maven.multiModuleProjectDirectory}/.mvn/xserver-jvm-wrapper/bin/java</jvm>
+                <environmentVariables>
+                  <ORIG_JAVA_HOME>${java.home}</ORIG_JAVA_HOME>
+                  <X_SERVER>${test.xserver}</X_SERVER>
+                </environmentVariables>
+              </configuration>
+            </plugin>
+          </plugins>
+        </pluginManagement>
+      </build>
+    </profile>
+  </profiles>
 </project>
