@@ -36,16 +36,12 @@ public final class CanvasNativeHandle {
             peerField.setAccessible(true);
             Object peer = peerField.get(canvas);
 
-            String methodName = isWindows() ? "getHWnd" : "getWindow";
+            String methodName = Platform.isWindows() ? "getHWnd" : "getWindow";
             Method accessor = peer.getClass().getMethod(methodName);
             accessor.setAccessible(true);
             return (long) accessor.invoke(peer);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Could not extract Canvas's native window handle", e);
         }
-    }
-
-    private static boolean isWindows() {
-        return System.getProperty("os.name", "").toLowerCase().contains("windows");
     }
 }
