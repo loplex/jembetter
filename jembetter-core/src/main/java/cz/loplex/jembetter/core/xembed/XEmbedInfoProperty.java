@@ -5,6 +5,7 @@ import com.sun.jna.NativeLong;
 import com.sun.jna.platform.unix.X11.Atom;
 import com.sun.jna.platform.unix.X11.Display;
 import com.sun.jna.platform.unix.X11.Window;
+import cz.loplex.jembetter.core.x11.X11Display;
 import cz.loplex.jembetter.core.x11.X11Ext;
 import cz.loplex.jembetter.core.x11.X11Properties;
 
@@ -28,20 +29,27 @@ public final class XEmbedInfoProperty {
     }
 
     public static void write(Display display, long windowId, Value value) {
-        Atom infoAtom = X11Ext.INSTANCE.XInternAtom(display, XEmbedAtoms.XEMBED_INFO, false);
-
         Memory data = new Memory(2L * NativeLong.SIZE);
         data.setNativeLong(0, new NativeLong(value.version()));
         data.setNativeLong(NativeLong.SIZE, new NativeLong(value.flags()));
 
-        X11Ext.INSTANCE.XChangeProperty(display, new Window(windowId), infoAtom, infoAtom, 32,
-                X11Ext.PropModeReplace, data, 2);
-        X11Ext.INSTANCE.XFlush(display);
+        // See X11Display's class Javadoc: every native Xlib call this
+        // library makes synchronizes on this single process-wide lock,
+        // regardless of which Display it targets.
+        synchronized (X11Display.GLOBAL_LOCK) {
+            Atom infoAtom = X11Ext.INSTANCE.XInternAtom(display, XEmbedAtoms.XEMBED_INFO, false);
+            X11Ext.INSTANCE.XChangeProperty(display, new Window(windowId), infoAtom, infoAtom, 32,
+                    X11Ext.PropModeReplace, data, 2);
+            X11Ext.INSTANCE.XFlush(display);
+        }
     }
 
     public static Optional<Value> read(Display display, long windowId) {
-        Atom infoAtom = X11Ext.INSTANCE.XInternAtom(display, XEmbedAtoms.XEMBED_INFO, false);
-        long[] words = X11Properties.readCardinal32(display, new Window(windowId), infoAtom);
+        long[] words;
+        synchronized (X11Display.GLOBAL_LOCK) {
+            Atom infoAtom = X11Ext.INSTANCE.XInternAtom(display, XEmbedAtoms.XEMBED_INFO, false);
+            words = X11Properties.readCardinal32(display, new Window(windowId), infoAtom);
+        }
         if (words.length < 2) {
             return Optional.empty();
         }

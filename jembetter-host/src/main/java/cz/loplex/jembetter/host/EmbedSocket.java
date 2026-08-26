@@ -36,6 +36,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -328,8 +329,10 @@ public final class EmbedSocket implements AutoCloseable {
         embeddedWindowId = clientWindowId;
         followSizeIntoEmbeddedWindow();
         settleInitialSize();
-        XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
-                XEmbedInfo.PROTOCOL_VERSION);
+        synchronized (X11Display.GLOBAL_LOCK) {
+            XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
+                    XEmbedInfo.PROTOCOL_VERSION);
+        }
         InputFocus.set(display, clientWindowId);
         sendActivated(owner.isFocused());
         deathWatcher.watch(clientWindowId, this::handleClientDetached);
@@ -355,16 +358,20 @@ public final class EmbedSocket implements AutoCloseable {
      */
     public void embedOpaque(long clientWindowId, Duration pollInterval, int maxAttempts) {
         requireOpen();
-        XEmbedInfoProperty.write(display.raw(), clientWindowId,
-                new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
+        synchronized (X11Display.GLOBAL_LOCK) {
+            XEmbedInfoProperty.write(display.raw(), clientWindowId,
+                    new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
+        }
         WindowRelease.release(display, clientWindowId);
         Reparenting.reparent(display, clientWindowId, windowId, 0, 0);
         embeddedWindowId = clientWindowId;
         followSizeIntoEmbeddedWindow();
         settleInitialSize();
         waitForReparentConfirmed(clientWindowId, pollInterval, maxAttempts);
-        XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
-                XEmbedInfo.PROTOCOL_VERSION);
+        synchronized (X11Display.GLOBAL_LOCK) {
+            XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
+                    XEmbedInfo.PROTOCOL_VERSION);
+        }
         InputFocus.set(display, clientWindowId);
         sendActivated(owner.isFocused());
         deathWatcher.watch(clientWindowId, this::handleClientDetached);
@@ -481,8 +488,10 @@ public final class EmbedSocket implements AutoCloseable {
         if (id < 0) {
             return;
         }
-        XEmbedMessages.send(display.raw(), id, modal ? XEmbedMessage.MODALITY_ON : XEmbedMessage.MODALITY_OFF, 0, 0,
-                0);
+        synchronized (X11Display.GLOBAL_LOCK) {
+            XEmbedMessages.send(display.raw(), id, modal ? XEmbedMessage.MODALITY_ON : XEmbedMessage.MODALITY_OFF, 0,
+                    0, 0);
+        }
     }
 
     private void handleInboundMessage(XEmbedMessage message, long detail) {
@@ -512,12 +521,17 @@ public final class EmbedSocket implements AutoCloseable {
             return;
         }
         InputFocus.set(display, id);
-        XEmbedMessages.send(display.raw(), id, XEmbedMessage.FOCUS_IN, XEmbedFocus.CURRENT, 0, 0);
+        synchronized (X11Display.GLOBAL_LOCK) {
+            XEmbedMessages.send(display.raw(), id, XEmbedMessage.FOCUS_IN, XEmbedFocus.CURRENT, 0, 0);
+        }
     }
 
     private void handleEmbeddedInfoChanged(long clientWindowId) {
-        XEmbedInfoProperty.read(display.raw(), clientWindowId)
-                .ifPresent(info -> WindowGeometry.setMapped(display, clientWindowId, info.mapped()));
+        Optional<XEmbedInfoProperty.Value> info;
+        synchronized (X11Display.GLOBAL_LOCK) {
+            info = XEmbedInfoProperty.read(display.raw(), clientWindowId);
+        }
+        info.ifPresent(value -> WindowGeometry.setMapped(display, clientWindowId, value.mapped()));
     }
 
     private void handleClientDetached(long detachedWindowId) {
@@ -532,12 +546,14 @@ public final class EmbedSocket implements AutoCloseable {
             return;
         }
         Display raw = display.raw();
-        if (active) {
-            XEmbedMessages.send(raw, id, XEmbedMessage.FOCUS_IN, XEmbedFocus.CURRENT, 0, 0);
-            XEmbedMessages.send(raw, id, XEmbedMessage.WINDOW_ACTIVATE, 0, 0, 0);
-        } else {
-            XEmbedMessages.send(raw, id, XEmbedMessage.FOCUS_OUT, 0, 0, 0);
-            XEmbedMessages.send(raw, id, XEmbedMessage.WINDOW_DEACTIVATE, 0, 0, 0);
+        synchronized (X11Display.GLOBAL_LOCK) {
+            if (active) {
+                XEmbedMessages.send(raw, id, XEmbedMessage.FOCUS_IN, XEmbedFocus.CURRENT, 0, 0);
+                XEmbedMessages.send(raw, id, XEmbedMessage.WINDOW_ACTIVATE, 0, 0, 0);
+            } else {
+                XEmbedMessages.send(raw, id, XEmbedMessage.FOCUS_OUT, 0, 0, 0);
+                XEmbedMessages.send(raw, id, XEmbedMessage.WINDOW_DEACTIVATE, 0, 0, 0);
+            }
         }
     }
 

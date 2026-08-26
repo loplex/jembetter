@@ -26,10 +26,12 @@ public final class WindowTree {
         WindowByReference parentReturn = new WindowByReference();
         PointerByReference childrenReturn = new PointerByReference();
         IntByReference nchildrenReturn = new IntByReference();
-        X11Ext.INSTANCE.XQueryTree(raw, new Window(windowId), rootReturn, parentReturn, childrenReturn,
-                nchildrenReturn);
-        if (childrenReturn.getValue() != null) {
-            X11Ext.INSTANCE.XFree(childrenReturn.getValue());
+        synchronized (X11Display.GLOBAL_LOCK) {
+            X11Ext.INSTANCE.XQueryTree(raw, new Window(windowId), rootReturn, parentReturn, childrenReturn,
+                    nchildrenReturn);
+            if (childrenReturn.getValue() != null) {
+                X11Ext.INSTANCE.XFree(childrenReturn.getValue());
+            }
         }
         return parentReturn.getValue().longValue();
     }
@@ -37,7 +39,9 @@ public final class WindowTree {
     /** Whether {@code windowId} is currently mapped (viewable), per {@code XGetWindowAttributes}'s {@code map_state}. */
     public static boolean isMapped(X11Display display, long windowId) {
         XWindowAttributes attributes = new XWindowAttributes();
-        X11Ext.INSTANCE.XGetWindowAttributes(display.raw(), new Window(windowId), attributes);
+        synchronized (X11Display.GLOBAL_LOCK) {
+            X11Ext.INSTANCE.XGetWindowAttributes(display.raw(), new Window(windowId), attributes);
+        }
         return attributes.map_state == X11Ext.IsViewable;
     }
 }

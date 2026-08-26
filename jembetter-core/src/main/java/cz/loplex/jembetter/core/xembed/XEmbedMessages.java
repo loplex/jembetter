@@ -6,6 +6,7 @@ import com.sun.jna.platform.unix.X11.Display;
 import com.sun.jna.platform.unix.X11.Window;
 import com.sun.jna.platform.unix.X11.XClientMessageEvent;
 import com.sun.jna.platform.unix.X11.XEvent;
+import cz.loplex.jembetter.core.x11.X11Display;
 import cz.loplex.jembetter.core.x11.X11Ext;
 
 /**
@@ -23,7 +24,6 @@ public final class XEmbedMessages {
     public static void send(Display display, long targetWindowId, XEmbedMessage message, long detail, long data1,
             long data2) {
         Window target = new Window(targetWindowId);
-        Atom xembedAtom = X11Ext.INSTANCE.XInternAtom(display, XEmbedAtoms.XEMBED, false);
 
         XEvent event = new XEvent();
         event.setType(XClientMessageEvent.class);
@@ -32,7 +32,6 @@ public final class XEmbedMessages {
         event.xclient.send_event = 1;
         event.xclient.display = display;
         event.xclient.window = target;
-        event.xclient.message_type = xembedAtom;
         event.xclient.format = 32;
         event.xclient.data.setType(NativeLong[].class);
         event.xclient.data.l[0] = new NativeLong(0L); // CurrentTime; best-effort, XEmbed doesn't require a real one here
@@ -41,10 +40,17 @@ public final class XEmbedMessages {
         event.xclient.data.l[3] = new NativeLong(data1);
         event.xclient.data.l[4] = new NativeLong(data2);
 
-        // event_mask 0: deliver directly to the client owning the window,
-        // bypassing that window's own XSelectInput mask (ClientMessage events
-        // are never selectable via a mask).
-        X11Ext.INSTANCE.XSendEvent(display, target, 0, new NativeLong(0L), event);
-        X11Ext.INSTANCE.XFlush(display);
+        // See X11Display's class Javadoc: every native Xlib call this
+        // library makes synchronizes on this single process-wide lock,
+        // regardless of which Display it targets.
+        synchronized (X11Display.GLOBAL_LOCK) {
+            Atom xembedAtom = X11Ext.INSTANCE.XInternAtom(display, XEmbedAtoms.XEMBED, false);
+            event.xclient.message_type = xembedAtom;
+            // event_mask 0: deliver directly to the client owning the window,
+            // bypassing that window's own XSelectInput mask (ClientMessage
+            // events are never selectable via a mask).
+            X11Ext.INSTANCE.XSendEvent(display, target, 0, new NativeLong(0L), event);
+            X11Ext.INSTANCE.XFlush(display);
+        }
     }
 }
