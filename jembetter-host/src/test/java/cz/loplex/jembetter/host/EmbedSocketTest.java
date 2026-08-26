@@ -3,6 +3,7 @@ package cz.loplex.jembetter.host;
 import cz.loplex.jembetter.common.CanvasNativeHandle;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.x11.WindowFinder;
+import cz.loplex.jembetter.core.x11.WindowReparentWatcher;
 import cz.loplex.jembetter.core.x11.WindowTree;
 import cz.loplex.jembetter.core.x11.X11Display;
 import cz.loplex.jembetter.core.xembed.XEmbedInfo;
@@ -26,6 +27,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -294,6 +296,144 @@ class EmbedSocketTest {
             clientProcess.destroy();
             clientProcess.waitFor(5, TimeUnit.SECONDS);
         }
+    }
+
+    /**
+     * Regression coverage for a real bug found while building the
+     * auto-cleanup wiring below: {@link EmbedSocket#close()} used to destroy
+     * a still-embedded client's window outright instead of releasing it,
+     * because {@code XDestroyWindow} on this socket's own window destroys
+     * its whole subtree immediately — X11's save-set only rescues a
+     * reparented-in window from that by reparenting it back to root when the
+     * *owning connection itself* closes, not when that connection merely
+     * issues an explicit destroy on one of its own windows while staying
+     * open. {@code close()} now calls {@link EmbedSocket#detachClient()}
+     * first for exactly this reason, so a client still embedded when
+     * {@code close()} runs ends up released (as {@code detachClient()} — an
+     * ordinary top-level window again) instead of destroyed.
+     */
+    @Test
+    void closeReleasesAStillEmbeddedClientInsteadOfDestroyingIt() throws IOException, InterruptedException {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketTest owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+        Thread.sleep(200);
+
+        socket = new EmbedSocket(owner);
+        socket.open(canvas);
+
+        Process clientProcess = startFakeClientProcess();
+        try {
+            long clientPid = clientProcess.pid();
+            long clientWindowId;
+            try (X11Display display = X11Display.open(null)) {
+                clientWindowId = waitForOwnWindow(display, clientPid);
+                XEmbedInfoProperty.write(display.raw(), clientWindowId,
+                        new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
+            }
+            socket.embed(clientPid);
+
+            try (X11Display probe = X11Display.open(null); WindowReparentWatcher watcher = new WindowReparentWatcher()) {
+                long rootWindowId = probe.defaultRootWindow().longValue();
+                CountDownLatch reparentedToRoot = new CountDownLatch(1);
+                watcher.watch(clientWindowId, parent -> {
+                    if (parent == rootWindowId) {
+                        reparentedToRoot.countDown();
+                    }
+                });
+
+                socket.close();
+
+                assertTrue(reparentedToRoot.await(5, TimeUnit.SECONDS),
+                        "close() with a client still embedded did not release it back to root");
+            }
+        } finally {
+            clientProcess.destroy();
+            clientProcess.waitFor(5, TimeUnit.SECONDS);
+        }
+    }
+
+    /**
+     * Regression coverage for the auto-cleanup wiring added to {@link
+     * EmbedSocket#open(Canvas)}: disposing {@code hostCanvas}'s containing
+     * {@link Frame} without ever calling {@link EmbedSocket#close()}
+     * previously left this socket's own X11 connection — and the two
+     * background threads it drives ({@link cz.loplex.jembetter.core.x11.WindowDeathWatcher},
+     * {@link cz.loplex.jembetter.core.xembed.XEmbedInboundWatcher}) — running
+     * for the rest of the process's life, since nothing ever called {@code
+     * close()} to shut them down. (The X11 *window* resources themselves
+     * don't actually leak even without this fix: disposing the canvas
+     * already destroys its native peer, and this socket's child window — and
+     * transitively the still-embedded client's window — go with it as
+     * ordinary X11 subtree destruction, before this listener even runs; a
+     * {@link java.awt.event.HierarchyListener} fires as a notification, not
+     * a hook that can run ahead of that. What only this fix reclaims is the
+     * connection/thread pair on the JVM side.) Asserted here via the
+     * watcher's own well-known thread name, since {@code EmbedSocket} has no
+     * public "am I closed" query — {@link EmbedSocket#close()} stops it (see
+     * {@code WindowDeathWatcher#close()}), and nothing else in this test
+     * creates a same-named thread to confuse the count. {@link
+     * EmbedSocket#close()} itself stays idempotent, so the {@code
+     * @AfterEach} cleanup's own {@code socket.close()} call afterward
+     * doubles as double-close coverage.
+     */
+    @Test
+    void disposingTheHostFrameWithoutClosingAutoClosesTheSocket() throws IOException, InterruptedException {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketTest owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+        Thread.sleep(200);
+
+        socket = new EmbedSocket(owner);
+        socket.open(canvas);
+
+        Process clientProcess = startFakeClientProcess();
+        try {
+            long clientPid = clientProcess.pid();
+            try (X11Display display = X11Display.open(null)) {
+                long clientWindowId = waitForOwnWindow(display, clientPid);
+                XEmbedInfoProperty.write(display.raw(), clientWindowId,
+                        new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
+            }
+            socket.embed(clientPid);
+
+            assertTrue(countThreadsNamed("xembed-window-death-watcher") >= 1,
+                    "test setup: expected EmbedSocket's own death-watcher thread to be running before disposal");
+
+            assertDoesNotThrow(() -> owner.dispose(),
+                    "disposing the host frame must not throw even though close() was never called explicitly");
+
+            assertTrue(waitUntilNoThreadNamed("xembed-window-death-watcher"),
+                    "EmbedSocket's own death-watcher thread was still running after disposing the host frame - "
+                            + "the socket's own X11 connection was never closed");
+            assertTrue(waitUntilNoThreadNamed("xembed-inbound-watcher"),
+                    "EmbedSocket's own inbound-watcher thread was still running after disposing the host frame - "
+                            + "the socket's own X11 connection was never closed");
+        } finally {
+            clientProcess.destroy();
+            clientProcess.waitFor(5, TimeUnit.SECONDS);
+        }
+    }
+
+    private static long countThreadsNamed(String name) {
+        return Thread.getAllStackTraces().keySet().stream().filter(t -> name.equals(t.getName())).count();
+    }
+
+    private static boolean waitUntilNoThreadNamed(String name) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        do {
+            if (countThreadsNamed(name) == 0) {
+                return true;
+            }
+            Thread.sleep(50);
+        } while (System.nanoTime() < deadline);
+        return false;
     }
 
     private static Process startFakeClientProcess() throws IOException {
