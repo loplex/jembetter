@@ -2,6 +2,7 @@ package cz.loplex.xembed.core.win32;
 
 import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.User32;
+import com.sun.jna.platform.win32.WinDef.HWND;
 import com.sun.jna.ptr.IntByReference;
 
 import java.util.ArrayList;
@@ -30,5 +31,12 @@ public final class Win32WindowFinder {
             return true; // keep enumerating
         }, null);
         return matches;
+    }
+
+    /** The pid of the process that owns {@code hwnd}, via {@code GetWindowThreadProcessId}. */
+    public static long pidOfWindow(long hwnd) {
+        IntByReference ownerPid = new IntByReference();
+        User32.INSTANCE.GetWindowThreadProcessId(new HWND(new Pointer(hwnd)), ownerPid);
+        return Integer.toUnsignedLong(ownerPid.getValue());
     }
 }

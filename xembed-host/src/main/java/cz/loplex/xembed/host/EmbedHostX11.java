@@ -17,12 +17,9 @@ import java.nio.file.Path;
 import java.time.Duration;
 
 /**
- * {@link EmbedHost}'s only implementation today — X11, via {@link
- * EmbedSocket}. Not the eventual OS-dispatch point {@link
- * EmbedHost#create}'s Javadoc alludes to: that dispatch (X11 vs. a future
- * Win32 backend) doesn't exist yet, since {@code xembed-core-win32} hasn't
- * landed. {@link EmbedHost#create} just returns this directly until it
- * does.
+ * {@link EmbedHost}'s X11 implementation, via {@link EmbedSocket} — see
+ * {@link EmbedHostWin32} for the Win32 counterpart {@link EmbedHost#create}
+ * dispatches to instead on Windows.
  */
 final class EmbedHostX11 implements EmbedHost {
 

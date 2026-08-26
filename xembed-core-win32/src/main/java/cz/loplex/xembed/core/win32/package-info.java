@@ -32,12 +32,15 @@
  * </ol>
  *
  * Windows-version-specific {@code explorer.exe}/{@code dwm.exe} policy
- * quirks beyond what the spike exercised remain unconfirmed. No {@code
- * os.name} dispatch wires these primitives into {@code EmbedHost}/{@code
- * EmbedPlug}/{@code EmbedSocket}/{@code EmbedClient} yet; that remains a
- * separate follow-up now that the spike's findings settle the open design
- * questions (host-initiated reparent stays symmetric with X11, confirmed by
- * question 1 above; {@code embedOpaque}'s always-on behavior on this
- * backend is unaffected by any of the four questions).
+ * quirks beyond what the spike exercised remain unconfirmed.
+ *
+ * <p>{@code os.name} dispatch now wires these primitives into {@code
+ * EmbedHost} ({@code xembed-host.EmbedHostWin32}) per the spike's findings:
+ * host-initiated reparent stays symmetric with X11 (confirmed by question 1
+ * above), and {@code embedOpaque}'s always-on behavior on this backend
+ * collapses with plain {@code embed} into the same operation, since there is
+ * no {@code _XEMBED_INFO} equivalent to make them differ. {@code EmbedPlug}/
+ * {@code EmbedSocket}/{@code EmbedClient} aren't wired to a Win32 backend
+ * yet.
  */
 package cz.loplex.xembed.core.win32;
