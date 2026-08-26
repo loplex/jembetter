@@ -53,6 +53,29 @@ rather than reasoned about:
   root window alive. See `Win32ReparentWatcher`'s and `EmbedPlugWin32`'s
   Javadoc for that asymmetry.
 
+**Click-to-focus (open gap, investigated, not implemented).** X11's
+`EmbedSocket` now returns input focus to the embedded client automatically
+on a real click back into the embedded area (a passive `XGrabButton` that
+intercepts the press before the client's own toolkit sees it, then replays
+it — see `EmbedSocket#open(Canvas)`'s Javadoc). `EmbedHostWin32` has no
+equivalent — `requestFocus()` still has to be called explicitly. Investigated
+rather than guessed at: ordinary subclassing (`SetWindowSubclass`) can't
+reach across into a genuinely separate process's HWND the way this backend
+embeds one — it installs a callback the *target thread* would have to
+execute, which only works within the subclassing process's own address
+space. The real equivalent is a low-level mouse hook
+(`SetWindowsHookEx(WH_MOUSE_LL, ...)`, which runs in the *hooking* process,
+unlike a non-low-level hook, so it needs no DLL injected into the embedded
+process): watch every `WM_LBUTTONDOWN` system-wide, check whether it lands
+inside the embedded HWND's rect, and call `Win32Focus.set` if so —
+structurally an observe-and-react mechanism rather than X11's
+intercept-and-replay one (nothing to replay; a low-level hook never blocks
+the click it observes), with its own documented caveats (added latency on
+every mouse event system-wide while installed; UIPI can block hooking a
+higher-integrity-level window). Not implemented without a real-machine spike
+to confirm it the way every other Win32 mechanism above was — see
+`EmbedHostWin32`'s own Javadoc for the same writeup.
+
 `EmbedHostWin32Test`/`EmbedPlugWin32Test`/`Win32ReparentWatcherTest` cover
 this wiring, gated `@EnabledOnOs(OS.WINDOWS)` like the rest of this module's
 tests, and run on every push via `.github/workflows/windows-ci.yml`, a

@@ -1,11 +1,16 @@
 package cz.loplex.jembetter.host;
 
+import com.sun.jna.NativeLong;
+import com.sun.jna.platform.unix.X11.Window;
+import com.sun.jna.platform.unix.X11.XEvent;
 import cz.loplex.jembetter.common.CanvasNativeHandle;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
+import cz.loplex.jembetter.core.x11.InputFocus;
 import cz.loplex.jembetter.core.x11.WindowFinder;
 import cz.loplex.jembetter.core.x11.WindowReparentWatcher;
 import cz.loplex.jembetter.core.x11.WindowTree;
 import cz.loplex.jembetter.core.x11.X11Display;
+import cz.loplex.jembetter.core.x11.X11Ext;
 import cz.loplex.jembetter.core.xembed.XEmbedInfo;
 import cz.loplex.jembetter.core.xembed.XEmbedInfoProperty;
 import org.junit.jupiter.api.AfterEach;
@@ -14,9 +19,12 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import javax.swing.JFrame;
 import java.awt.Canvas;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Frame;
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
 import java.nio.channels.SocketChannel;
@@ -45,6 +53,7 @@ class EmbedSocketTest {
     private EmbedSocket socket;
     private JFrame client1;
     private JFrame client2;
+    private Frame focusAway;
 
     @AfterEach
     void cleanup() {
@@ -56,6 +65,9 @@ class EmbedSocketTest {
         }
         if (client2 != null) {
             client2.dispose();
+        }
+        if (focusAway != null) {
+            focusAway.dispose();
         }
         if (owner != null) {
             owner.dispose();
@@ -475,6 +487,126 @@ class EmbedSocketTest {
             clientProcess.destroy();
             clientProcess.waitFor(5, TimeUnit.SECONDS);
         }
+    }
+
+    /**
+     * Regression coverage for real click-to-focus: clicking away from the
+     * embedded area and then back onto it must return X input focus to the
+     * embedded client on its own — {@link EmbedSocket#focusClient()} is
+     * never called directly by this test. A synthetic, in-process click
+     * would pass here even with the underlying grab/replay wiring
+     * completely broken — that's exactly how a previous {@code
+     * MouseListener}-based attempt at this same feature looked like it
+     * worked and then failed live — so this drives a real click through the
+     * X server via {@code xdotool} instead, the same way that finding was
+     * originally confirmed. Focus is asserted via a real,
+     * server-generated {@code FocusIn} event on a separate probe
+     * connection rather than by polling {@code XGetInputFocus}: an earlier
+     * version of this test that polled instead hit real, order-dependent
+     * flakiness from a second in-process AWT window fighting raw {@code
+     * XSetInputFocus} calls for global focus, which only showed up when
+     * run after certain other tests in the same forked JVM.
+     */
+    @Test
+    void aRealClickOnTheEmbeddedAreaReturnsInputFocusToTheClient()
+            throws IOException, InterruptedException, ReflectiveOperationException {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketTest owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+        Thread.sleep(200);
+
+        socket = new EmbedSocket(owner);
+        socket.open(canvas);
+
+        Process clientProcess = startFakeClientProcess();
+        try {
+            long clientPid = clientProcess.pid();
+            long clientWindowId;
+            try (X11Display display = X11Display.open(null)) {
+                clientWindowId = waitForOwnWindow(display, clientPid);
+                XEmbedInfoProperty.write(display.raw(), clientWindowId,
+                        new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
+            }
+            socket.embed(clientPid);
+
+            // embed() itself already points real X input focus at the
+            // client (InputFocus.set) - move it elsewhere first so the
+            // click below is what returns it, not a leftover from embed.
+            // An override-redirect window doesn't work as this "elsewhere":
+            // a real window manager doesn't track it as a focus target and
+            // was observed reclaiming focus for its own internal window
+            // shortly after - a second ordinary Frame does.
+            focusAway = new Frame("EmbedSocketTest focus-away target");
+            focusAway.setBounds(200, 200, 50, 50);
+            focusAway.setVisible(true);
+            Thread.sleep(200);
+            long focusAwayWindowId = nativeWindowIdOf(focusAway);
+            try (X11Display display = X11Display.open(null)) {
+                InputFocus.set(display, focusAwayWindowId);
+            }
+
+            try (X11Display probe = X11Display.open(null)) {
+                synchronized (X11Display.GLOBAL_LOCK) {
+                    X11Ext.INSTANCE.XSelectInput(probe.raw(), new Window(clientWindowId),
+                            new NativeLong(X11Ext.FocusChangeMask));
+                    X11Ext.INSTANCE.XFlush(probe.raw());
+                }
+
+                java.awt.Point canvasLocation = canvas.getLocationOnScreen();
+                int clickX = canvasLocation.x + canvas.getWidth() / 2;
+                int clickY = canvasLocation.y + canvas.getHeight() / 2;
+                xdotoolClick(clickX, clickY);
+
+                assertTrue(waitForFocusIn(probe, clientWindowId),
+                        "a real click on the embedded area never returned input focus to the client");
+            }
+        } finally {
+            clientProcess.destroy();
+            clientProcess.waitFor(5, TimeUnit.SECONDS);
+        }
+    }
+
+    private static long nativeWindowIdOf(Component component) throws ReflectiveOperationException {
+        Field peerField = Component.class.getDeclaredField("peer");
+        peerField.setAccessible(true);
+        Object peer = peerField.get(component);
+        Method accessor = peer.getClass().getMethod("getWindow");
+        accessor.setAccessible(true);
+        return (long) accessor.invoke(peer);
+    }
+
+    private static void xdotoolClick(int screenX, int screenY) throws IOException, InterruptedException {
+        Process process = new ProcessBuilder("xdotool", "mousemove", Integer.toString(screenX),
+                Integer.toString(screenY), "click", "1")
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start();
+        assertTrue(process.waitFor(5, TimeUnit.SECONDS), "xdotool never finished");
+    }
+
+    private static boolean waitForFocusIn(X11Display display, long windowId) {
+        XEvent event = new XEvent();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        do {
+            boolean pending;
+            synchronized (X11Display.GLOBAL_LOCK) {
+                pending = X11Ext.INSTANCE.XCheckTypedWindowEvent(display.raw(), new Window(windowId), X11Ext.FocusIn,
+                        event);
+            }
+            if (pending) {
+                return true;
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
+        } while (System.nanoTime() < deadline);
+        return false;
     }
 
     private static long countThreadsNamed(String name) {

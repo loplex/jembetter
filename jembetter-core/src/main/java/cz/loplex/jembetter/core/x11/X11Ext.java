@@ -77,4 +77,42 @@ public interface X11Ext extends X11 {
      */
     Window XCreateWindow(Display display, Window parent, int x, int y, int width, int height, int borderWidth,
             int depth, int windowClass, Visual visual, NativeLong valueMask, RawWindowAttributes attributes);
+
+    /**
+     * Installs a passive button grab on {@code grabWindow}: a {@code
+     * ButtonPress} matching {@code button}/{@code modifiers} is delivered to
+     * this connection instead of (or, with {@code GrabModeSync}, before)
+     * whichever connection actually owns {@code grabWindow} — the mechanism
+     * real window managers use for click-to-focus, and the only way to see a
+     * {@code ButtonPress} landing on an embedded client's window, since
+     * ordinary X11 event propagation stops at the first window in the
+     * hierarchy that selected for it (virtually every real client selects
+     * {@code ButtonPress} on its own window). {@code ownerEvents} is declared
+     * {@code int} rather than {@code boolean} on purpose, following {@link
+     * X11#XGrabKey}/{@link X11#XGrabKeyboard}'s own established convention
+     * in this exact JNA binding — not a boolean, for the same
+     * marshalling-safety reason documented on {@link RawWindowAttributes}.
+     * Pass {@link Window#None} for {@code confineTo} and {@link
+     * com.sun.jna.platform.unix.X11.Cursor#None} for {@code cursor} to leave
+     * both unconstrained. With {@code pointerMode} {@link #GrabModeSync},
+     * the pointer freezes system-wide for every client until {@link
+     * #XAllowEvents} is called — callers must call it promptly after every
+     * grabbed press.
+     */
+    int XGrabButton(Display display, int button, int modifiers, Window grabWindow, int ownerEvents, int eventMask,
+            int pointerMode, int keyboardMode, Window confineTo, Cursor cursor);
+
+    /** Undoes {@link #XGrabButton} for the same {@code button}/{@code modifiers}/{@code grabWindow}. */
+    int XUngrabButton(Display display, int button, int modifiers, Window grabWindow);
+
+    /**
+     * Releases a pointer (or keyboard) freeze caused by a {@link
+     * #GrabModeSync} grab. Callers of {@link #XGrabButton} with {@code
+     * pointerMode} {@code GrabModeSync} must call this with {@link
+     * #ReplayPointer} promptly after every grabbed {@code ButtonPress} — on
+     * the same connection/thread that received it — or all pointer input
+     * anywhere on the X server hangs until it is called; never gate this
+     * behind anything that could throw first.
+     */
+    int XAllowEvents(Display display, int eventMode, NativeLong time);
 }
