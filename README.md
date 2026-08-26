@@ -13,8 +13,8 @@ Built and tested against a real X server (no Xvfb/mocking) on Linux/X11 —
 there is no Wayland support. `EmbedHost`/`EmbedPlug` also dispatch to a Win32
 (`SetParent`) backend by `os.name`, confirmed against a real Windows machine
 for the primitives it's built from — see [Win32 backend
-status](#win32-backend-status) below for exactly what was confirmed versus
-what's a reasoned-about implementation choice on top.
+status](docs/win32-status.md) for exactly what was confirmed versus what's a
+reasoned-about implementation choice on top.
 
 ## Modules
 
@@ -25,7 +25,7 @@ what's a reasoned-about implementation choice on top.
   implementation shared by both sides. Not meant to be depended on directly.
 - **`jembetter-core-win32`** — Win32 native bindings (via JNA) mirroring
   `jembetter-core`'s X11 primitives 1:1. Backs `jembetter-host`/`jembetter-client`'s
-  Win32 implementations — see [Win32 backend status](#win32-backend-status).
+  Win32 implementations — see [Win32 backend status](docs/win32-status.md).
 - **`jembetter-host`** — embedder-side API: `EmbedHost` (quick start, a 1:1
   facade for embedding a single self-spawned client) and `EmbedSocket`
   (advanced — multi-client, socket rendezvous) both host another process's
@@ -77,7 +77,7 @@ usually spawned itself — e.g. a JVM the host launches and reparents into a
 placeholder `Canvas` in its own UI. No multi-client re-use of one socket, no
 voluntary host-initiated detach, no focus-next/prev tab-cycling, no
 modality. Reach for `EmbedSocket`/`EmbedClient` directly (see
-[Advanced usage](#advanced-usage) below) when any of those are needed.
+[Advanced usage](docs/advanced-usage.md)) when any of those are needed.
 
 ### Host side
 
@@ -111,9 +111,9 @@ self-spawned — it opens a Unix domain socket, accepts exactly one client
 connection there, embeds it, and returns (unlike `EmbedSocket#listen`, it
 doesn't keep accepting further clients afterward). `host.embedOpaque(id)`
 handles a toolkit-opaque client the same way `EmbedSocket#embedOpaque` does
-— see [Toolkit-opaque embedding](#toolkit-opaque-embedding) below for why
-that's needed at all. Call `host.close()` to release the socket and its X11
-window.
+— see [Toolkit-opaque embedding](docs/advanced-usage.md#toolkit-opaque-embedding)
+for why that's needed at all. Call `host.close()` to release the socket and
+its X11 window.
 
 ### Client side
 
@@ -136,112 +136,10 @@ watching for host death (not needed on process exit).
 
 ## Advanced usage
 
-`EmbedSocket`/`EmbedClient` are what `EmbedHost`/`EmbedPlug` above are
-composed from — reach for them directly for anything the facade leaves out:
-multiple clients on one socket, a voluntary host-initiated detach/re-embed,
-focus-next/prev tab-cycling, or modality signaling.
-
-### Host side
-
-```java
-JFrame frame = new JFrame("My host app");
-Canvas placeholder = new Canvas();
-frame.add(placeholder, BorderLayout.CENTER); // wherever the embedded window should appear
-// ... lay out the rest of your UI, then make the frame visible ...
-
-EmbedSocket socket = new EmbedSocket(frame);
-socket.open(placeholder);
-socket.onClientEmbedded(() -> System.out.println("Client embedded"));
-socket.onClientDetached(() -> System.out.println("Client exited or crashed"));
-socket.listen(Path.of("/run/user/1000/my-app.sock"));
-```
-
-`open(Canvas)` reparents the embedded window as a genuine X11 child of
-`placeholder`'s own native window, same as `EmbedHost.create(Canvas)` above
-— see its Javadoc for the z-order rationale and the `--add-opens` JVM flags
-this needs.
-
-`EmbedSocket` keeps accepting clients on the same socket for as long as it's
-open — a client crashing or being voluntarily released via
-`socket.detachClient()` doesn't require restarting the host. Call
-`socket.close()` to shut it down.
-
-**No AWT tree to embed into:** `open(x, y, width, height)`/`setBounds(x, y,
-width, height)` create the socket as a root-level, override-redirect window
-instead, which you're then responsible for keeping positioned yourself (e.g.
-a placeholder component's `getLocationOnScreen()` plus a resize/move
-listener calling `setBounds`).
-
-**Known-handle embedding, no socket:** if the host already knows the
-client's pid directly — e.g. it spawned the client process itself — the
-Unix domain socket rendezvous is unnecessary overhead. Skip `listen()` and
-call `socket.embed(clientPid)` once the client has published `_XEMBED_INFO`
-(see `EmbedClient#announce` below):
-
-```java
-Process clientProcess = new ProcessBuilder(...).start();
-socket.embed(clientProcess.pid());
-```
-
-### Toolkit-opaque embedding
-
-Some toolkits (e.g. JavaFX's Glass layer) own their native X11 connection
-the same way AWT does, so this library can't read events targeted at their
-windows and can't rely on them ever writing `_XEMBED_INFO` or reacting to
-`EMBEDDED_NOTIFY`. `embedOpaque` handles this send-best-effort/poll-verify:
-it writes `_XEMBED_INFO` on the client's behalf and confirms the reparent
-actually happened via `XQueryTree` instead of trusting the client's
-cooperation:
-
-```java
-socket.embedOpaque(clientWindowId, Duration.ofMillis(20), 100);
-```
-
-Throws if the reparent is never confirmed within `pollInterval *
-maxAttempts`. Death detection (`onClientDetached`) still works here — it's
-based on the X server's own `DestroyNotify`, not client cooperation.
-`EmbedHost#embedOpaque(long)` above wraps this with a fixed, generous poll
-budget.
-
-### Client side
-
-```java
-JFrame frame = new JFrame("My embeddable app");
-frame.setUndecorated(true); // avoid leaving a stray decoration frame behind
-// ... build the rest of the window, then make it visible ...
-frame.setVisible(true);
-
-EmbedClient client = new EmbedClient();
-client.onEmbedded(embedderWindowId -> System.out.println("Embedded"));
-client.onHostDetached(() -> System.out.println("Host exited or crashed"));
-client.offer(Path.of("/run/user/1000/my-app.sock"));
-```
-
-`client.requestFocus()` asks the host for input focus once embedded. Call
-`client.close()` when your process is done watching for host death (not
-needed on process exit).
-
-**Known-handle embedding, no socket:** the client-side counterpart of
-`EmbedSocket#embed(long)` above — `announce(wmClass)` does everything
-`offer` does (resolve this process's own window, publish `_XEMBED_INFO`,
-start watching for the embed/host-death) except dial a host socket, for
-when the host already knows this process's pid directly:
-
-```java
-EmbedClient client = new EmbedClient();
-client.onEmbedded(embedderWindowId -> System.out.println("Embedded"));
-client.announce(); // no host socket path
-```
-
-If a process owns more than one top-level window at the point it connects,
-both `EmbedSocket` and `EmbedClient` need a `WM_CLASS` (the same value
-`xprop WM_CLASS` prints) to disambiguate which one — see
-`EmbedSocket#expectClientWindowClass` and `EmbedClient#offer(Path, String)`.
-
-Both sides wait up to 5 seconds by default for a window to appear before
-giving up; override that with `EmbedSocket#setWindowLookupTimeout`/
-`EmbedClient#setWindowLookupTimeout` if that's too tight (or too loose) for
-your setup.
+`EmbedSocket`/`EmbedClient` — multiple clients on one socket, a voluntary
+host-initiated detach/re-embed, focus-next/prev tab-cycling, modality
+signaling, and toolkit-opaque (e.g. JavaFX) embedding — are covered in
+[docs/advanced-usage.md](docs/advanced-usage.md).
 
 ## Try the demo
 
@@ -318,69 +216,10 @@ in live, instead of on a headless, invisible Xvfb.
 
 ## Win32 backend status
 
-`jembetter-core-win32` has `Win32Reparent`/`Win32WindowGeometry`/`Win32Focus`/
-`Win32WindowFinder`, mirroring `jembetter-core`'s X11 primitives 1:1
-(`SetParent`+style-flip, `MoveWindow`/`ShowWindow`, `SetFocus`,
-`EnumWindows`+`GetWindowThreadProcessId`). Its JUnit tests are gated with
-`@EnabledOnOs(OS.WINDOWS)`, so they're skipped (not run, not failed) by this
-repo's own `mvn test` on Linux.
-
-`.mvn/win32-wine-smoketest/run.sh` had already confirmed the JNA bindings
-link against real `user32.dll`/`kernel32.dll` entry points under Wine, and
-that basic `SetParent`/`MoveWindow`/`EnumWindows` mechanics plausibly work.
-A one-off real-machine spike, run against real `windows-latest` CI on
-2026-08-26, then confirmed, on genuine Windows rather than Wine, the
-following:
-
-1. `SetParent`+style-flip+poll-verify between a real AWT `Canvas` HWND and a
-   separate JVM's window — **confirmed working**.
-2. `SetFocus`/`SetForegroundWindow`'s foreground-lock restriction from a
-   non-foreground process — **confirmed to actually bite** (a silent
-   no-op; `SetForegroundWindow` can even return `true` without the
-   foreground actually changing). `Win32Focus.set` now falls back to
-   `AttachThreadInput` to work around it — see `Win32Focus`'s Javadoc for
-   what the spike itself confirmed versus what's an implementation choice
-   made afterward.
-3. `ProcessHandle.onExit()` for a foreign (not self-spawned) pid —
-   **confirmed reliable**.
-4. `AF_UNIX` rendezvous between two JVMs on Windows — **confirmed working**.
-
-Windows-version-specific `explorer.exe`/`dwm.exe` policy quirks beyond what
-the spike exercised remain unconfirmed.
-
-`os.name` dispatch now wires these primitives into `EmbedHost`/`EmbedPlug`
-(`EmbedHostWin32`/`EmbedPlugWin32`), settling the two design questions that
-were still open pending this spike: host-initiated reparent stays symmetric
-with X11 (confirmed by question 1 above), and `embedOpaque`/`embed` collapse
-into the exact same `SetParent`+poll-verify operation on this backend, since
-there's no `_XEMBED_INFO` equivalent to make them differ. `EmbedSocket`/
-`EmbedClient` (the advanced, multi-client X11 API) have no Win32 counterpart.
-
-Two things this wiring adds that the spike itself didn't exercise, both
-reasoned about from documented Win32 semantics rather than confirmed live —
-worth a dedicated real-machine check if either ever needs to be verified
-rather than reasoned about:
-
-- `Win32Focus.set`'s `AttachThreadInput` fallback (see its own Javadoc) —
-  the spike only tried the `AllowSetForegroundWindow` workaround.
-- `Win32ReparentWatcher`, a poll-based stand-in for X11's event-driven
-  `WindowReparentWatcher` that `EmbedPlugWin32` uses to detect being embedded
-  and the host detaching, since Win32 has no externally-observable reparent
-  event and no save-set mechanism — destroying a parent HWND destroys its
-  children outright, unlike X11 reparenting a released child back to the
-  root window alive. See `Win32ReparentWatcher`'s and `EmbedPlugWin32`'s
-  Javadoc for that asymmetry.
-
-`EmbedHostWin32Test`/`EmbedPlugWin32Test`/`Win32ReparentWatcherTest` cover
-this wiring, gated `@EnabledOnOs(OS.WINDOWS)` like the rest of this module's
-tests, and run on every push via `.github/workflows/windows-ci.yml`, a
-persistent `windows-latest` job. `.github/workflows/linux-ci.yml` runs the
-same reactor's tests the other way, against a real Xvfb + openbox pair.
-
-`maven-surefire-plugin`'s `<jvm>` wrapper (see `.mvn/xserver-jvm-wrapper/bin/java`
-above) only applies under an `os.family=unix`-activated Maven profile: it's a
-bash script, and Windows can't launch it as the forked test JVM's executable
-at all, so plain `mvn test` needs the default fork there instead.
+`EmbedHost`/`EmbedPlug`'s Win32 (`SetParent`) backend — what's confirmed
+against a real Windows machine versus reasoned-about on top, and how its
+tests/CI are wired up — is covered in
+[docs/win32-status.md](docs/win32-status.md).
 
 ## Known limitations
 
