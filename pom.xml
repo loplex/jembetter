@@ -9,7 +9,7 @@
   <version>0.0.1-SNAPSHOT</version>
   <packaging>pom</packaging>
 
-  <name>xembed</name>
+  <name>Jembetter</name>
   <description>Reparenting of one X11 Java application's window into another via the XEmbed protocol.</description>
 
   <licenses>
