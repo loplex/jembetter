@@ -4,6 +4,8 @@ import com.sun.jna.Native;
 import com.sun.jna.platform.unix.X11.Display;
 import com.sun.jna.platform.unix.X11.XErrorEvent;
 import com.sun.jna.platform.unix.X11.XErrorHandler;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Installs a process-wide Xlib error handler that logs and returns instead
@@ -17,6 +19,8 @@ import com.sun.jna.platform.unix.X11.XErrorHandler;
  * {@link X11Display} connections are open.
  */
 public final class X11ErrorHandler {
+
+    private static final Logger LOG = LoggerFactory.getLogger(X11ErrorHandler.class);
 
     // Kept as a static field: JNA does not root native callbacks on its own,
     // so a GC'd handler here would crash the JVM the next time Xlib called
@@ -39,9 +43,9 @@ public final class X11ErrorHandler {
     private static int handle(Display display, XErrorEvent event) {
         byte[] buffer = new byte[256];
         X11Ext.INSTANCE.XGetErrorText(display, event.error_code, buffer, buffer.length);
-        System.err.println("[jembetter] X11 error: " + Native.toString(buffer) + " (error_code="
-                + (event.error_code & 0xFF) + ", request_code=" + (event.request_code & 0xFF) + ", minor_code="
-                + (event.minor_code & 0xFF) + ", resourceid=" + event.resourceid.longValue() + ")");
+        LOG.debug("X11 error: {} (error_code={}, request_code={}, minor_code={}, resourceid={})",
+                Native.toString(buffer), event.error_code & 0xFF, event.request_code & 0xFF,
+                event.minor_code & 0xFF, event.resourceid.longValue());
         return 0;
     }
 }
