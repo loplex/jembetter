@@ -10,8 +10,12 @@ import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 
 import javax.swing.JFrame;
+import java.awt.AWTException;
 import java.awt.Canvas;
 import java.awt.Dimension;
+import java.awt.Point;
+import java.awt.Robot;
+import java.awt.event.InputEvent;
 import java.io.IOException;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
@@ -22,6 +26,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -75,6 +80,27 @@ class EmbedHostWin32Test {
         clientProcess.destroy();
         assertTrue(detached.await(5, TimeUnit.SECONDS), "onDetached never fired after the client process died");
         clientProcess = null;
+    }
+
+    @Test
+    void clickIntoEmbeddedAreaDoesNotThrow() throws IOException, InterruptedException, AWTException {
+        Canvas canvas = newVisibleHostCanvas();
+        host = EmbedHost.create(canvas);
+
+        clientProcess = startFakeClientProcess();
+        long clientPid = clientProcess.pid();
+        host.embed(clientPid);
+        waitForOwnWindow(clientPid);
+
+        Point center = new Point(canvas.getLocationOnScreen());
+        center.translate(canvas.getWidth() / 2, canvas.getHeight() / 2);
+        Robot robot = new Robot();
+
+        assertDoesNotThrow(() -> {
+            robot.mouseMove(center.x, center.y);
+            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
+            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+        }, "a real click into the embedded area must not throw through the click-to-focus hook");
     }
 
     @Test
