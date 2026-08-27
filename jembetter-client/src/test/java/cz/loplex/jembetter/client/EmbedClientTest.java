@@ -1,10 +1,12 @@
 package cz.loplex.jembetter.client;
 
 import cz.loplex.jembetter.common.ipc.PidHandshake;
+import cz.loplex.jembetter.core.x11.InputFocus;
 import cz.loplex.jembetter.core.x11.RawWindow;
 import cz.loplex.jembetter.core.x11.Reparenting;
 import cz.loplex.jembetter.core.x11.WindowFinder;
 import cz.loplex.jembetter.core.x11.WindowGeometry;
+import cz.loplex.jembetter.core.x11.WindowTree;
 import cz.loplex.jembetter.core.x11.X11Display;
 import cz.loplex.jembetter.core.xembed.XEmbedInboundWatcher;
 import cz.loplex.jembetter.core.xembed.XEmbedMessage;
@@ -22,6 +24,8 @@ import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -216,6 +220,82 @@ class EmbedClientTest {
                 RawWindow.destroy(rawDisplay, windowId);
             }
         }
+    }
+
+    /**
+     * Regression coverage for {@link EmbedClient#onFocusChanged}: a host
+     * granting the embedded client focus does so with {@code XSetInputFocus}
+     * ({@link cz.loplex.jembetter.core.x11.InputFocus#set}), which the
+     * XEmbed {@code FOCUS_IN}/{@code FOCUS_OUT} ClientMessages can't reach a
+     * non-cooperative client with — the real server-side {@code
+     * FocusIn}/{@code FocusOut} it generates on the client window can.
+     */
+    @Test
+    void watchOwnWindowInvokesOnFocusChangedWhenAnotherConnectionMovesInputFocus() throws InterruptedException {
+        try (X11Display rawDisplay = X11Display.open(null)) {
+            long windowId = RawWindow.createOverrideRedirect(rawDisplay, 0, 0, 10, 10);
+            long elsewhere = RawWindow.createOverrideRedirect(rawDisplay, 20, 20, 10, 10);
+            try {
+                BlockingQueue<Boolean> reported = new ArrayBlockingQueue<>(8);
+                client = new EmbedClient();
+                client.onFocusChanged(reported::add);
+                client.watchOwnWindow(windowId);
+                waitUntilMapped(rawDisplay, windowId);
+
+                try (X11Display hostDisplay = X11Display.open(null)) {
+                    InputFocus.set(hostDisplay, windowId);
+                    assertEquals(Boolean.TRUE, reported.poll(5, TimeUnit.SECONDS),
+                            "onFocusChanged(true) was never invoked");
+
+                    InputFocus.set(hostDisplay, elsewhere);
+                    assertEquals(Boolean.FALSE, reported.poll(5, TimeUnit.SECONDS),
+                            "onFocusChanged(false) was never invoked");
+                }
+            } finally {
+                RawWindow.destroy(rawDisplay, windowId);
+                RawWindow.destroy(rawDisplay, elsewhere);
+            }
+        }
+    }
+
+    /** Covers {@link EmbedClient#onFocusChanged}'s rewatch branch: registering the callback after {@link EmbedClient#watchOwnWindow} must still wire it up. */
+    @Test
+    void onFocusChangedRegisteredAfterWatchOwnWindowStillReceivesCallbacks() throws InterruptedException {
+        try (X11Display rawDisplay = X11Display.open(null)) {
+            long windowId = RawWindow.createOverrideRedirect(rawDisplay, 0, 0, 10, 10);
+            try {
+                client = new EmbedClient();
+                client.watchOwnWindow(windowId);
+                waitUntilMapped(rawDisplay, windowId);
+
+                CountDownLatch focused = new CountDownLatch(1);
+                client.onFocusChanged(gained -> {
+                    if (gained) {
+                        focused.countDown();
+                    }
+                });
+
+                try (X11Display hostDisplay = X11Display.open(null)) {
+                    InputFocus.set(hostDisplay, windowId);
+                }
+
+                assertTrue(focused.await(5, TimeUnit.SECONDS),
+                        "onFocusChanged registered after watchOwnWindow was never invoked");
+            } finally {
+                RawWindow.destroy(rawDisplay, windowId);
+            }
+        }
+    }
+
+    private static void waitUntilMapped(X11Display display, long windowId) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        do {
+            if (WindowTree.isMapped(display, windowId)) {
+                return;
+            }
+            Thread.sleep(50);
+        } while (System.nanoTime() < deadline);
+        throw new IllegalStateException("window " + windowId + " never became mapped");
     }
 
     private void runFakeHostAwaitingFocusRequest(UnixDomainSocketAddress address, CountDownLatch ready,

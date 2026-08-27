@@ -3,6 +3,7 @@ package cz.loplex.jembetter.client;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.win32.Win32ReparentWatcher;
 import cz.loplex.jembetter.core.win32.Win32WindowFinder;
+import cz.loplex.jembetter.core.x11.FocusListener;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -81,6 +82,19 @@ final class EmbedPlugWin32 implements EmbedPlug {
     @Override
     public void onHostDetached(Runnable callback) {
         onHostDetached = callback;
+    }
+
+    /**
+     * No-op on this backend. The X11 side reads real server-side {@code
+     * FocusIn}/{@code FocusOut} off the client window (see {@code
+     * WindowFocusWatcher}); Win32 has no equivalent — an embedded child
+     * HWND's {@code WM_SETFOCUS}/{@code WM_KILLFOCUS} are delivered only
+     * inside the client's own message loop, unobservable from here without
+     * a hook this backend doesn't install. The callback is accepted (so
+     * cross-platform calling code needn't branch) but never invoked.
+     */
+    @Override
+    public void onFocusChanged(FocusListener callback) {
     }
 
     @Override

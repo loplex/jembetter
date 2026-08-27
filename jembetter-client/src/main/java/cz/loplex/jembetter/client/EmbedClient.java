@@ -1,9 +1,11 @@
 package cz.loplex.jembetter.client;
 
 import cz.loplex.jembetter.common.ipc.PidHandshake;
+import cz.loplex.jembetter.core.x11.FocusListener;
 import cz.loplex.jembetter.core.x11.SizeListener;
 import cz.loplex.jembetter.core.x11.WindowConfigureWatcher;
 import cz.loplex.jembetter.core.x11.WindowFinder;
+import cz.loplex.jembetter.core.x11.WindowFocusWatcher;
 import cz.loplex.jembetter.core.x11.WindowReparentWatcher;
 import cz.loplex.jembetter.core.x11.X11Display;
 import cz.loplex.jembetter.core.xembed.XEmbedInfo;
@@ -36,6 +38,7 @@ public final class EmbedClient implements AutoCloseable {
     private final X11Display display = X11Display.open(null);
     private final WindowReparentWatcher reparentWatcher = new WindowReparentWatcher();
     private final WindowConfigureWatcher configureWatcher = new WindowConfigureWatcher();
+    private final WindowFocusWatcher focusWatcher = new WindowFocusWatcher();
     private long windowId = -1;
     private volatile long embedderWindowId = -1;
     private volatile boolean awaitingEmbed = false;
@@ -44,6 +47,8 @@ public final class EmbedClient implements AutoCloseable {
     private volatile LongConsumer onEmbedded = embedderId -> {
     };
     private volatile SizeListener onResized = (width, height) -> {
+    };
+    private volatile FocusListener onFocusChanged = focused -> {
     };
     private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
 
@@ -98,6 +103,38 @@ public final class EmbedClient implements AutoCloseable {
     }
 
     /**
+     * Registers a callback invoked whenever this window gains ({@code true})
+     * or loses ({@code false}) X input focus — the real, delivered
+     * counterpart of XEmbed's host&rarr;client {@code XEMBED_FOCUS_IN}/{@code
+     * XEMBED_FOCUS_OUT} ClientMessages, which never reach this class (they
+     * are only delivered to the connection that created this process's
+     * top-level window — AWT's own, not this class's {@link X11Display} —
+     * the same restriction behind {@link #onEmbedded} not coming from {@code
+     * EMBEDDED_NOTIFY}). A host that grants the embedded client focus does so
+     * with {@code XSetInputFocus} (see {@code EmbedSocket#focusClient}),
+     * which generates a real server-side {@code FocusIn} on this window — and
+     * a {@code FocusOut} when focus later moves away — that {@link
+     * WindowFocusWatcher} reads directly off this class's own connection,
+     * just like the {@code ReparentNotify}/{@code ConfigureNotify} the other
+     * callbacks rely on.
+     *
+     * <p>Like {@link #onResized}, this needs no {@link #announce} — {@link
+     * #watchOwnWindow} is enough — so a toolkit-opaque client (embedded via
+     * {@code EmbedSocket#embedOpaque}) can drive its own focus rendering
+     * (caret blink, selection highlight) from it without any handshake. A
+     * cooperative AWT/Swing client doesn't need this: its own toolkit reads
+     * the same {@code FocusIn}/{@code FocusOut} on AWT's connection and
+     * updates itself. Runs on {@link WindowFocusWatcher}'s own background
+     * thread.
+     */
+    public void onFocusChanged(FocusListener callback) {
+        onFocusChanged = callback;
+        if (windowId >= 0) {
+            focusWatcher.watch(windowId, focused -> onFocusChanged.focusChanged(focused));
+        }
+    }
+
+    /**
      * Registers a callback invoked whenever this window's own size changes,
      * with its new width/height in pixels — in particular, when a host
      * follows its own resize into the embedded window (see {@code
@@ -138,6 +175,7 @@ public final class EmbedClient implements AutoCloseable {
         awaitingEmbed = true;
         reparentWatcher.watch(windowId, this::handleReparented);
         configureWatcher.watch(windowId, (width, height) -> onResized.resized(width, height));
+        focusWatcher.watch(windowId, focused -> onFocusChanged.focusChanged(focused));
     }
 
     /**
@@ -226,6 +264,7 @@ public final class EmbedClient implements AutoCloseable {
         awaitingEmbed = true;
         reparentWatcher.watch(windowId, this::handleReparented);
         configureWatcher.watch(windowId, (width, height) -> onResized.resized(width, height));
+        focusWatcher.watch(windowId, focused -> onFocusChanged.focusChanged(focused));
     }
 
     private void handleReparented(long newParentId) {
@@ -312,6 +351,7 @@ public final class EmbedClient implements AutoCloseable {
     public void close() {
         reparentWatcher.close();
         configureWatcher.close();
+        focusWatcher.close();
         display.close();
     }
 }

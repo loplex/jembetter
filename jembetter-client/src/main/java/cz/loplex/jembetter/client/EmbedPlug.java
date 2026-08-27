@@ -1,6 +1,7 @@
 package cz.loplex.jembetter.client;
 
 import cz.loplex.jembetter.common.Platform;
+import cz.loplex.jembetter.core.x11.FocusListener;
 
 import java.nio.file.Path;
 import java.util.function.LongConsumer;
@@ -56,6 +57,19 @@ public interface EmbedPlug extends AutoCloseable {
      * or crashes — see {@link EmbedClient#onHostDetached}.
      */
     void onHostDetached(Runnable callback);
+
+    /**
+     * Registers a callback invoked when this window gains ({@code true}) or
+     * loses ({@code false}) input focus — see {@link
+     * EmbedClient#onFocusChanged}.
+     *
+     * <p><b>X11 backend only.</b> The Win32 backend has no equivalent
+     * externally-observable signal (a child HWND's {@code
+     * WM_SETFOCUS}/{@code WM_KILLFOCUS} only reach the client's own message
+     * loop), so the callback registered here is never invoked on Windows —
+     * see {@link EmbedPlugWin32}.
+     */
+    void onFocusChanged(FocusListener callback);
 
     /** Stops watching for host death. */
     @Override
