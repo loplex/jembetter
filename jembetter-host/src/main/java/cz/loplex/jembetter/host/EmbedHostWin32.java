@@ -2,6 +2,7 @@ package cz.loplex.jembetter.host;
 
 import cz.loplex.jembetter.common.CanvasNativeHandle;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
+import cz.loplex.jembetter.core.win32.Win32ClickWatcher;
 import cz.loplex.jembetter.core.win32.Win32Focus;
 import cz.loplex.jembetter.core.win32.Win32Reparent;
 import cz.loplex.jembetter.core.win32.Win32WindowFinder;
@@ -42,31 +43,25 @@ import java.util.List;
  * watcher is needed. The {@link #onDetached} callback runs on whichever
  * thread completes that future (a JDK-internal thread, not the EDT).
  *
- * <p><strong>Known limitation:</strong> unlike {@code EmbedSocket}'s X11
- * backend (see its Javadoc), a click on the embedded area does not return
- * input focus here on its own — {@link #requestFocus()} still has to be
- * called explicitly. X11's fix (a passive {@code XGrabButton} that
- * intercepts the press before the client's own toolkit sees it, then
- * replays it) has no drop-in Win32 equivalent: ordinary window subclassing
- * ({@code SetWindowSubclass}) only works within the subclassing process's
- * own address space, since it installs a callback the target thread would
- * have to execute — it cannot reach across into a genuinely separate
- * process's HWND the way this class embeds one. The real Win32 mechanism
- * for observing clicks system-wide without injecting a DLL into the
- * embedded process is a low-level mouse hook ({@code
- * SetWindowsHookEx(WH_MOUSE_LL, ...)}, which — unlike a non-low-level hook —
- * runs in the hooking process itself): watch every {@code WM_LBUTTONDOWN},
- * check whether its screen coordinates fall inside the embedded HWND's
- * rect, and call {@link Win32Focus#set} if so. Structurally different from
- * the X11 fix (observe-and-react rather than intercept-and-replay — nothing
- * needs replaying, since a low-level hook never blocks the click), and with
- * its own real caveats {@code SetWindowsHookEx}'s own documentation calls
- * out (added latency on every mouse event system-wide while installed;
- * UIPI can block hooking a higher-integrity-level window). Deliberately not
- * implemented here without a real-machine spike to confirm it the way every
- * other Win32 mechanism in this class was (see this module's package-info)
- * — reasoned about from documented Win32 semantics, not verified live, so
- * not shipped as a guess. See {@code docs/win32-status.md}.
+ * <p><strong>Click-to-focus:</strong> unlike {@code EmbedSocket}'s X11
+ * backend (a passive {@code XGrabButton} that intercepts the press before
+ * the client's own toolkit sees it, then replays it), a click on the
+ * embedded area is observed rather than intercepted here — there is no
+ * drop-in Win32 equivalent to X11's intercept-and-replay, since ordinary
+ * window subclassing ({@code SetWindowSubclass}) only works within the
+ * subclassing process's own address space and cannot reach across into a
+ * genuinely separate process's HWND the way this class embeds one. Instead,
+ * a single {@link Win32ClickWatcher} (a low-level mouse hook, {@code
+ * SetWindowsHookEx(WH_MOUSE_LL, ...)} — runs in this process, no DLL
+ * injected into the embedded one) watches every {@code WM_LBUTTONDOWN}
+ * system-wide and calls {@link Win32Focus#set} whenever one lands inside
+ * the currently embedded HWND's rect; see that class's Javadoc for the
+ * mechanism, including what a {@code .mvn/win32-wine-smoketest} run
+ * confirms about it versus what still needs a real-machine spike (the
+ * documented caveats {@code SetWindowsHookEx} itself calls out: added
+ * latency on every mouse event system-wide while installed, and UIPI
+ * blocking the hook against a higher-integrity-level target). See {@code
+ * docs/win32-status.md}.
  */
 final class EmbedHostWin32 implements EmbedHost {
 
@@ -77,6 +72,7 @@ final class EmbedHostWin32 implements EmbedHost {
 
     private final Canvas hostCanvas;
     private final long hostCanvasHwnd;
+    private final Win32ClickWatcher clickWatcher = new Win32ClickWatcher();
     private volatile long embeddedHwnd = -1;
     private volatile Runnable onDetached = () -> {
     };
@@ -138,10 +134,12 @@ final class EmbedHostWin32 implements EmbedHost {
 
     @Override
     public void close() {
-        // Nothing OS-level to release: unlike EmbedSocket's own X11 window,
-        // this backend has no separate socket window - the host Canvas's own
-        // HWND is the parent directly, and its lifecycle belongs to the
-        // caller's own AWT tree.
+        // The host Canvas's own HWND is the parent directly (unlike
+        // EmbedSocket's own X11 window, this backend has no separate socket
+        // window), so its lifecycle belongs to the caller's own AWT tree -
+        // nothing to release there. The click-to-focus hook is this
+        // instance's own resource, though, and must be unhooked.
+        clickWatcher.close();
     }
 
     private void reparentAndWatch(long clientHwnd, long clientPid) {
@@ -150,6 +148,7 @@ final class EmbedHostWin32 implements EmbedHost {
         waitForReparentConfirmed(clientHwnd);
         embeddedHwnd = clientHwnd;
         Win32Focus.set(clientHwnd);
+        clickWatcher.watch(clientHwnd, () -> Win32Focus.set(clientHwnd));
         watchClientDeath(clientHwnd, clientPid);
     }
 
@@ -163,6 +162,7 @@ final class EmbedHostWin32 implements EmbedHost {
         if (embeddedHwnd == clientHwnd) {
             embeddedHwnd = -1;
         }
+        clickWatcher.unwatch(clientHwnd);
         onDetached.run();
     }
 
