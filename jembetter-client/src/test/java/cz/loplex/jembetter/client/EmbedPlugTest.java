@@ -1,6 +1,7 @@
 package cz.loplex.jembetter.client;
 
 import cz.loplex.jembetter.common.ipc.PidHandshake;
+import cz.loplex.jembetter.core.x11.InputFocus;
 import cz.loplex.jembetter.core.x11.RawWindow;
 import cz.loplex.jembetter.core.x11.Reparenting;
 import cz.loplex.jembetter.core.x11.WindowFinder;
@@ -21,6 +22,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -102,6 +104,43 @@ class EmbedPlugTest {
             assertTrue(detached.await(5, TimeUnit.SECONDS), "onHostDetached was never invoked");
         } finally {
             Files.deleteIfExists(socketPath);
+        }
+    }
+
+    /**
+     * Confirms {@link EmbedPlug#onFocusChanged} delegates to a working
+     * {@link EmbedClient} — the delivery mechanism itself (real {@code
+     * FocusIn}/{@code FocusOut}, grab-artefact filtering, transition
+     * dedup) is covered by {@link EmbedClientTest} and {@code
+     * WindowFocusWatcherTest}.
+     */
+    @Test
+    void deliversFocusGainedToTheClientThroughTheFacade() throws IOException, InterruptedException {
+        frame = new JFrame("EmbedPlugTest");
+        frame.setUndecorated(true);
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+
+        AtomicBoolean sawGained = new AtomicBoolean(false);
+        CountDownLatch gained = new CountDownLatch(1);
+        plug = EmbedPlug.create();
+        plug.onFocusChanged(focused -> {
+            if (focused && sawGained.compareAndSet(false, true)) {
+                gained.countDown();
+            }
+        });
+        plug.announce(null);
+
+        long pid = ProcessHandle.current().pid();
+        try (X11Display hostDisplay = X11Display.open(null)) {
+            long clientWindowId = resolveClientWindow(hostDisplay, pid);
+            // The client window is still an ordinary, viewable top-level here
+            // (announce() doesn't reparent) — a host pointing X input focus at
+            // it is exactly what EmbedSocket#focusClient does once it is
+            // embedded, and generates the same real FocusIn.
+            InputFocus.set(hostDisplay, clientWindowId);
+
+            assertTrue(gained.await(5, TimeUnit.SECONDS), "onFocusChanged(true) was never delivered through the facade");
         }
     }
 

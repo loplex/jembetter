@@ -86,6 +86,16 @@ client.offer(Path.of("/run/user/1000/my-app.sock"));
 `client.close()` when your process is done watching for host death (not
 needed on process exit).
 
+`client.onFocusChanged(focused -> ...)` reports when the embedded window
+gains (`true`) or loses (`false`) input focus. XEmbed's host&rarr;client
+`FOCUS_IN`/`FOCUS_OUT` ClientMessages can't reach a client whose window AWT
+created (same reason `onEmbedded` doesn't use `EMBEDDED_NOTIFY`), but the
+real `FocusIn`/`FocusOut` the host's `XSetInputFocus` generates on the
+window can — that's what this reads. A cooperative AWT/Swing client doesn't
+need it (its own toolkit already tracks focus); it's for toolkit-opaque
+clients driving their own focus rendering. Also on `EmbedPlug`, X11 backend
+only — the Win32 backend has no equivalent signal and never fires it.
+
 **Known-handle embedding, no socket:** the client-side counterpart of
 `EmbedSocket#embed(long)` above — `announce(wmClass)` does everything
 `offer` does (resolve this process's own window, publish `_XEMBED_INFO`,

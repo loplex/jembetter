@@ -1,5 +1,7 @@
 package cz.loplex.jembetter.client;
 
+import cz.loplex.jembetter.core.x11.FocusListener;
+
 import java.nio.file.Path;
 import java.util.function.LongConsumer;
 
@@ -30,6 +32,11 @@ final class EmbedPlugX11 implements EmbedPlug {
     @Override
     public void onHostDetached(Runnable callback) {
         client.onHostDetached(callback);
+    }
+
+    @Override
+    public void onFocusChanged(FocusListener callback) {
+        client.onFocusChanged(callback);
     }
 
     @Override
