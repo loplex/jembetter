@@ -3,9 +3,11 @@
 `jembetter-core-win32` has `Win32Reparent`/`Win32WindowGeometry`/`Win32Focus`/
 `Win32WindowFinder`, mirroring `jembetter-core`'s X11 primitives 1:1
 (`SetParent`+style-flip, `MoveWindow`/`ShowWindow`, `SetFocus`,
-`EnumWindows`+`GetWindowThreadProcessId`). Its JUnit tests are gated with
-`@EnabledOnOs(OS.WINDOWS)`, so they're skipped (not run, not failed) by this
-repo's own `mvn test` on Linux.
+`EnumWindows`+`GetWindowThreadProcessId`), plus `Win32ReparentWatcher` and
+`Win32ClickWatcher`, which have no 1:1 X11 primitive to mirror since they
+stand in for event mechanisms X11 has and Win32 doesn't. Its JUnit tests
+are gated with `@EnabledOnOs(OS.WINDOWS)`, so they're skipped (not run, not
+failed) by this repo's own `mvn test` on Linux.
 
 `.mvn/win32-wine-smoketest/run.sh` had already confirmed the JNA bindings
 link against real `user32.dll`/`kernel32.dll` entry points under Wine, and
@@ -53,34 +55,41 @@ rather than reasoned about:
   root window alive. See `Win32ReparentWatcher`'s and `EmbedPlugWin32`'s
   Javadoc for that asymmetry.
 
-**Click-to-focus (open gap, investigated, not implemented).** X11's
-`EmbedSocket` now returns input focus to the embedded client automatically
-on a real click back into the embedded area (a passive `XGrabButton` that
-intercepts the press before the client's own toolkit sees it, then replays
-it — see `EmbedSocket#open(Canvas)`'s Javadoc). `EmbedHostWin32` has no
-equivalent — `requestFocus()` still has to be called explicitly. Investigated
-rather than guessed at: ordinary subclassing (`SetWindowSubclass`) can't
-reach across into a genuinely separate process's HWND the way this backend
-embeds one — it installs a callback the *target thread* would have to
-execute, which only works within the subclassing process's own address
-space. The real equivalent is a low-level mouse hook
-(`SetWindowsHookEx(WH_MOUSE_LL, ...)`, which runs in the *hooking* process,
-unlike a non-low-level hook, so it needs no DLL injected into the embedded
-process): watch every `WM_LBUTTONDOWN` system-wide, check whether it lands
-inside the embedded HWND's rect, and call `Win32Focus.set` if so —
-structurally an observe-and-react mechanism rather than X11's
-intercept-and-replay one (nothing to replay; a low-level hook never blocks
-the click it observes), with its own documented caveats (added latency on
-every mouse event system-wide while installed; UIPI can block hooking a
-higher-integrity-level window). Not implemented without a real-machine spike
-to confirm it the way every other Win32 mechanism above was — see
-`EmbedHostWin32`'s own Javadoc for the same writeup.
+**Click-to-focus (implemented, Wine-smoke-tested, not yet real-machine
+spiked).** X11's `EmbedSocket` returns input focus to the embedded client
+automatically on a real click back into the embedded area (a passive
+`XGrabButton` that intercepts the press before the client's own toolkit
+sees it, then replays it — see `EmbedSocket#open(Canvas)`'s Javadoc).
+`EmbedHostWin32` now has an equivalent, `Win32ClickWatcher`: since ordinary
+subclassing (`SetWindowSubclass`) can't reach across into a genuinely
+separate process's HWND the way this backend embeds one (it installs a
+callback the *target thread* would have to execute, only within the
+subclassing process's own address space), it instead installs a low-level
+mouse hook (`SetWindowsHookEx(WH_MOUSE_LL, ...)`, which runs in the
+*hooking* process, unlike a non-low-level hook, so it needs no DLL injected
+into the embedded process): watches every `WM_LBUTTONDOWN` system-wide,
+checks whether it lands inside the embedded HWND's rect, and calls
+`Win32Focus.set` if so — structurally an observe-and-react mechanism rather
+than X11's intercept-and-replay one (nothing to replay; a low-level hook
+never blocks the click it observes).
 
-`EmbedHostWin32Test`/`EmbedPlugWin32Test`/`Win32ReparentWatcherTest` cover
-this wiring, gated `@EnabledOnOs(OS.WINDOWS)` like the rest of this module's
-tests, and run on every push via `.github/workflows/windows-ci.yml`, a
-persistent `windows-latest` job. `.github/workflows/linux-ci.yml` runs the
-same reactor's tests the other way, against a real Xvfb + openbox pair.
+A `.mvn/win32-wine-smoketest` run (`Win32ClickWatcherTest`, with real
+injected clicks via `SendInput`) confirms the hook installs, the
+`LowLevelMouseProc`/`MSLLHOOKSTRUCT` marshaling works, the message pump
+dispatches, the hit-test is correct, and `close()` unhooks cleanly. What it
+cannot confirm — Wine doesn't faithfully replicate either — are the
+documented Win32 caveats `SetWindowsHookEx` itself calls out: added latency
+on every mouse event system-wide while installed, and UIPI blocking the
+hook against a higher-integrity-level target. A dedicated real-machine
+check of those two remains, the same way the two items above still need
+one — see `EmbedHostWin32`'s and `Win32ClickWatcher`'s own Javadoc.
+
+`EmbedHostWin32Test`/`EmbedPlugWin32Test`/`Win32ReparentWatcherTest`/
+`Win32ClickWatcherTest` cover this wiring, gated `@EnabledOnOs(OS.WINDOWS)`
+like the rest of this module's tests, and run on every push via
+`.github/workflows/windows-ci.yml`, a persistent `windows-latest` job.
+`.github/workflows/linux-ci.yml` runs the same reactor's tests the other
+way, against a real Xvfb + openbox pair.
 
 `maven-surefire-plugin`'s `<jvm>` wrapper (see `.mvn/xserver-jvm-wrapper/bin/java`,
 in the repo root) only applies under an `os.family=unix`-activated Maven

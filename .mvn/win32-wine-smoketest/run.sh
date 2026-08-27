@@ -15,6 +15,14 @@
 # replicate that policy) or any real-Windows-version-specific behavior - see
 # Win32Focus's Javadoc.
 #
+# Win32ClickWatcherTest is the exception: its click-to-focus mechanism
+# (a WH_MOUSE_LL low-level mouse hook) was driven out entirely against this
+# harness, with real clicks injected via SendInput, and it *does* prove the
+# hook installs, the LowLevelMouseProc/MSLLHOOKSTRUCT marshaling works, the
+# message pump dispatches, the hit-test is correct, and close() unhooks
+# cleanly - see Win32ClickWatcher's Javadoc for what's still unconfirmed
+# (system-wide mouse latency, UIPI) beyond what Wine can tell you.
+#
 # It runs the real JUnit test classes in jembetter-core-win32 (the same ones
 # @EnabledOnOs(OS.WINDOWS)-gated out of this repo's normal `mvn test` on
 # Linux) via junit-platform-console-standalone, a self-contained jar that

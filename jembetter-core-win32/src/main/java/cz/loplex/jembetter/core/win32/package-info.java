@@ -8,6 +8,14 @@
  * {@code WindowFinder}, and {@link
  * cz.loplex.jembetter.core.win32.Win32ReparentWatcher} for {@code
  * WindowReparentWatcher} (poll-based here — see its own Javadoc for why).
+ * {@link cz.loplex.jembetter.core.win32.Win32ClickWatcher} has no X11
+ * primitive to mirror: it stands in for {@code EmbedSocket}'s passive
+ * {@code XGrabButton} click-to-focus with a low-level mouse hook instead,
+ * since Win32 has no intercept-and-replay equivalent. Unlike the rest of
+ * this list, {@code Win32ClickWatcher} was driven out entirely under
+ * {@code .mvn/win32-wine-smoketest} rather than against the primitives the
+ * real-machine spike below already covers — see its own Javadoc for what
+ * that run does and doesn't confirm.
  *
  * <p><b>Confirmed against a real Windows machine (2026-08-26).</b> A
  * Wine-based smoke test (see {@code .mvn/win32-wine-smoketest} in this
