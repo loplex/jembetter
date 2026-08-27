@@ -2,9 +2,9 @@
 
 `EmbedSocket`/`EmbedClient` are what `EmbedHost`/`EmbedPlug` (see the main
 [README](../README.md#quick-start)) are composed from — reach for them
-directly for anything the facade leaves out: multiple clients on one socket,
-a voluntary host-initiated detach/re-embed, focus-next/prev tab-cycling, or
-modality signaling.
+directly for anything the facade leaves out: several embedded clients at
+once (one `EmbedSocket` each), a voluntary host-initiated detach/re-embed,
+focus-next/prev tab-cycling, or modality signaling.
 
 ## Host side
 
@@ -30,6 +30,13 @@ the main README) — see its Javadoc for the z-order rationale and the
 open — a client crashing or being voluntarily released via
 `socket.detachClient()` doesn't require restarting the host. Call
 `socket.close()` to shut it down.
+
+Each `EmbedSocket` holds **one** client at a time by design (its accept loop
+blocks until the current client detaches before taking the next). To embed
+several clients at once — e.g. one per `Canvas` in a grid — create several
+`EmbedSocket`s, each with its own canvas and its own socket path; they run
+independently (each on its own X11 connection and background threads), and
+closing one releases only its own client.
 
 **No AWT tree to embed into:** `open(x, y, width, height)`/`setBounds(x, y,
 width, height)` create the socket as a root-level, override-redirect window
