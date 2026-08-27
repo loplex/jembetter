@@ -39,8 +39,11 @@ public final class WindowConfigureWatcher implements AutoCloseable {
     /** Starts watching {@code windowId}; {@code onResized} runs on the watcher's own thread with the window's new width/height. */
     public void watch(long windowId, SizeListener onResized) {
         callbacks.put(windowId, onResized);
-        X11Ext.INSTANCE.XSelectInput(display.raw(), new Window(windowId), new NativeLong(X11Ext.StructureNotifyMask));
-        X11Ext.INSTANCE.XFlush(display.raw());
+        synchronized (X11Display.GLOBAL_LOCK) {
+            X11Ext.INSTANCE.XSelectInput(display.raw(), new Window(windowId),
+                    new NativeLong(X11Ext.StructureNotifyMask));
+            X11Ext.INSTANCE.XFlush(display.raw());
+        }
     }
 
     public void unwatch(long windowId) {
@@ -50,7 +53,11 @@ public final class WindowConfigureWatcher implements AutoCloseable {
     private void loop() {
         XEvent event = new XEvent();
         while (running) {
-            if (X11Ext.INSTANCE.XCheckTypedEvent(display.raw(), X11Ext.ConfigureNotify, event)) {
+            boolean pending;
+            synchronized (X11Display.GLOBAL_LOCK) {
+                pending = X11Ext.INSTANCE.XCheckTypedEvent(display.raw(), X11Ext.ConfigureNotify, event);
+            }
+            if (pending) {
                 dispatch(event);
             } else {
                 idle();

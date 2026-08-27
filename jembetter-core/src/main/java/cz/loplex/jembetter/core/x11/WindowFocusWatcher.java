@@ -56,8 +56,10 @@ public final class WindowFocusWatcher implements AutoCloseable {
     /** Starts watching {@code windowId}; {@code onFocusChanged} runs on the watcher's own thread with the new focus state. */
     public void watch(long windowId, FocusListener onFocusChanged) {
         callbacks.put(windowId, onFocusChanged);
-        X11Ext.INSTANCE.XSelectInput(display.raw(), new Window(windowId), new NativeLong(X11Ext.FocusChangeMask));
-        X11Ext.INSTANCE.XFlush(display.raw());
+        synchronized (X11Display.GLOBAL_LOCK) {
+            X11Ext.INSTANCE.XSelectInput(display.raw(), new Window(windowId), new NativeLong(X11Ext.FocusChangeMask));
+            X11Ext.INSTANCE.XFlush(display.raw());
+        }
     }
 
     public void unwatch(long windowId) {
@@ -68,9 +70,17 @@ public final class WindowFocusWatcher implements AutoCloseable {
     private void loop() {
         XEvent event = new XEvent();
         while (running) {
-            if (X11Ext.INSTANCE.XCheckTypedEvent(display.raw(), X11Ext.FocusIn, event)) {
+            boolean gotFocusIn;
+            boolean gotFocusOut = false;
+            synchronized (X11Display.GLOBAL_LOCK) {
+                gotFocusIn = X11Ext.INSTANCE.XCheckTypedEvent(display.raw(), X11Ext.FocusIn, event);
+                if (!gotFocusIn) {
+                    gotFocusOut = X11Ext.INSTANCE.XCheckTypedEvent(display.raw(), X11Ext.FocusOut, event);
+                }
+            }
+            if (gotFocusIn) {
                 dispatch(event, true);
-            } else if (X11Ext.INSTANCE.XCheckTypedEvent(display.raw(), X11Ext.FocusOut, event)) {
+            } else if (gotFocusOut) {
                 dispatch(event, false);
             } else {
                 idle();

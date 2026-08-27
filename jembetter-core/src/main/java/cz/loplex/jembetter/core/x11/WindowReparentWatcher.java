@@ -37,8 +37,11 @@ public final class WindowReparentWatcher implements AutoCloseable {
     /** Starts watching {@code windowId}; {@code onReparented} runs on the watcher's own thread with the window's new parent id. */
     public void watch(long windowId, LongConsumer onReparented) {
         callbacks.put(windowId, onReparented);
-        X11Ext.INSTANCE.XSelectInput(display.raw(), new Window(windowId), new NativeLong(X11Ext.StructureNotifyMask));
-        X11Ext.INSTANCE.XFlush(display.raw());
+        synchronized (X11Display.GLOBAL_LOCK) {
+            X11Ext.INSTANCE.XSelectInput(display.raw(), new Window(windowId),
+                    new NativeLong(X11Ext.StructureNotifyMask));
+            X11Ext.INSTANCE.XFlush(display.raw());
+        }
     }
 
     public void unwatch(long windowId) {
@@ -48,7 +51,11 @@ public final class WindowReparentWatcher implements AutoCloseable {
     private void loop() {
         XEvent event = new XEvent();
         while (running) {
-            if (X11Ext.INSTANCE.XCheckTypedEvent(display.raw(), X11Ext.ReparentNotify, event)) {
+            boolean pending;
+            synchronized (X11Display.GLOBAL_LOCK) {
+                pending = X11Ext.INSTANCE.XCheckTypedEvent(display.raw(), X11Ext.ReparentNotify, event);
+            }
+            if (pending) {
                 dispatch(event);
             } else {
                 idle();
