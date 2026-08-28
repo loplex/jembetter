@@ -36,7 +36,7 @@
     <junit.version>5.11.3</junit.version>
     <slf4j.version>2.0.18</slf4j.version>
     <!-- See the maven-surefire-plugin <jvm> configuration below and
-         .mvn/xserver-jvm-wrapper/bin/java. Override on the command line,
+         build-tools/test-jvm-wrapper/bin/java. Override on the command line,
          e.g. `-Dtest.xserver=Xephyr` to watch tests run, or
          `-Dtest.xserver=` to opt out and run against whatever DISPLAY you
          already have (or none). -->
@@ -169,7 +169,7 @@
          plain default fork, and the @EnabledOnOs(OS.WINDOWS)/DISPLAY-gated
          tests sort themselves out from there. -->
     <profile>
-      <id>xserver-jvm-wrapper</id>
+      <id>test-jvm-wrapper</id>
       <activation>
         <os>
           <family>unix</family>
@@ -195,17 +195,91 @@
                      plexus/maven-shared-utils Commandline, always builds the child's
                      environment from Java's System.getenv() snapshot - itself frozen at JVM
                      startup - rather than the live OS environment, so neither route ever
-                     reaches the child). See .mvn/xserver-jvm-wrapper/bin/java for what the
+                     reaches the child). See build-tools/test-jvm-wrapper/bin/java for what the
                      wrapper actually does - it has to live at exactly
                      "<something>/bin/java<something>" (surefire's SystemUtils.endsWithJavaPath
                      requires a filename starting with "java" inside a directory literally named
                      "bin"), mimicking a real JDK install's own bin/java layout. -->
-                <jvm>${maven.multiModuleProjectDirectory}/.mvn/xserver-jvm-wrapper/bin/java</jvm>
+                <jvm>${maven.multiModuleProjectDirectory}/build-tools/test-jvm-wrapper/bin/java</jvm>
                 <environmentVariables>
                   <ORIG_JAVA_HOME>${java.home}</ORIG_JAVA_HOME>
                   <X_SERVER>${test.xserver}</X_SERVER>
                 </environmentVariables>
               </configuration>
+              <executions>
+                <execution>
+                  <id>default-test</id>
+                  <configuration>
+                    <excludedGroups>windows</excludedGroups>
+                  </configuration>
+                </execution>
+              </executions>
+            </plugin>
+          </plugins>
+        </pluginManagement>
+      </build>
+    </profile>
+
+    <!-- The @Tag("windows") suite (jembetter-core-win32's Win32* primitives
+         plus EmbedHostWin32Test/EmbedPlugWin32Test) also runs on Linux: a
+         second surefire execution forks it, through the same test-jvm-wrapper,
+         into a real Windows JDK running under Wine - see
+         build-tools/test-jvm-wrapper/provide_platform_java.sh (which downloads
+         and caches that JDK). Real Windows runs the identical suite as
+         surefire's plain default fork on windows-latest CI.
+
+         Gated on Wine actually being installed, checked via /usr/bin/wine -
+         the standard Debian/Ubuntu/Arch/Fedora path - so a plain `mvn test`
+         on a Wine-less Linux box skips this execution rather than failing
+         the fork on `wine: command not found`. A Wine installed somewhere
+         else needs an explicit `-Pwin32-tests-under-wine`. This profile
+         layers onto test-jvm-wrapper above (always active together on Linux),
+         inheriting its <jvm>/<environmentVariables> plugin configuration. -->
+    <profile>
+      <id>win32-tests-under-wine</id>
+      <activation>
+        <file>
+          <exists>/usr/bin/wine</exists>
+        </file>
+      </activation>
+      <build>
+        <pluginManagement>
+          <plugins>
+            <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-surefire-plugin</artifactId>
+              <executions>
+                <execution>
+                  <id>windows-tests-on-linux</id>
+                  <phase>test</phase>
+                  <goals>
+                    <goal>test</goal>
+                  </goals>
+                  <configuration>
+                    <groups>windows</groups>
+                    <!-- Excludes windows-tagged tests that are known to never pass under
+                         Wine specifically (as opposed to on real Windows) - see the
+                         comment on Win32ClickWatcherTest's
+                         clickInsideAWatchedWindowInvokesTheCallback for the current
+                         one. -->
+                    <excludedGroups>wine-incompatible</excludedGroups>
+                    <environmentVariables>
+                      <TEST_GROUP>windows</TEST_GROUP>
+                    </environmentVariables>
+                    <!-- Default fork communication (LegacyForkNodeFactory) talks to the
+                         forked JVM over its own stdin/stdout. Under Wine, reading that
+                         inherited stdin hits an unimplemented Windows syscall (the
+                         PeekNamedPipe equivalent JDK's BufferedInputStream calls from
+                         available()), which kills the fork immediately. Route the same
+                         communication over a TCP loopback socket instead - winsock is a
+                         much better-supported part of Wine than console/pipe handle
+                         emulation. runJava in provide_platform_java.sh also has to
+                         propagate `wine java.exe`'s own exit code and ignore SIGPIPE on
+                         the stderr relay for this to report reliably - see its comments. -->
+                    <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory"/>
+                  </configuration>
+                </execution>
+              </executions>
             </plugin>
           </plugins>
         </pluginManagement>

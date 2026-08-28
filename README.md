@@ -191,7 +191,7 @@ skipped whenever none is available.
 By default, `mvn test` never touches whatever `DISPLAY` you already have —
 tests reparent/focus/move real windows, not something to unleash on your
 live desktop session. Instead, for each test JVM it forks, it launches its
-own private Xvfb + openbox pair, via `.mvn/xserver-jvm-wrapper/bin/java`
+own private Xvfb + openbox pair, via `build-tools/test-jvm-wrapper/bin/java`
 (wired up as `maven-surefire-plugin`'s `<jvm>` in the root `pom.xml`) and
 points that JVM's `DISPLAY` at it, regardless of your own — then tears
 both back down once the JVM exits, so nothing outlives the build. openbox
@@ -208,7 +208,7 @@ can't turn into DISPLAY-gated tests quietly not running.
 
 To watch the X11-touching tests run instead of just trusting them, run
 `mvn test -Dtest.xserver=Xephyr` from a terminal on a real desktop
-session. `.mvn/xserver-jvm-wrapper/bin/java` launches `Xephyr` the same
+session. `build-tools/test-jvm-wrapper/bin/java` launches `Xephyr` the same
 way either way — without a `-display` of its own — so it nests into
 whatever `DISPLAY` it inherited (your desktop's), opening a visible window
 per test JVM fork that you can watch windows get created/moved/reparented
