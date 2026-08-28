@@ -1,0 +1,53 @@
+name: Win32 real-machine checks
+
+# Real-Windows checks that the reactor's @Tag("windows") suite can't do:
+# behaviour under foreground-lock contention, cross-process reparent
+# watching, and the WH_MOUSE_LL hook under a burst of injected input. See
+# build-tools/win32-real-machine-checks/README.md.
+#
+# Separate from the main build on purpose - it manipulates global window
+# focus/foreground state and injects system-wide input.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main, develop]
+    paths:
+      - 'build-tools/win32-real-machine-checks/**'
+      - 'jembetter-core-win32/src/main/**'
+      - 'jembetter-core-common/src/main/**'
+      - '.github/workflows/win32-real-machine-checks.yml'
+  schedule:
+    # Mondays 06:00 UTC - catch drift in the Windows runner image / JDK.
+    - cron: '0 6 * * 1'
+
+jobs:
+  checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: mvn install (populates ~/.m2 with jna/jna-platform)
+        run: mvn -B install -DskipTests
+        shell: pwsh
+
+      - name: Run the Win32 real-machine checks
+        id: checks
+        run: |
+          .\build-tools\win32-real-machine-checks\run.ps1
+        shell: pwsh
+        continue-on-error: true
+
+      - name: Report outcome
+        run: |
+          if ("${{ steps.checks.outcome }}" -ne "success") {
+            Write-Host "::warning::A gated check (FOCUS / REPARENT / CLICK hook-survival) failed - see the 'Run the Win32 real-machine checks' step's log above. FG-LOCK and CLICK's latency/UIPI lines are observational and always need a human to read them."
+            exit 1
+          }
+        shell: pwsh
