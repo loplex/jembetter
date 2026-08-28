@@ -1,12 +1,23 @@
 package cz.loplex.xembed.host;
 
+import com.sun.jna.platform.unix.X11.Display;
 import cz.loplex.xembed.core.ipc.PidHandshake;
+import cz.loplex.xembed.core.x11.InputFocus;
 import cz.loplex.xembed.core.x11.Reparenting;
 import cz.loplex.xembed.core.x11.WindowFinder;
+import cz.loplex.xembed.core.x11.WindowGeometry;
 import cz.loplex.xembed.core.x11.X11Display;
+import cz.loplex.xembed.core.xembed.XEmbedFocus;
+import cz.loplex.xembed.core.xembed.XEmbedInfo;
+import cz.loplex.xembed.core.xembed.XEmbedMessage;
+import cz.loplex.xembed.core.xembed.XEmbedMessages;
 
 import java.awt.Frame;
 import java.awt.Window;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
@@ -26,18 +37,41 @@ import java.util.function.Supplier;
  * A borderless top-level AWT window that a client process's own top-level
  * window gets reparented into.
  *
- * <p><strong>v0:</strong> proves the discovery + handshake + reparent
- * pipeline end to end. It is not yet XEmbed-compliant: there is no focus or
- * resize protocol running between host and client after the reparent, and
- * the embedded window keeps whatever size it had before being embedded.
+ * <p><strong>v2:</strong> after reparenting, resizes the embedded window to
+ * fill this socket, keeps following this socket's own resizes, points X
+ * input focus at the embedded window, and forwards this socket owner's
+ * activation state (XEMBED_FOCUS_IN/OUT, XEMBED_WINDOW_ACTIVATE/DEACTIVATE).
+ * Client-initiated focus requests (XEMBED_REQUEST_FOCUS) aren't handled yet
+ * — that needs an event loop reading ClientMessages sent to this window,
+ * which AWT's own X11 connection currently owns. Also still missing:
+ * lifecycle/crash handling (unmap tracking via PropertyNotify on
+ * {@code _XEMBED_INFO}, DestroyNotify handling).
  */
 public final class EmbedSocket extends Window {
 
     private final X11Display display = X11Display.open(null);
     private long windowId = -1;
+    private volatile long embeddedWindowId = -1;
 
     public EmbedSocket(Frame owner) {
         super(owner);
+        addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent event) {
+                followSizeIntoEmbeddedWindow();
+            }
+        });
+        owner.addWindowFocusListener(new WindowAdapter() {
+            @Override
+            public void windowGainedFocus(WindowEvent event) {
+                sendActivated(true);
+            }
+
+            @Override
+            public void windowLostFocus(WindowEvent event) {
+                sendActivated(false);
+            }
+        });
     }
 
     /** Realizes the native window and resolves its own X11 window id. */
@@ -73,12 +107,40 @@ public final class EmbedSocket extends Window {
                     long clientPid = PidHandshake.receive(accepted);
                     long clientWindowId = resolveClientWindow(clientPid);
                     Reparenting.reparent(display, clientWindowId, windowId, 0, 0);
+                    embeddedWindowId = clientWindowId;
+                    followSizeIntoEmbeddedWindow();
+                    XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
+                            XEmbedInfo.PROTOCOL_VERSION);
+                    InputFocus.set(display, clientWindowId);
+                    sendActivated(getOwner().isFocused());
                 }
             } finally {
                 Files.deleteIfExists(socketPath);
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
+        }
+    }
+
+    private void followSizeIntoEmbeddedWindow() {
+        long id = embeddedWindowId;
+        if (id >= 0) {
+            WindowGeometry.moveResize(display, id, 0, 0, getWidth(), getHeight());
+        }
+    }
+
+    private void sendActivated(boolean active) {
+        long id = embeddedWindowId;
+        if (id < 0) {
+            return;
+        }
+        Display raw = display.raw();
+        if (active) {
+            XEmbedMessages.send(raw, id, XEmbedMessage.FOCUS_IN, XEmbedFocus.CURRENT, 0, 0);
+            XEmbedMessages.send(raw, id, XEmbedMessage.WINDOW_ACTIVATE, 0, 0, 0);
+        } else {
+            XEmbedMessages.send(raw, id, XEmbedMessage.FOCUS_OUT, 0, 0, 0);
+            XEmbedMessages.send(raw, id, XEmbedMessage.WINDOW_DEACTIVATE, 0, 0, 0);
         }
     }
 

@@ -10,14 +10,15 @@ import java.awt.BorderLayout;
 /**
  * Manual demo: run this, then run {@link ClientDemo} in a second JVM on
  * the same X display. The client's window should visually jump into the
- * socket area once the handshake completes.
+ * socket area and resize to fill it once the handshake completes, then
+ * follow the socket down to a smaller size a couple of seconds later.
  */
 public final class HostDemo {
 
     private HostDemo() {
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws InterruptedException {
         JFrame frame = new JFrame("xembed-demo host");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.add(new JLabel("Host window (unrelated to the socket)", SwingConstants.CENTER), BorderLayout.CENTER);
@@ -34,6 +35,12 @@ public final class HostDemo {
 
         socket.acceptOnce(DemoPaths.socketPath());
 
-        System.out.println("Client window reparented into the socket at (450,100).");
+        System.out.println("Client window reparented and resized to fill the socket at (450,100).");
+        System.out.println("Shrinking the socket in 2s to demonstrate live resize forwarding...");
+
+        Thread.sleep(2000);
+        socket.setSize(250, 180);
+
+        System.out.println("Socket resized to 250x180; the embedded window should have followed.");
     }
 }
