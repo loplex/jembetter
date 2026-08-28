@@ -1,9 +1,9 @@
 name: Windows (Win32) CI
 
-# Runs the full reactor's test suite on real windows-latest, not Wine
-# (.mvn/win32-wine-smoketest/) or the since-deleted throwaway Win32 spike -
-# this is what actually exercises EmbedHostWin32Test/EmbedPlugWin32Test/
-# Win32ReparentWatcherTest end to end. X11-only tests
+# Runs the full reactor's test suite on real windows-latest - the same
+# @Tag("windows") tests linux-ci.yml runs under Wine, but here on genuine
+# Windows, which is what actually exercises EmbedHostWin32Test/
+# EmbedPlugWin32Test/Win32ReparentWatcherTest end to end. X11-only tests
 # (@EnabledIfEnvironmentVariable(named = "DISPLAY", ...)) are skipped here,
 # not run, since there's no DISPLAY on Windows - see linux-ci.yml.
 on:
