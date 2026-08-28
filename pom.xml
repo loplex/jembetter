@@ -16,6 +16,7 @@
     <module>xembed-core</module>
     <module>xembed-host</module>
     <module>xembed-client</module>
+    <module>xembed-demo</module>
   </modules>
 
   <properties>

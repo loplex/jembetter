@@ -20,14 +20,14 @@ import com.sun.jna.ptr.PointerByReference;
  * wire protocol carries 32 bits per item — a long-standing R6 compatibility
  * wart — hence the {@link Native#LONG_SIZE} branch below.
  */
-final class X11Properties {
+public final class X11Properties {
 
     private static final NativeLong READ_ALL = new NativeLong(0xFFFFFFFFL);
 
     private X11Properties() {
     }
 
-    static long[] readCardinal32(Display display, Window window, Atom property) {
+    public static long[] readCardinal32(Display display, Window window, Atom property) {
         AtomByReference actualType = new AtomByReference();
         IntByReference actualFormat = new IntByReference();
         NativeLongByReference nitems = new NativeLongByReference();

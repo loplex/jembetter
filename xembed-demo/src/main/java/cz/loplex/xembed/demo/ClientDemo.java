@@ -1,0 +1,37 @@
+package cz.loplex.xembed.demo;
+
+import cz.loplex.xembed.client.EmbedClient;
+
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.SwingConstants;
+import java.awt.BorderLayout;
+import java.awt.Color;
+
+/**
+ * Manual demo counterpart to {@link HostDemo}. Undecorated so no leftover
+ * window-manager decoration frame is left behind once its content window is
+ * reparented away.
+ */
+public final class ClientDemo {
+
+    private ClientDemo() {
+    }
+
+    public static void main(String[] args) {
+        JFrame frame = new JFrame("xembed-demo client");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setUndecorated(true);
+        frame.getContentPane().setBackground(Color.ORANGE);
+        frame.add(new JLabel("I am the embedded client window", SwingConstants.CENTER), BorderLayout.CENTER);
+        frame.setBounds(900, 100, 350, 250);
+        frame.setVisible(true);
+
+        System.out.println("Client PID: " + ProcessHandle.current().pid());
+        System.out.println("Offering this window to the host...");
+
+        EmbedClient.offer(DemoPaths.socketPath());
+
+        System.out.println("Offered. If the host accepted, this window should now be reparented.");
+    }
+}
