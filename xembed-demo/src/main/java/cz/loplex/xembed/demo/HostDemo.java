@@ -11,7 +11,9 @@ import java.awt.BorderLayout;
  * Manual demo: run this, then run {@link ClientDemo} in a second JVM on
  * the same X display. The client's window should visually jump into the
  * socket area and resize to fill it once the handshake completes, then
- * follow the socket down to a smaller size a couple of seconds later.
+ * follow the socket down to a smaller size a couple of seconds later. Kill
+ * the client process (including {@code kill -9}) afterwards to see the
+ * crash detection fire.
  */
 public final class HostDemo {
 
@@ -28,6 +30,7 @@ public final class HostDemo {
         EmbedSocket socket = new EmbedSocket(frame);
         socket.setBounds(450, 100, 400, 300);
         socket.open();
+        socket.onClientDetached(() -> System.out.println("Client detached (process exited or crashed)."));
 
         System.out.println("Host PID:    " + ProcessHandle.current().pid());
         System.out.println("Socket path: " + DemoPaths.socketPath());
@@ -42,5 +45,6 @@ public final class HostDemo {
         socket.setSize(250, 180);
 
         System.out.println("Socket resized to 250x180; the embedded window should have followed.");
+        System.out.println("Now watching for the client to exit or crash...");
     }
 }

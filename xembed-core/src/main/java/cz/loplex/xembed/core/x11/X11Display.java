@@ -19,6 +19,7 @@ public final class X11Display implements AutoCloseable {
      * {@code DISPLAY} environment variable when {@code name} is {@code null}.
      */
     public static X11Display open(String name) {
+        X11ErrorHandler.install();
         Display display = X11Ext.INSTANCE.XOpenDisplay(name);
         if (display == null) {
             throw new IllegalStateException(

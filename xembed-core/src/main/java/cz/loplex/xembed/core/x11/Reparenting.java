@@ -19,6 +19,10 @@ public final class Reparenting {
         Window parent = new Window(newParentWindowId);
         X11Ext.INSTANCE.XReparentWindow(raw, child, parent, x, y);
         X11Ext.INSTANCE.XMapWindow(raw, child);
-        X11Ext.INSTANCE.XFlush(raw);
+        // XSync, not just XFlush: callers hand childWindowId off to code
+        // using other X11 connections (e.g. WindowDeathWatcher) right after
+        // this returns, which needs the server to have actually processed
+        // the reparent/map, not just have them written to the wire.
+        X11Ext.INSTANCE.XSync(raw, false);
     }
 }

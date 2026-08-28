@@ -4,6 +4,7 @@ import com.sun.jna.platform.unix.X11.Display;
 import cz.loplex.xembed.core.ipc.PidHandshake;
 import cz.loplex.xembed.core.x11.InputFocus;
 import cz.loplex.xembed.core.x11.Reparenting;
+import cz.loplex.xembed.core.x11.WindowDeathWatcher;
 import cz.loplex.xembed.core.x11.WindowFinder;
 import cz.loplex.xembed.core.x11.WindowGeometry;
 import cz.loplex.xembed.core.x11.X11Display;
@@ -37,21 +38,23 @@ import java.util.function.Supplier;
  * A borderless top-level AWT window that a client process's own top-level
  * window gets reparented into.
  *
- * <p><strong>v2:</strong> after reparenting, resizes the embedded window to
+ * <p><strong>v3:</strong> after reparenting, resizes the embedded window to
  * fill this socket, keeps following this socket's own resizes, points X
- * input focus at the embedded window, and forwards this socket owner's
- * activation state (XEMBED_FOCUS_IN/OUT, XEMBED_WINDOW_ACTIVATE/DEACTIVATE).
- * Client-initiated focus requests (XEMBED_REQUEST_FOCUS) aren't handled yet
- * — that needs an event loop reading ClientMessages sent to this window,
- * which AWT's own X11 connection currently owns. Also still missing:
- * lifecycle/crash handling (unmap tracking via PropertyNotify on
- * {@code _XEMBED_INFO}, DestroyNotify handling).
+ * input focus at the embedded window, forwards this socket owner's
+ * activation state (XEMBED_FOCUS_IN/OUT, XEMBED_WINDOW_ACTIVATE/DEACTIVATE),
+ * and detects the embedded process exiting or crashing via DestroyNotify.
+ * Client-initiated focus requests (XEMBED_REQUEST_FOCUS) still aren't
+ * handled — that needs an event loop reading ClientMessages sent to this
+ * window, which AWT's own X11 connection currently owns.
  */
 public final class EmbedSocket extends Window {
 
     private final X11Display display = X11Display.open(null);
+    private final WindowDeathWatcher deathWatcher = new WindowDeathWatcher();
     private long windowId = -1;
     private volatile long embeddedWindowId = -1;
+    private volatile Runnable onClientDetached = () -> {
+    };
 
     public EmbedSocket(Frame owner) {
         super(owner);
@@ -113,6 +116,7 @@ public final class EmbedSocket extends Window {
                             XEmbedInfo.PROTOCOL_VERSION);
                     InputFocus.set(display, clientWindowId);
                     sendActivated(getOwner().isFocused());
+                    deathWatcher.watch(clientWindowId, this::handleClientDetached);
                 }
             } finally {
                 Files.deleteIfExists(socketPath);
@@ -120,6 +124,20 @@ public final class EmbedSocket extends Window {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /**
+     * Registers a callback invoked when the currently embedded window's
+     * process exits or crashes. Runs on {@link WindowDeathWatcher}'s own
+     * background thread — marshal to the EDT yourself if you touch Swing.
+     */
+    public void onClientDetached(Runnable callback) {
+        onClientDetached = callback;
+    }
+
+    private void handleClientDetached(long detachedWindowId) {
+        embeddedWindowId = -1;
+        onClientDetached.run();
     }
 
     private void followSizeIntoEmbeddedWindow() {
@@ -177,6 +195,7 @@ public final class EmbedSocket extends Window {
     @Override
     public void dispose() {
         super.dispose();
+        deathWatcher.close();
         display.close();
     }
 }
