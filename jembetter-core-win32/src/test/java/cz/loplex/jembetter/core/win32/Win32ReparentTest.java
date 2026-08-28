@@ -3,7 +3,7 @@ package cz.loplex.jembetter.core.win32;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.condition.OS;
 
 import static cz.loplex.jembetter.core.win32.Win32TestWindows.createTopLevelWindow;
@@ -14,11 +14,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * Exercises {@link Win32Reparent} against real HWNDs. Gated on {@code
  * OS.WINDOWS} rather than a Wine-specific condition: a Windows JDK run under
  * Wine self-reports {@code os.name} as Windows, so the same gate covers both
- * a real Windows machine and this repo's Wine-based smoke test (see this
- * module's package-info) without ever running on the Linux dev/CI
- * environment this repo is otherwise built in.
+ * a real Windows machine and the Wine-hosted run (see this module's
+ * package-info) without ever running on the Linux dev/CI environment this
+ * repo is otherwise built in.
  */
-@EnabledOnOs(OS.WINDOWS)
+@Tag("windows")
 class Win32ReparentTest {
 
     private long parentHwnd;

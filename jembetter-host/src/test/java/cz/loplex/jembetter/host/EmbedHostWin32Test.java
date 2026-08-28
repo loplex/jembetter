@@ -6,7 +6,7 @@ import cz.loplex.jembetter.core.win32.Win32Reparent;
 import cz.loplex.jembetter.core.win32.Win32WindowFinder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.condition.OS;
 
 import javax.swing.JFrame;
@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -36,9 +37,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@link Win32Reparent}/{@link Win32WindowFinder} for verification instead
  * of raw X11 calls. Gated on {@code OS.WINDOWS} the same way {@code
  * jembetter-core-win32}'s own tests are — see that module's {@code
- * Win32ReparentTest} for why that also covers the Wine-based smoke test.
+ * Win32ReparentTest} for why that also covers the Wine-hosted run.
  */
-@EnabledOnOs(OS.WINDOWS)
+@Tag("windows")
 class EmbedHostWin32Test {
 
     private JFrame owner;
@@ -69,10 +70,10 @@ class EmbedHostWin32Test {
 
         clientProcess = startFakeClientProcess();
         long clientPid = clientProcess.pid();
+        long clientHwnd = waitForOwnWindow(clientPid);
 
         host.embed(clientPid);
 
-        long clientHwnd = waitForOwnWindow(clientPid);
         long canvasHwnd = CanvasNativeHandle.extract(canvas);
         assertEquals(canvasHwnd, Win32Reparent.parentOf(clientHwnd),
                 "EmbedHost.embed(pid) did not reparent the client under the host canvas HWND");
@@ -89,8 +90,8 @@ class EmbedHostWin32Test {
 
         clientProcess = startFakeClientProcess();
         long clientPid = clientProcess.pid();
-        host.embed(clientPid);
         waitForOwnWindow(clientPid);
+        host.embed(clientPid);
 
         Point center = new Point(canvas.getLocationOnScreen());
         center.translate(canvas.getWidth() / 2, canvas.getHeight() / 2);
@@ -126,18 +127,17 @@ class EmbedHostWin32Test {
         Path socketPath = Files.createTempFile("jembetter-host-win32-facade-test-", ".sock");
         Files.delete(socketPath);
 
+        AtomicReference<Throwable> embedderFailure = new AtomicReference<>();
         Thread embedder = new Thread(() -> host.embed(socketPath), "embed-host-win32-test-embedder");
         embedder.setDaemon(true);
+        embedder.setUncaughtExceptionHandler((t, e) -> embedderFailure.set(e));
         embedder.start();
 
         clientProcess = startFakeClientProcess();
         long clientPid = clientProcess.pid();
         long clientHwnd = waitForOwnWindow(clientPid);
 
-        waitForSocketToExist(socketPath);
-        UnixDomainSocketAddress address = UnixDomainSocketAddress.of(socketPath);
-        try (SocketChannel channel = SocketChannel.open(StandardProtocolFamily.UNIX)) {
-            channel.connect(address);
+        try (SocketChannel channel = connectWhenReady(socketPath, embedderFailure)) {
             PidHandshake.send(channel, clientPid);
         }
 
@@ -160,13 +160,35 @@ class EmbedHostWin32Test {
         return canvas;
     }
 
-    private static void waitForSocketToExist(Path socketPath) throws InterruptedException {
+    /**
+     * Connects to the rendezvous socket once {@code EmbedHost.embed(Path)}'s
+     * background thread has bound it, retrying until then. Polling the
+     * connect rather than {@link Files#exists} on the socket path is
+     * deliberate: the Wine-hosted JDK this test runs under implements Windows
+     * {@code AF_UNIX} without ever materialising a filesystem socket node, so
+     * {@code Files.exists} on the bound path stays {@code false} forever even
+     * though the socket is fully connectable.
+     */
+    private static SocketChannel connectWhenReady(Path socketPath,
+            AtomicReference<Throwable> embedderFailure) throws InterruptedException, IOException {
+        UnixDomainSocketAddress address = UnixDomainSocketAddress.of(socketPath);
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (!Files.exists(socketPath)) {
-            if (System.nanoTime() > deadline) {
-                throw new IllegalStateException("EmbedHost.embed(Path) never created the rendezvous socket");
+        while (true) {
+            Throwable failure = embedderFailure.get();
+            if (failure != null) {
+                throw new IllegalStateException("EmbedHost.embed(Path) threw before binding the rendezvous socket", failure);
             }
-            Thread.sleep(20);
+            SocketChannel channel = SocketChannel.open(StandardProtocolFamily.UNIX);
+            try {
+                channel.connect(address);
+                return channel;
+            } catch (IOException notReadyYet) {
+                channel.close();
+                if (System.nanoTime() > deadline) {
+                    throw new IllegalStateException("EmbedHost.embed(Path) never bound the rendezvous socket", notReadyYet);
+                }
+                Thread.sleep(20);
+            }
         }
     }
 
@@ -183,14 +205,16 @@ class EmbedHostWin32Test {
 
     private static long waitForOwnWindow(long pid) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        List<Long> found;
         do {
-            found = Win32WindowFinder.findTopLevelWindowsByPid(pid);
+            List<Long> found = Win32WindowFinder.findApplicationWindowsByPid(pid);
             if (!found.isEmpty()) {
                 return found.get(0);
             }
             Thread.sleep(50);
         } while (System.nanoTime() < deadline);
-        throw new IllegalStateException("Fake client window never became visible");
+        throw new IllegalStateException("Fake client window never became visible; top-level windows for pid " + pid
+                + ": " + Win32WindowFinder.findTopLevelWindowsByPid(pid).stream()
+                        .map(Win32WindowFinder::describeWindow)
+                        .collect(java.util.stream.Collectors.joining("; ")));
     }
 }
