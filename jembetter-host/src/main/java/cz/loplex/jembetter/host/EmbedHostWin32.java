@@ -5,6 +5,7 @@ import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.win32.Win32ClickWatcher;
 import cz.loplex.jembetter.core.win32.Win32Focus;
 import cz.loplex.jembetter.core.win32.Win32Reparent;
+import cz.loplex.jembetter.core.win32.Win32Window;
 import cz.loplex.jembetter.core.win32.Win32WindowFinder;
 import cz.loplex.jembetter.core.win32.Win32WindowGeometry;
 
@@ -140,6 +141,24 @@ final class EmbedHostWin32 implements EmbedHost {
         // nothing to release there. The click-to-focus hook is this
         // instance's own resource, though, and must be unhooked.
         clickWatcher.close();
+    }
+
+    /**
+     * Same as {@link #close()}, but when {@code destroyClient} is {@code
+     * true}, also asks the embedded HWND to close via {@link
+     * Win32Window#destroy} — unlike X11, Win32's {@code SetParent} has no
+     * save-set concept to preserve, so there's no "graceful release" step on
+     * this backend to begin with, just leaving the embedded HWND as-is.
+     * See {@link EmbedHost#close(boolean)} for why this is best-effort here,
+     * unlike the unconditional {@code XDestroyWindow} the X11 backend uses.
+     */
+    @Override
+    public void close(boolean destroyClient) {
+        clickWatcher.close();
+        long id = embeddedHwnd;
+        if (destroyClient && id >= 0) {
+            Win32Window.destroy(id);
+        }
     }
 
     private void reparentAndWatch(long clientHwnd, long clientPid) {

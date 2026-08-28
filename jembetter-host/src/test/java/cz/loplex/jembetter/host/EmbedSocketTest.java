@@ -3,6 +3,7 @@ package cz.loplex.jembetter.host;
 import com.sun.jna.NativeLong;
 import com.sun.jna.platform.unix.X11.Window;
 import com.sun.jna.platform.unix.X11.XEvent;
+import com.sun.jna.platform.unix.X11.XWindowAttributes;
 import cz.loplex.jembetter.common.CanvasNativeHandle;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.x11.InputFocus;
@@ -425,6 +426,53 @@ class EmbedSocketTest {
     }
 
     /**
+     * Regression coverage for the opt-in destroying close: {@link
+     * EmbedSocket#close(boolean)} with {@code true} destroys a still-
+     * embedded client's window outright via {@link EmbedSocket#destroyClient()}
+     * instead of releasing it back to root the way plain {@link
+     * EmbedSocket#close()} (equivalently {@code close(false)}) does —
+     * contrasted directly against {@link
+     * #closeReleasesAStillEmbeddedClientInsteadOfDestroyingIt} above, which
+     * asserts the opposite outcome for the default, non-destroying path.
+     */
+    @Test
+    void closeWithDestroyClientDestroysAStillEmbeddedClientInsteadOfReleasingIt()
+            throws IOException, InterruptedException {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketTest owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+        Thread.sleep(200);
+
+        socket = new EmbedSocket(owner);
+        socket.open(canvas);
+
+        Process clientProcess = startFakeClientProcess();
+        try {
+            long clientPid = clientProcess.pid();
+            long clientWindowId;
+            try (X11Display display = X11Display.open(null)) {
+                clientWindowId = waitForOwnWindow(display, clientPid);
+                XEmbedInfoProperty.write(display.raw(), clientWindowId,
+                        new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
+            }
+            socket.embed(clientPid);
+
+            socket.close(true);
+
+            try (X11Display probe = X11Display.open(null)) {
+                assertTrue(waitUntilWindowDestroyed(probe, clientWindowId),
+                        "close(true) did not destroy the still-embedded client window");
+            }
+        } finally {
+            clientProcess.destroy();
+            clientProcess.waitFor(5, TimeUnit.SECONDS);
+        }
+    }
+
+    /**
      * Regression coverage for the auto-cleanup wiring added to {@link
      * EmbedSocket#open(Canvas)}: disposing {@code hostCanvas}'s containing
      * {@link Frame} without ever calling {@link EmbedSocket#close()}
@@ -635,6 +683,34 @@ class EmbedSocketTest {
         processBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
         processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
         return processBuilder.start();
+    }
+
+    /**
+     * Polls {@code XGetWindowAttributes} until it reports {@code windowId}
+     * no longer exists — its documented status return is zero exactly when
+     * the window is gone (a {@code BadWindow} protocol error, swallowed by
+     * the process-wide handler {@link X11Display#open} installs rather than
+     * killing the JVM), nonzero otherwise.
+     */
+    private static boolean waitUntilWindowDestroyed(X11Display display, long windowId) {
+        XWindowAttributes attributes = new XWindowAttributes();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        do {
+            int status;
+            synchronized (X11Display.GLOBAL_LOCK) {
+                status = X11Ext.INSTANCE.XGetWindowAttributes(display.raw(), new Window(windowId), attributes);
+            }
+            if (status == 0) {
+                return true;
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
+        } while (System.nanoTime() < deadline);
+        return false;
     }
 
     private static boolean isDescendantOf(X11Display display, long windowId, long ancestorWindowId) {

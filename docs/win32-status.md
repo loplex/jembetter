@@ -104,6 +104,23 @@ of this module's tests, and run on every push via
 real Xvfb + openbox pair, and the `@Tag("windows")` ones additionally under
 Wine.
 
+**Destroying-close (`EmbedHost#close(boolean)`/`EmbedHostWin32`, implemented,
+Wine-tested, real-machine unspiked).** `Win32Window#destroy` was originally
+written as a direct `DestroyWindow` call, mirroring X11's `RawWindow#destroy`
+1:1 the way the rest of this module's primitives do — but unlike
+`XDestroyWindow`, which any X11 connection can issue against any window,
+Win32's `DestroyWindow` can only be called by the thread that created the
+window. A direct cross-process call against the embedded client's HWND
+silently returns `FALSE` and leaves the window intact; caught by
+`EmbedHostWin32Test`'s own coverage under Wine before this ever reached real
+Windows CI. `Win32Window#destroy` now posts `WM_CLOSE` instead, which is
+cross-process-safe (delivered via the target's own message queue) and
+results in `DestroyWindow` running correctly on the window's own thread —
+but only when the target's own `WM_CLOSE` handling doesn't override the
+default of destroying itself, so unlike the X11 backend's unconditional
+`XDestroyWindow`, this is best-effort, not guaranteed. See `Win32Window`'s
+own Javadoc.
+
 `maven-surefire-plugin`'s `<jvm>` wrapper (see `build-tools/test-jvm-wrapper/bin/java`,
 in the repo root) only applies under an `os.family=unix`-activated Maven
 profile: it's a bash script, and Windows can't launch it as the forked test

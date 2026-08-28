@@ -115,6 +115,17 @@ handles a toolkit-opaque client the same way `EmbedSocket#embedOpaque` does
 for why that's needed at all. Call `host.close()` to release the socket and
 its X11 window.
 
+`host.close(true)` is a destroying close: it destroys a still-embedded
+client's window instead of gracefully releasing it the way plain
+`host.close()` (equivalently `close(false)`) does. Use it when the embedded
+client is a private renderer process never meant to survive independently —
+e.g. one this host spawned purely to embed — and that must hold regardless
+of whether the client process has already been killed by the time `close`
+runs. On the X11 backend this is unconditional (`EmbedSocket#destroyClient()`,
+`XDestroyWindow`); on Win32 it's best-effort (`WM_CLOSE`, since `DestroyWindow`
+itself can't be called across processes) — see `EmbedHost#close(boolean)`'s
+Javadoc.
+
 ### Client side
 
 ```java
