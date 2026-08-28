@@ -453,6 +453,35 @@ public final class EmbedSocket implements AutoCloseable {
     }
 
     /**
+     * Destroys the currently embedded client's window outright, instead of
+     * releasing it back to the caller as a live top-level window the way
+     * {@link #detachClient()} does — for a caller that knows the embedded
+     * client is a private renderer process never meant to survive
+     * independently (e.g. one it spawned purely to embed) and wants that
+     * guaranteed regardless of call order. No-op if nothing is currently
+     * embedded.
+     *
+     * <p>Contrast with {@link #detachClient()}: the client is not given a
+     * chance to keep running as a top-level window afterward. {@link
+     * RawWindow#destroy} is already {@code GLOBAL_LOCK}-safe and {@code
+     * BadWindow}-tolerant via the global X11 error handler — see its
+     * existing use in {@link #close()} — so a client that has already
+     * exited on its own by the time this runs is handled the same as one
+     * still alive.
+     */
+    public void destroyClient() {
+        long id = embeddedWindowId;
+        if (id < 0) {
+            return;
+        }
+        deathWatcher.unwatch(id);
+        inbound.stopWatchingEmbeddedInfo();
+        inbound.stopWatchingButtonPress();
+        RawWindow.destroy(display, id);
+        embeddedWindowId = -1;
+    }
+
+    /**
      * Registers a callback invoked when the embedded client's tab chain is
      * exhausted going forward (XEMBED_FOCUS_NEXT) and it hands focus back.
      * Runs on {@link XEmbedInboundWatcher}'s own background thread.
@@ -644,6 +673,17 @@ public final class EmbedSocket implements AutoCloseable {
 
     @Override
     public void close() {
+        close(false);
+    }
+
+    /**
+     * Same as {@link #close()}, but when {@code destroyClient} is {@code
+     * true}, a still-embedded client is destroyed outright via {@link
+     * #destroyClient()} instead of gracefully released via {@link
+     * #detachClient()} — see {@link #destroyClient()} for when that's the
+     * right choice.
+     */
+    public void close(boolean destroyClient) {
         if (closed) {
             return;
         }
@@ -671,8 +711,14 @@ public final class EmbedSocket implements AutoCloseable {
         // open destroys the whole subtree outright instead, client included.
         // Releasing it the same way a voluntary detachClient() would avoids
         // relying on that distinction and leaves the client exactly as
-        // uninvolved as an explicit detach would.
-        detachClient();
+        // uninvolved as an explicit detach would - unless the caller has
+        // opted into destroyClient() instead, e.g. because it knows the
+        // client is a private renderer process never meant to survive this.
+        if (destroyClient) {
+            destroyClient();
+        } else {
+            detachClient();
+        }
         if (inbound != null) {
             inbound.close();
         }

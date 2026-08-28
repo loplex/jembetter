@@ -2,6 +2,9 @@ package cz.loplex.jembetter.host;
 
 import cz.loplex.jembetter.common.CanvasNativeHandle;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
+import com.sun.jna.Pointer;
+import com.sun.jna.platform.win32.User32;
+import com.sun.jna.platform.win32.WinDef.HWND;
 import cz.loplex.jembetter.core.win32.Win32Reparent;
 import cz.loplex.jembetter.core.win32.Win32WindowFinder;
 import org.junit.jupiter.api.AfterEach;
@@ -104,6 +107,44 @@ class EmbedHostWin32Test {
         }, "a real click into the embedded area must not throw through the click-to-focus hook");
     }
 
+    /**
+     * Regression coverage for the opt-in destroying close: {@link
+     * EmbedHost#close(boolean)} with {@code true} posts {@code WM_CLOSE} to
+     * the still-embedded client HWND via {@code Win32Window#destroy},
+     * rather than leaving it untouched the way plain {@link
+     * EmbedHost#close()} does on this backend (Win32's {@code SetParent}
+     * has no save-set-style "graceful release" step to begin with — see
+     * {@code EmbedHostWin32}'s Javadoc). The fake client here doesn't
+     * override {@code WM_CLOSE} handling (a plain {@code STATIC}
+     * top-level window — see {@link FakeClientProcessMain}), so the
+     * default {@code DefWindowProc} behavior actually destroys it; this
+     * asserts that end-to-end outcome rather than the {@code WM_CLOSE} post
+     * itself, since {@link Win32Window#destroy} only guarantees the ask —
+     * see {@link EmbedHost#close(boolean)}'s Javadoc for why this isn't the
+     * same unconditional guarantee the X11 backend's {@code
+     * XDestroyWindow}-based {@code destroyClient()} gives. Closes {@code
+     * host} explicitly here (nulling the field afterward) rather than
+     * relying on {@code @AfterEach}'s own {@code close()} call, since that
+     * only exercises the non-destroying overload.
+     */
+    @Test
+    void closeWithDestroyClientDestroysTheStillEmbeddedClientHwnd() throws IOException, InterruptedException {
+        Canvas canvas = newVisibleHostCanvas();
+        host = EmbedHost.create(canvas);
+
+        clientProcess = startFakeClientProcess();
+        long clientPid = clientProcess.pid();
+        long clientHwnd = waitForOwnWindow(clientPid);
+
+        host.embed(clientPid);
+
+        host.close(true);
+        host = null;
+
+        assertTrue(waitUntilWindowDestroyed(clientHwnd),
+                "close(true) did not destroy the still-embedded client HWND");
+    }
+
     @Test
     void embedsAKnownClientWindowOpaquely() throws IOException, InterruptedException {
         Canvas canvas = newVisibleHostCanvas();
@@ -201,6 +242,19 @@ class EmbedHostWin32Test {
         processBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
         processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
         return processBuilder.start();
+    }
+
+    /** Polls {@code IsWindow} until {@code hwnd} no longer refers to a live window. */
+    private static boolean waitUntilWindowDestroyed(long hwnd) throws InterruptedException {
+        HWND handle = new HWND(new Pointer(hwnd));
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        do {
+            if (!User32.INSTANCE.IsWindow(handle)) {
+                return true;
+            }
+            Thread.sleep(50);
+        } while (System.nanoTime() < deadline);
+        return false;
     }
 
     private static long waitForOwnWindow(long pid) throws InterruptedException {
