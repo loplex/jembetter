@@ -8,6 +8,8 @@ import com.sun.jna.platform.unix.X11.Window;
  */
 public final class X11Display implements AutoCloseable {
 
+    private static volatile boolean threadsInitialized = false;
+
     private final Display display;
 
     private X11Display(Display display) {
@@ -19,6 +21,7 @@ public final class X11Display implements AutoCloseable {
      * {@code DISPLAY} environment variable when {@code name} is {@code null}.
      */
     public static X11Display open(String name) {
+        ensureThreadsInitialized();
         X11ErrorHandler.install();
         Display display = X11Ext.INSTANCE.XOpenDisplay(name);
         if (display == null) {
@@ -39,5 +42,18 @@ public final class X11Display implements AutoCloseable {
     @Override
     public void close() {
         X11Ext.INSTANCE.XCloseDisplay(display);
+    }
+
+    // Must run before the process's first XOpenDisplay to have any effect;
+    // lets a single Display connection be shared safely across threads,
+    // which the socket window's own connection needs to do (it must be read
+    // from the same connection that created the window, but also carries
+    // ordinary calls like moveResize from whatever thread the AWT/Swing
+    // component listener driving it runs on).
+    private static synchronized void ensureThreadsInitialized() {
+        if (!threadsInitialized) {
+            X11Ext.INSTANCE.XInitThreads();
+            threadsInitialized = true;
+        }
     }
 }

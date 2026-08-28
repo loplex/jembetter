@@ -14,6 +14,12 @@ import java.awt.BorderLayout;
  * follow the socket down to a smaller size a couple of seconds later. Kill
  * the client process (including {@code kill -9}) afterwards to see the
  * crash detection fire.
+ *
+ * <p>The socket area is now a raw, override-redirect X11 window rather than
+ * an AWT one (see {@link EmbedSocket}'s Javadoc), so it's positioned with an
+ * explicit {@code open(x, y, width, height)}/{@code setBounds(...)} call
+ * instead of AWT layout — a real host would drive those calls from a
+ * placeholder Swing component's own resize/move listener.
  */
 public final class HostDemo {
 
@@ -28,8 +34,7 @@ public final class HostDemo {
         frame.setVisible(true);
 
         EmbedSocket socket = new EmbedSocket(frame);
-        socket.setBounds(450, 100, 400, 300);
-        socket.open();
+        socket.open(450, 100, 400, 300);
         socket.onClientDetached(() -> System.out.println("Client detached (process exited or crashed)."));
 
         System.out.println("Host PID:    " + ProcessHandle.current().pid());
@@ -42,7 +47,7 @@ public final class HostDemo {
         System.out.println("Shrinking the socket in 2s to demonstrate live resize forwarding...");
 
         Thread.sleep(2000);
-        socket.setSize(250, 180);
+        socket.setBounds(450, 100, 250, 180);
 
         System.out.println("Socket resized to 250x180; the embedded window should have followed.");
         System.out.println("Now watching for the client to exit or crash...");

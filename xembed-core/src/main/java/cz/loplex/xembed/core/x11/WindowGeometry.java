@@ -16,6 +16,30 @@ public final class WindowGeometry {
     public static void moveResize(X11Display display, long windowId, int x, int y, int width, int height) {
         Display raw = display.raw();
         X11Ext.INSTANCE.XMoveResizeWindow(raw, new Window(windowId), x, y, width, height);
+        // XSync, not just XFlush: callers immediately read this window's
+        // geometry back on the same connection (e.g. to decide whether a
+        // follow-up resize is still needed), which needs the server to have
+        // actually processed the request, not just have it written to the
+        // wire.
+        X11Ext.INSTANCE.XSync(raw, false);
+    }
+
+    /** Raises {@code windowId} to the top of its siblings' stacking order. */
+    public static void raise(X11Display display, long windowId) {
+        Display raw = display.raw();
+        X11Ext.INSTANCE.XRaiseWindow(raw, new Window(windowId));
+        X11Ext.INSTANCE.XFlush(raw);
+    }
+
+    /** Maps or unmaps {@code windowId}, e.g. in response to a client clearing/setting its own XEMBED_MAPPED flag. */
+    public static void setMapped(X11Display display, long windowId, boolean mapped) {
+        Display raw = display.raw();
+        Window window = new Window(windowId);
+        if (mapped) {
+            X11Ext.INSTANCE.XMapWindow(raw, window);
+        } else {
+            X11Ext.INSTANCE.XUnmapWindow(raw, window);
+        }
         X11Ext.INSTANCE.XFlush(raw);
     }
 }

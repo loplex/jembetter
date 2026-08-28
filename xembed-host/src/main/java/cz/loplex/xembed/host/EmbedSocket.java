@@ -3,20 +3,20 @@ package cz.loplex.xembed.host;
 import com.sun.jna.platform.unix.X11.Display;
 import cz.loplex.xembed.core.ipc.PidHandshake;
 import cz.loplex.xembed.core.x11.InputFocus;
+import cz.loplex.xembed.core.x11.RawWindow;
 import cz.loplex.xembed.core.x11.Reparenting;
 import cz.loplex.xembed.core.x11.WindowDeathWatcher;
 import cz.loplex.xembed.core.x11.WindowFinder;
 import cz.loplex.xembed.core.x11.WindowGeometry;
 import cz.loplex.xembed.core.x11.X11Display;
 import cz.loplex.xembed.core.xembed.XEmbedFocus;
+import cz.loplex.xembed.core.xembed.XEmbedInboundWatcher;
 import cz.loplex.xembed.core.xembed.XEmbedInfo;
+import cz.loplex.xembed.core.xembed.XEmbedInfoProperty;
 import cz.loplex.xembed.core.xembed.XEmbedMessage;
 import cz.loplex.xembed.core.xembed.XEmbedMessages;
 
 import java.awt.Frame;
-import java.awt.Window;
-import java.awt.event.ComponentAdapter;
-import java.awt.event.ComponentEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
@@ -27,43 +27,48 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
- * A borderless top-level AWT window that a client process's own top-level
- * window gets reparented into.
+ * A raw, override-redirect X11 window that a client process's own top-level
+ * window gets reparented into, kept positioned over wherever the host wants
+ * it on screen.
  *
- * <p><strong>v3:</strong> after reparenting, resizes the embedded window to
- * fill this socket, keeps following this socket's own resizes, points X
- * input focus at the embedded window, forwards this socket owner's
- * activation state (XEMBED_FOCUS_IN/OUT, XEMBED_WINDOW_ACTIVATE/DEACTIVATE),
- * and detects the embedded process exiting or crashing via DestroyNotify.
- * Client-initiated focus requests (XEMBED_REQUEST_FOCUS) still aren't
- * handled — that needs an event loop reading ClientMessages sent to this
- * window, which AWT's own X11 connection currently owns.
+ * <p><strong>v4:</strong> unlike v0-v3, this is no longer a {@code
+ * java.awt.Window}. AWT manages its own internal X11 connection, so
+ * ClientMessages sent <em>to</em> an AWT-backed socket window (e.g.
+ * XEMBED_REQUEST_FOCUS, or PropertyNotify on a client's _XEMBED_INFO) landed
+ * on AWT's connection, not this library's — unreadable without reflecting
+ * into JDK-internal AWT classes. Owning the window via {@code xembed-core}'s
+ * own {@link X11Display} instead means those events can be read directly.
+ * The tradeoff: this window is no longer part of the AWT window tree, so the
+ * host is responsible for keeping it positioned over wherever it should
+ * appear (e.g. a placeholder Swing component's {@code getLocationOnScreen()}
+ * plus a resize/move listener calling {@link #setBounds}) rather than laying
+ * it out with the rest of its UI.
  */
-public final class EmbedSocket extends Window {
+public final class EmbedSocket implements AutoCloseable {
 
+    private final Frame owner;
     private final X11Display display = X11Display.open(null);
     private final WindowDeathWatcher deathWatcher = new WindowDeathWatcher();
+    private XEmbedInboundWatcher inbound;
     private long windowId = -1;
+    private volatile int width = -1;
+    private volatile int height = -1;
     private volatile long embeddedWindowId = -1;
     private volatile Runnable onClientDetached = () -> {
     };
+    private volatile Runnable onFocusNext = () -> {
+    };
+    private volatile Runnable onFocusPrev = () -> {
+    };
 
     public EmbedSocket(Frame owner) {
-        super(owner);
-        addComponentListener(new ComponentAdapter() {
-            @Override
-            public void componentResized(ComponentEvent event) {
-                followSizeIntoEmbeddedWindow();
-            }
-        });
+        this.owner = owner;
         owner.addWindowFocusListener(new WindowAdapter() {
             @Override
             public void windowGainedFocus(WindowEvent event) {
@@ -77,20 +82,51 @@ public final class EmbedSocket extends Window {
         });
     }
 
-    /** Realizes the native window and resolves its own X11 window id. */
-    public void open() {
-        long pid = ProcessHandle.current().pid();
-        Set<Long> before = new HashSet<>(WindowFinder.findTopLevelWindowsByPid(display, pid));
+    /** Creates the underlying X11 window at the given screen bounds and starts watching it for inbound XEmbed messages. */
+    public void open(int x, int y, int width, int height) {
+        windowId = RawWindow.createOverrideRedirect(display, x, y, width, height);
+        this.width = width;
+        this.height = height;
+        inbound = new XEmbedInboundWatcher(display, windowId);
+        inbound.onClientMessage(this::handleInboundMessage);
+        inbound.onEmbeddedInfoChanged(this::handleEmbeddedInfoChanged);
+    }
 
-        setVisible(true);
+    /** Repositions/resizes this socket window and follows the resize into the embedded client, if any. */
+    public void setBounds(int x, int y, int width, int height) {
+        requireOpen();
+        WindowGeometry.moveResize(display, windowId, x, y, width, height);
+        WindowGeometry.raise(display, windowId);
+        this.width = width;
+        this.height = height;
+        followSizeIntoEmbeddedWindow();
+    }
 
-        List<Long> appeared = pollUntil(() -> {
-            List<Long> current = WindowFinder.findTopLevelWindowsByPid(display, pid);
-            current.removeIf(before::contains);
-            return current;
-        }, list -> !list.isEmpty(), "Could not resolve this socket window's own X11 window id");
+    private void followSizeIntoEmbeddedWindow() {
+        long id = embeddedWindowId;
+        if (id >= 0) {
+            WindowGeometry.moveResize(display, id, 0, 0, width, height);
+        }
+    }
 
-        windowId = appeared.get(0);
+    /**
+     * Reissues the just-applied initial resize once more after a short
+     * delay. Confirmed by direct observation against a live X server: a
+     * plain, XEmbed-unaware AWT client (like {@code ClientDemo}) reacts to
+     * being reparented by reasserting its own previous size from its own
+     * connection — a one-shot correction that beats our first resize's
+     * XGetWindowAttributes readback every time, but never fires a second
+     * time. A resize issued after that has already happened sticks. A
+     * fully XEmbed-aware client shouldn't contest embedder-driven geometry
+     * at all, so this only matters for AWT-unaware embeddees like the demo.
+     */
+    private void settleInitialSize() {
+        try {
+            Thread.sleep(150);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        followSizeIntoEmbeddedWindow();
     }
 
     /**
@@ -98,9 +134,7 @@ public final class EmbedSocket extends Window {
      * and reparents that client's top-level window into this one.
      */
     public void acceptOnce(Path socketPath) {
-        if (windowId < 0) {
-            throw new IllegalStateException("open() must be called before acceptOnce()");
-        }
+        requireOpen();
         try {
             Files.deleteIfExists(socketPath);
             UnixDomainSocketAddress address = UnixDomainSocketAddress.of(socketPath);
@@ -112,11 +146,13 @@ public final class EmbedSocket extends Window {
                     Reparenting.reparent(display, clientWindowId, windowId, 0, 0);
                     embeddedWindowId = clientWindowId;
                     followSizeIntoEmbeddedWindow();
+                    settleInitialSize();
                     XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
                             XEmbedInfo.PROTOCOL_VERSION);
                     InputFocus.set(display, clientWindowId);
-                    sendActivated(getOwner().isFocused());
+                    sendActivated(owner.isFocused());
                     deathWatcher.watch(clientWindowId, this::handleClientDetached);
+                    inbound.watchEmbeddedInfo(clientWindowId);
                 }
             } finally {
                 Files.deleteIfExists(socketPath);
@@ -135,16 +171,61 @@ public final class EmbedSocket extends Window {
         onClientDetached = callback;
     }
 
-    private void handleClientDetached(long detachedWindowId) {
-        embeddedWindowId = -1;
-        onClientDetached.run();
+    /**
+     * Registers a callback invoked when the embedded client's tab chain is
+     * exhausted going forward (XEMBED_FOCUS_NEXT) and it hands focus back.
+     * Runs on {@link XEmbedInboundWatcher}'s own background thread.
+     */
+    public void onFocusNext(Runnable callback) {
+        onFocusNext = callback;
     }
 
-    private void followSizeIntoEmbeddedWindow() {
+    /** Same as {@link #onFocusNext}, but for the tab chain exhausted going backward (XEMBED_FOCUS_PREV). */
+    public void onFocusPrev(Runnable callback) {
+        onFocusPrev = callback;
+    }
+
+    /** Tells the embedded client it's shadowed by (or no longer shadowed by) a modal dialog. */
+    public void setModal(boolean modal) {
         long id = embeddedWindowId;
-        if (id >= 0) {
-            WindowGeometry.moveResize(display, id, 0, 0, getWidth(), getHeight());
+        if (id < 0) {
+            return;
         }
+        XEmbedMessages.send(display.raw(), id, modal ? XEmbedMessage.MODALITY_ON : XEmbedMessage.MODALITY_OFF, 0, 0,
+                0);
+    }
+
+    private void handleInboundMessage(XEmbedMessage message, long detail) {
+        switch (message) {
+            case REQUEST_FOCUS -> grantFocus();
+            case FOCUS_NEXT -> onFocusNext.run();
+            case FOCUS_PREV -> onFocusPrev.run();
+            default -> {
+                // REGISTER_ACCELERATOR/UNREGISTER_ACCELERATOR/ACTIVATE_ACCELERATOR:
+                // not handled yet, no accelerator registry exists on the
+                // embedder side.
+            }
+        }
+    }
+
+    private void grantFocus() {
+        long id = embeddedWindowId;
+        if (id < 0) {
+            return;
+        }
+        InputFocus.set(display, id);
+        XEmbedMessages.send(display.raw(), id, XEmbedMessage.FOCUS_IN, XEmbedFocus.CURRENT, 0, 0);
+    }
+
+    private void handleEmbeddedInfoChanged(long clientWindowId) {
+        XEmbedInfoProperty.read(display.raw(), clientWindowId)
+                .ifPresent(info -> WindowGeometry.setMapped(display, clientWindowId, info.mapped()));
+    }
+
+    private void handleClientDetached(long detachedWindowId) {
+        embeddedWindowId = -1;
+        inbound.stopWatchingEmbeddedInfo();
+        onClientDetached.run();
     }
 
     private void sendActivated(boolean active) {
@@ -170,6 +251,12 @@ public final class EmbedSocket extends Window {
         return found.get(0);
     }
 
+    private void requireOpen() {
+        if (windowId < 0) {
+            throw new IllegalStateException("open() must be called first");
+        }
+    }
+
     private static <T> T pollUntil(Supplier<T> probe, Predicate<T> done, String timeoutMessage) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         T value;
@@ -193,9 +280,14 @@ public final class EmbedSocket extends Window {
     }
 
     @Override
-    public void dispose() {
-        super.dispose();
+    public void close() {
+        if (inbound != null) {
+            inbound.close();
+        }
         deathWatcher.close();
+        if (windowId >= 0) {
+            RawWindow.destroy(display, windowId);
+        }
         display.close();
     }
 }
