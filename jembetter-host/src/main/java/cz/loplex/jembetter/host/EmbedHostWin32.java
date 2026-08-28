@@ -56,8 +56,8 @@ import java.util.List;
  * injected into the embedded one) watches every {@code WM_LBUTTONDOWN}
  * system-wide and calls {@link Win32Focus#set} whenever one lands inside
  * the currently embedded HWND's rect; see that class's Javadoc for the
- * mechanism, including what a {@code .mvn/win32-wine-smoketest} run
- * confirms about it versus what still needs a real-machine spike (the
+ * mechanism, including what its {@code @Tag("windows")} tests under Wine
+ * confirm about it versus what still needs a real-machine spike (the
  * documented caveats {@code SetWindowsHookEx} itself calls out: added
  * latency on every mouse event system-wide while installed, and UIPI
  * blocking the hook against a higher-integrity-level target). See {@code
@@ -181,7 +181,7 @@ final class EmbedHostWin32 implements EmbedHost {
         long deadline = System.nanoTime() + WINDOW_LOOKUP_TIMEOUT.toNanos();
         List<Long> candidates;
         do {
-            candidates = Win32WindowFinder.findTopLevelWindowsByPid(clientPid);
+            candidates = Win32WindowFinder.findApplicationWindowsByPid(clientPid);
             if (!candidates.isEmpty()) {
                 break;
             }
@@ -192,8 +192,11 @@ final class EmbedHostWin32 implements EmbedHost {
             throw new IllegalStateException("Client process " + clientPid + " never published a top-level window");
         }
         if (candidates.size() > 1) {
+            String dump = candidates.stream()
+                    .map(Win32WindowFinder::describeWindow)
+                    .collect(java.util.stream.Collectors.joining("; "));
             throw new IllegalStateException("Client process " + clientPid + " has " + candidates.size()
-                    + " top-level windows; Win32 has no WM_CLASS-equivalent way to disambiguate them");
+                    + " application windows; Win32 has no WM_CLASS-equivalent way to disambiguate them: " + dump);
         }
         return candidates.get(0);
     }

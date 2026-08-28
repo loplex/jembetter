@@ -12,19 +12,20 @@
  * primitive to mirror: it stands in for {@code EmbedSocket}'s passive
  * {@code XGrabButton} click-to-focus with a low-level mouse hook instead,
  * since Win32 has no intercept-and-replay equivalent. Unlike the rest of
- * this list, {@code Win32ClickWatcher} was driven out entirely under
- * {@code .mvn/win32-wine-smoketest} rather than against the primitives the
- * real-machine spike below already covers — see its own Javadoc for what
- * that run does and doesn't confirm.
+ * this list, {@code Win32ClickWatcher} was driven out entirely under Wine
+ * (its {@code @Tag("windows")} tests, forked into a Windows JDK by {@code
+ * mvn test}'s {@code windows-tests-on-linux} execution) rather than against
+ * the primitives the real-machine spike below already covers — see its own
+ * Javadoc for what that does and doesn't confirm.
  *
- * <p><b>Confirmed against a real Windows machine (2026-08-26).</b> A
- * Wine-based smoke test (see {@code .mvn/win32-wine-smoketest} in this
- * repo) had already confirmed these JNA calls reach real {@code
- * user32.dll}/{@code kernel32.dll} entry points and that basic {@code
- * SetParent}/{@code MoveWindow}/{@code EnumWindows} mechanics plausibly
- * work. A one-off real-machine spike, run against real {@code
- * windows-latest} CI (not Wine), then confirmed, on genuine Windows, the
- * following:
+ * <p><b>Confirmed against a real Windows machine (2026-08-26).</b> Running
+ * this module's {@code @Tag("windows")} tests under Wine (the {@code
+ * windows-tests-on-linux} surefire execution) had already confirmed these
+ * JNA calls reach real {@code user32.dll}/{@code kernel32.dll} entry points
+ * and that basic {@code SetParent}/{@code MoveWindow}/{@code EnumWindows}
+ * mechanics plausibly work. A one-off real-machine spike, run against real
+ * {@code windows-latest} CI (not Wine), then confirmed, on genuine Windows,
+ * the following:
  *
  * <ol>
  *   <li>{@code SetParent}+style-flip+poll-verify between a real AWT
@@ -33,9 +34,11 @@
  *   <li>{@code SetFocus}/{@code SetForegroundWindow}'s foreground-lock
  *       restriction from a non-foreground process — confirmed to actually
  *       bite (a silent no-op, {@code SetForegroundWindow} can return
- *       {@code true} without the foreground changing); see
- *       {@link cz.loplex.jembetter.core.win32.Win32Focus}'s Javadoc for the
- *       workaround this led to.</li>
+ *       {@code true} without the foreground changing). A 2026-08-28
+ *       follow-up spike then compared workarounds and confirmed the {@code
+ *       AttachThreadInput} sequence {@link
+ *       cz.loplex.jembetter.core.win32.Win32Focus#set} now uses does move
+ *       the foreground where the plain call does not — see its Javadoc.</li>
  *   <li>{@link java.lang.ProcessHandle#onExit()} for a foreign (not
  *       self-spawned) pid — confirmed reliable.</li>
  *   <li>{@code AF_UNIX} rendezvous between two JVMs — confirmed working.</li>
@@ -52,7 +55,9 @@
  * plain {@code embed} into the same operation, since there is no {@code
  * _XEMBED_INFO} equivalent to make them differ. {@link
  * cz.loplex.jembetter.core.win32.Win32ReparentWatcher}, used by {@code
- * EmbedPlugWin32} to detect being embedded/the host detaching, is poll-based
- * and was <b>not</b> exercised by the spike — see its own Javadoc.
+ * EmbedPlugWin32} to detect being embedded/the host detaching, is poll-based;
+ * the 2026-08-28 follow-up spike confirmed it observes all three transitions
+ * it's relied on for (embed, host-detach, and the parent-destroy that on
+ * Win32 destroys the embedded child outright) — see its own Javadoc.
  */
 package cz.loplex.jembetter.core.win32;
