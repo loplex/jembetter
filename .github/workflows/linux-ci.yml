@@ -2,8 +2,10 @@ name: Linux (X11) CI
 
 # Runs the full reactor's test suite against a real, disposable Xvfb + openbox
 # pair - see README.md's "Running tests" section and
-# .mvn/xserver-jvm-wrapper/bin/java for how that's wired up. Win32-only tests
-# (@EnabledOnOs(OS.WINDOWS)) are skipped here, not run - see windows-ci.yml.
+# build-tools/test-jvm-wrapper/bin/java for how that's wired up. The
+# @Tag("windows") suite also runs here, forked into a Windows JDK under Wine
+# (the win32-tests-under-wine Maven profile, activated by wine being
+# installed below); real Windows exercises the same suite in windows-ci.yml.
 on:
   push:
     branches: [main, develop]
@@ -23,8 +25,16 @@ jobs:
           java-version: "21"
           cache: maven
 
-      - name: Install Xvfb + openbox + xdotool
-        run: sudo apt-get update && sudo apt-get install -y xvfb openbox xdotool
+      - name: Install Xvfb + openbox + xdotool + wine
+        run: sudo apt-get update && sudo apt-get install -y xvfb openbox xdotool wine
+
+      # The Wine test fork needs a real Windows JDK; provide_platform_java.sh
+      # downloads it to this dir on first use (~190 MB). Cache it across runs.
+      - name: Cache Windows JDK
+        uses: actions/cache@v4
+        with:
+          path: build-tools/test-jvm-wrapper/.cache
+          key: windows-jdk-21-ga
 
       - name: mvn test
         run: mvn -B test
