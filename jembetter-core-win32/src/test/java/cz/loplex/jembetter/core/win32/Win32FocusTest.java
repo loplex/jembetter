@@ -3,7 +3,7 @@ package cz.loplex.jembetter.core.win32;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.condition.OS;
 
 import static cz.loplex.jembetter.core.win32.Win32TestWindows.createTopLevelWindow;
@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
  * replicate that policy either way, so a stronger assertion here would be
  * asserting something this test environment can't actually confirm.
  */
-@EnabledOnOs(OS.WINDOWS)
+@Tag("windows")
 class Win32FocusTest {
 
     private long hwnd;

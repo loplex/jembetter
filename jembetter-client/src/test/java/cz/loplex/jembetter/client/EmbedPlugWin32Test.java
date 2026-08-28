@@ -5,7 +5,7 @@ import cz.loplex.jembetter.core.win32.Win32Reparent;
 import cz.loplex.jembetter.core.win32.Win32WindowFinder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.condition.OS;
 
 import javax.swing.JFrame;
@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * no Win32 host facade of its own to drive from here) and {@link
  * Win32TestWindow} in place of {@code RawWindow.createOverrideRedirect}.
  */
-@EnabledOnOs(OS.WINDOWS)
+@Tag("windows")
 class EmbedPlugWin32Test {
 
     private JFrame frame;
@@ -88,15 +88,25 @@ class EmbedPlugWin32Test {
         try {
             CountDownLatch hostReady = new CountDownLatch(1);
             CountDownLatch hostDone = new CountDownLatch(1);
-            Thread host = new Thread(() -> runFakeHost(address, hostReady, hostDone));
+            CountDownLatch releaseHost = new CountDownLatch(1);
+            Thread host = new Thread(() -> runFakeHost(address, hostReady, hostDone, releaseHost));
             host.setDaemon(true);
             host.start();
             assertTrue(hostReady.await(5, TimeUnit.SECONDS), "fake host never started listening");
 
+            CountDownLatch embedded = new CountDownLatch(1);
             CountDownLatch detached = new CountDownLatch(1);
             plug = EmbedPlug.create();
+            plug.onEmbedded(id -> embedded.countDown());
             plug.onHostDetached(detached::countDown);
             plug.announce(socketPath, null);
+
+            // The client detects embed/detach by polling GetParent (Win32 has no
+            // reparent event) - so let it actually observe the embed before the
+            // host tears the window down, otherwise a fast enough host would go
+            // parent=0 -> destroyed without the poll ever seeing parent=host.
+            assertTrue(embedded.await(5, TimeUnit.SECONDS), "onEmbedded was never invoked after announce");
+            releaseHost.countDown();
 
             assertTrue(hostDone.await(5, TimeUnit.SECONDS), "fake host never finished embedding and dying");
             assertTrue(detached.await(5, TimeUnit.SECONDS), "onHostDetached was never invoked");
@@ -105,7 +115,8 @@ class EmbedPlugWin32Test {
         }
     }
 
-    private void runFakeHost(UnixDomainSocketAddress address, CountDownLatch ready, CountDownLatch done) {
+    private void runFakeHost(UnixDomainSocketAddress address, CountDownLatch ready, CountDownLatch done,
+            CountDownLatch releaseHost) {
         long hostHwnd = Win32TestWindow.create("EmbedPlugWin32Test fake host (socket)");
         try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
             server.bind(address);
@@ -116,6 +127,7 @@ class EmbedPlugWin32Test {
                 long clientHwnd = waitForOwnWindow(clientPid);
                 Win32Reparent.reparent(clientHwnd, hostHwnd, 0, 0);
             }
+            releaseHost.await(5, TimeUnit.SECONDS);
             // Destroying the fake host's HWND cascades to destroy the
             // client's own (now-child) HWND too, real Win32 semantics with
             // no X11 save-set equivalent - see EmbedPlugWin32's Javadoc.
@@ -133,7 +145,7 @@ class EmbedPlugWin32Test {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         List<Long> found;
         do {
-            found = Win32WindowFinder.findTopLevelWindowsByPid(pid);
+            found = Win32WindowFinder.findApplicationWindowsByPid(pid);
             if (!found.isEmpty()) {
                 return found.get(0);
             }

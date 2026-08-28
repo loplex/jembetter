@@ -78,6 +78,10 @@ final class Win32TestWindows {
         User32.INSTANCE.DestroyWindow(toHwnd(hwnd));
     }
 
+    static boolean isWindow(long hwnd) {
+        return User32.INSTANCE.IsWindow(toHwnd(hwnd));
+    }
+
     static HWND toHwnd(long value) {
         return new HWND(new Pointer(value));
     }
