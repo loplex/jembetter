@@ -20,15 +20,15 @@ import java.util.function.LongConsumer;
  * reparented it goes away — destroying a parent HWND destroys its children
  * outright instead.
  *
- * <p><b>This class is a poll-based implementation choice, not something the
- * real-machine spike verified</b> — see this module's package-info: the
- * spike's question 1 confirmed a host-driven {@code SetParent}+poll-verify
- * works, but never exercised watching a window for an <em>externally
- * triggered</em> reparent or destruction the way this class does on the
- * client side. Mirrors {@link Win32Focus}'s {@code AttachThreadInput}
- * fallback in that respect: reasoned about from documented Win32 semantics,
- * worth a dedicated real-machine check if this ever needs to be verified
- * rather than reasoned about.
+ * <p><b>Poll-based by necessity, and verified on a real Windows machine</b>
+ * (2026-08-28 follow-up spike, see this module's package-info): watching the
+ * embedded client window across an externally-triggered embed, a host detach
+ * back to the desktop, and the host frame being destroyed, this class fired
+ * its callback with the right new parent (and with 0 when the parent-destroy
+ * took the child with it) for all three. The 50 ms poll does mean a
+ * transition and its immediate reversal within one interval can be missed
+ * entirely — not a problem for the embed/detach lifecycle {@code
+ * EmbedPlugWin32} uses it for, which doesn't flip that fast.
  */
 public final class Win32ReparentWatcher implements AutoCloseable {
 

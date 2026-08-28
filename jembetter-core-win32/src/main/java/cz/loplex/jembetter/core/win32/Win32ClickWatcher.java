@@ -39,17 +39,20 @@ import java.util.concurrent.TimeUnit;
  * embedded area asking for focus is as legitimate as a hardware one, and it
  * keeps the mechanism exercisable without real hardware input.
  *
- * <p><b>Poll-free but still an implementation choice not verified on a real
- * Windows machine</b> — see this module's package-info. A {@code
- * .mvn/win32-wine-smoketest} run confirms the hook installs, the {@code
+ * <p><b>Poll-free.</b> This class's {@code @Tag("windows")} tests, run under
+ * Wine by {@code mvn test} on Linux (the {@code windows-tests-on-linux}
+ * surefire execution), confirm the hook installs, the {@code
  * LowLevelMouseProc}/{@code MSLLHOOKSTRUCT} marshaling works, the message
  * pump dispatches, the hit-test is correct, and {@code close()} unhooks
- * cleanly. What that cannot confirm — and what a real-machine spike still
- * owes — is the documented Win32 caveats: the added system-wide mouse
- * latency while the hook is installed, and UIPI blocking the hook against a
- * higher-integrity-level target. Mirrors {@link Win32Focus}'s {@code
- * AttachThreadInput} fallback and {@link Win32ReparentWatcher} in that
- * respect.
+ * cleanly. The 2026-08-28 real-machine spike (see this module's
+ * package-info) additionally confirmed that under a burst of injected clicks
+ * the dispatch-thread offload keeps the hook proc under {@code
+ * LowLevelHooksTimeout} (every click still reached the callback), and
+ * measured the added system-wide mouse latency while installed at a few
+ * microseconds per event — negligible on that runner. Still <b>not</b>
+ * spiked: UIPI blocking the hook against a higher-integrity-level target
+ * (the CI runner process is itself elevated, so the blocking direction
+ * can't be exercised there).
  */
 public final class Win32ClickWatcher implements AutoCloseable {
 

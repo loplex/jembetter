@@ -128,13 +128,13 @@ final class EmbedPlugWin32 implements EmbedPlug {
         long deadline = System.nanoTime() + WINDOW_LOOKUP_TIMEOUT.toNanos();
         List<Long> ownWindows;
         do {
-            ownWindows = Win32WindowFinder.findTopLevelWindowsByPid(pid);
+            ownWindows = Win32WindowFinder.findApplicationWindowsByPid(pid);
             if (ownWindows.size() == 1) {
                 return ownWindows.get(0);
             }
             if (ownWindows.size() > 1) {
                 throw new IllegalStateException("This process has " + ownWindows.size()
-                        + " top-level windows; Win32 has no WM_CLASS-equivalent way to disambiguate them");
+                        + " application windows; Win32 has no WM_CLASS-equivalent way to disambiguate them");
             }
             sleep(POLL_SLEEP_MILLIS);
         } while (System.nanoTime() < deadline);
