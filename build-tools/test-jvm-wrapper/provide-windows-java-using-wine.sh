@@ -221,4 +221,11 @@ function run_java() {
 }
 
 
-run_java "$@"
+# Setting PROVIDE_WINDOWS_JAVA_NO_AUTORUN=1 before sourcing this script (as
+# replay-wine-fork.sh does) reuses its winification helpers above without
+# immediately invoking run_java on the passed-through arguments, letting the
+# caller rewrite the properties files first (e.g. to point the fork at a
+# standalone bridge instead of a live Maven build).
+if [[ "${PROVIDE_WINDOWS_JAVA_NO_AUTORUN-}" != 1 ]]; then
+  run_java "$@"
+fi
