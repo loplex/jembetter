@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -eu
 
 # This is a fake `java` command of faked JRE.
 # It wraps calling the jUnit original real `java` command
@@ -9,26 +10,16 @@
 
 # What it does:
 #
-#   First, it sources two scripts:
-#   1. `provide_platform_java.sh`:
-#        - sets `$java_bin` env. variable (path to real java)
-#   2. `spawn-xserver.sh`:
-#        - spawns X Server and X Window Manager processes (on background)
-#        - sets `$DISPLAY` env. variable (display number of target X server, e.g. :99)
-#
-#   Then it calls the real `java` command, passing all env. variables and arguments.
+#   It runs `spawn-xserver.sh`, which spawns an X server and X window
+#   manager (on background), sets `$DISPLAY`, and then runs
+#   `provide-platform-java.sh` (passed to it as the command to run once
+#   the X server is up), which in turn runs the real `java` command for
+#   the current platform - native on Linux, or under Wine for the
+#   @Tag("windows") suite (see that script for details) - passing all
+#   arguments through unmodified.
 
-set -eu
+jvm_wrapper_dir=$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )
 
-jvm_wrapper_dir="$( dirname "$0" )/.."
-
-
-declare -x DISPLAY java_bin
-
-source "${jvm_wrapper_dir}/provide_platform_java.sh"
-
-source "${jvm_wrapper_dir}/spawn-xserver.sh"
-
-#"$java_bin" "$@"
-
-runJava "$@"
+"${jvm_wrapper_dir}/spawn-xserver.sh" \
+  "${jvm_wrapper_dir}/provide-platform-java.sh" \
+  "$@"

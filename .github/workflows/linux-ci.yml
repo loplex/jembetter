@@ -28,7 +28,7 @@ jobs:
       - name: Install Xvfb + openbox + xdotool + wine
         run: sudo apt-get update && sudo apt-get install -y xvfb openbox xdotool wine
 
-      # The Wine test fork needs a real Windows JDK; provide_platform_java.sh
+      # The Wine test fork needs a real Windows JDK; provide-platform-java.sh
       # downloads it to this dir on first use (~190 MB). Cache it across runs.
       - name: Cache Windows JDK
         uses: actions/cache@v4
