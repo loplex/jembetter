@@ -224,7 +224,7 @@
          plus EmbedHostWin32Test/EmbedPlugWin32Test) also runs on Linux: a
          second surefire execution forks it, through the same test-jvm-wrapper,
          into a real Windows JDK running under Wine - see
-         build-tools/test-jvm-wrapper/provide_platform_java.sh (which downloads
+         build-tools/test-jvm-wrapper/provide-platform-java.sh (which downloads
          and caches that JDK). Real Windows runs the identical suite as
          surefire's plain default fork on windows-latest CI.
 
@@ -273,7 +273,7 @@
                          available()), which kills the fork immediately. Route the same
                          communication over a TCP loopback socket instead - winsock is a
                          much better-supported part of Wine than console/pipe handle
-                         emulation. runJava in provide_platform_java.sh also has to
+                         emulation. run_java in provide-platform-java.sh also has to
                          propagate `wine java.exe`'s own exit code and ignore SIGPIPE on
                          the stderr relay for this to report reliably - see its comments. -->
                     <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory"/>
