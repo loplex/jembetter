@@ -95,23 +95,24 @@ public interface EmbedHost extends AutoCloseable {
     void close();
 
     /**
-     * Same as {@link #close()}, but when {@code destroyClient} is {@code
-     * true}, a still-embedded client's window is destroyed instead of
-     * gracefully released — see {@link EmbedSocket#destroyClient()}. For a
-     * caller that knows the embedded client is a private renderer process
-     * never meant to survive independently (e.g. one it spawned purely to
-     * embed) and wants that guaranteed regardless of call order.
+     * Same as {@link #close()}, but a still-embedded client's window is
+     * destroyed instead of gracefully released — see {@link
+     * EmbedSocket#destroyClient()}. For a caller that knows the embedded
+     * client is a private renderer process never meant to survive
+     * independently (e.g. one it spawned purely to embed) and wants that
+     * guaranteed regardless of call order.
      *
-     * <p><b>Not the same guarantee on both backends.</b> On the X11 backend
-     * this is unconditional — {@code XDestroyWindow} removes the window
-     * regardless of what the embedded client does. Win32 has no equivalent:
-     * {@code DestroyWindow} can only be called by the thread that created
-     * the window, so the Win32 backend instead posts {@code WM_CLOSE} to it
+     * <p><b>Not the same guarantee on both backends</b> — the name is a
+     * reminder, not a promise: on the X11 backend this is unconditional
+     * ({@code XDestroyWindow} removes the window regardless of what the
+     * embedded client does), but Win32 has no equivalent. {@code
+     * DestroyWindow} can only be called by the thread that created the
+     * window, so the Win32 backend instead posts {@code WM_CLOSE} to it
      * ({@code Win32Window#destroy} in {@code jembetter-core-win32}), which
      * only <em>asks</em> the client to close and depends on it not
      * overriding that to do something else. A caller that needs the Win32
      * guarantee to actually hold regardless of the client's own cooperation
      * still needs to kill its process directly.
      */
-    void close(boolean destroyClient);
+    void tryDestroy();
 }

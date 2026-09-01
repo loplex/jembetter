@@ -673,17 +673,20 @@ public final class EmbedSocket implements AutoCloseable {
 
     @Override
     public void close() {
-        close(false);
+        closeImpl(false);
     }
 
     /**
-     * Same as {@link #close()}, but when {@code destroyClient} is {@code
-     * true}, a still-embedded client is destroyed outright via {@link
-     * #destroyClient()} instead of gracefully released via {@link
-     * #detachClient()} — see {@link #destroyClient()} for when that's the
-     * right choice.
+     * Same as {@link #close()}, but a still-embedded client is destroyed
+     * outright via {@link #destroyClient()} instead of gracefully released
+     * via {@link #detachClient()} — see {@link #destroyClient()} for when
+     * that's the right choice.
      */
-    public void close(boolean destroyClient) {
+    public void tryDestroy() {
+        closeImpl(true);
+    }
+
+    private void closeImpl(boolean destroyClient) {
         if (closed) {
             return;
         }

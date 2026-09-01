@@ -68,7 +68,7 @@ destroy it, and a `WS_CHILD` window dies unconditionally with its parent.
   a direct cross-process call silently returns `FALSE` and leaves the window
   intact. `Win32Window#destroy` posts `WM_CLOSE` instead, which only closes
   the window if its own handler doesn't override that default.
-  `EmbedHost#close(true)`/`EmbedSocket#destroyClient()`'s unconditional X11
+  `EmbedHost#tryDestroy()`/`EmbedSocket#destroyClient()`'s unconditional X11
   guarantee has no Win32 equivalent — structurally can't become one.
 - **The embedded window never survives a host crash.** X11 has a save-set: a
   released child is reparented back to root and stays alive. Win32 has

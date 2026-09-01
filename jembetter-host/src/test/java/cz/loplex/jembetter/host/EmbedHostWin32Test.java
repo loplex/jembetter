@@ -109,26 +109,25 @@ class EmbedHostWin32Test {
 
     /**
      * Regression coverage for the opt-in destroying close: {@link
-     * EmbedHost#close(boolean)} with {@code true} posts {@code WM_CLOSE} to
-     * the still-embedded client HWND via {@code Win32Window#destroy},
-     * rather than leaving it untouched the way plain {@link
-     * EmbedHost#close()} does on this backend (Win32's {@code SetParent}
-     * has no save-set-style "graceful release" step to begin with — see
-     * {@code EmbedHostWin32}'s Javadoc). The fake client here doesn't
-     * override {@code WM_CLOSE} handling (a plain {@code STATIC}
-     * top-level window — see {@link FakeClientProcessMain}), so the
-     * default {@code DefWindowProc} behavior actually destroys it; this
-     * asserts that end-to-end outcome rather than the {@code WM_CLOSE} post
-     * itself, since {@link Win32Window#destroy} only guarantees the ask —
-     * see {@link EmbedHost#close(boolean)}'s Javadoc for why this isn't the
-     * same unconditional guarantee the X11 backend's {@code
+     * EmbedHost#tryDestroy()} posts {@code WM_CLOSE} to the still-embedded
+     * client HWND via {@code Win32Window#destroy}, rather than leaving it
+     * untouched the way plain {@link EmbedHost#close()} does on this backend
+     * (Win32's {@code SetParent} has no save-set-style "graceful release"
+     * step to begin with — see {@code EmbedHostWin32}'s Javadoc). The fake
+     * client here doesn't override {@code WM_CLOSE} handling (a plain
+     * {@code STATIC} top-level window — see {@link FakeClientProcessMain}),
+     * so the default {@code DefWindowProc} behavior actually destroys it;
+     * this asserts that end-to-end outcome rather than the {@code WM_CLOSE}
+     * post itself, since {@link Win32Window#destroy} only guarantees the
+     * ask — see {@link EmbedHost#tryDestroy()}'s Javadoc for why this isn't
+     * the same unconditional guarantee the X11 backend's {@code
      * XDestroyWindow}-based {@code destroyClient()} gives. Closes {@code
      * host} explicitly here (nulling the field afterward) rather than
      * relying on {@code @AfterEach}'s own {@code close()} call, since that
-     * only exercises the non-destroying overload.
+     * only exercises the non-destroying path.
      */
     @Test
-    void closeWithDestroyClientDestroysTheStillEmbeddedClientHwnd() throws IOException, InterruptedException {
+    void tryDestroyDestroysTheStillEmbeddedClientHwnd() throws IOException, InterruptedException {
         Canvas canvas = newVisibleHostCanvas();
         host = EmbedHost.create(canvas);
 
@@ -138,11 +137,11 @@ class EmbedHostWin32Test {
 
         host.embed(clientPid);
 
-        host.close(true);
+        host.tryDestroy();
         host = null;
 
         assertTrue(waitUntilWindowDestroyed(clientHwnd),
-                "close(true) did not destroy the still-embedded client HWND");
+                "tryDestroy() did not destroy the still-embedded client HWND");
     }
 
     @Test
