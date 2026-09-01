@@ -2,6 +2,7 @@ package cz.loplex.jembetter.client;
 
 import cz.loplex.jembetter.common.FocusListener;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
+import cz.loplex.jembetter.core.win32.Win32FocusWatcher;
 import cz.loplex.jembetter.core.win32.Win32ReparentWatcher;
 import cz.loplex.jembetter.core.win32.Win32WindowFinder;
 
@@ -45,11 +46,14 @@ final class EmbedPlugWin32 implements EmbedPlug {
     private static final long POLL_SLEEP_MILLIS = 50;
 
     private final Win32ReparentWatcher watcher = new Win32ReparentWatcher();
+    private final Win32FocusWatcher focusWatcher = new Win32FocusWatcher();
     private long windowId = -1;
     private volatile long embedderHwnd = -1;
     private volatile Runnable onHostDetached = () -> {
     };
     private volatile LongConsumer onEmbedded = embedderId -> {
+    };
+    private volatile FocusListener onFocusChanged = focused -> {
     };
 
     @Override
@@ -58,6 +62,7 @@ final class EmbedPlugWin32 implements EmbedPlug {
         long pid = ProcessHandle.current().pid();
         windowId = waitForOwnWindow(pid);
         watcher.watch(windowId, this::handleParentChanged);
+        focusWatcher.watch(windowId, focused -> onFocusChanged.focusChanged(focused));
     }
 
     @Override
@@ -85,21 +90,27 @@ final class EmbedPlugWin32 implements EmbedPlug {
     }
 
     /**
-     * No-op on this backend. The X11 side reads real server-side {@code
-     * FocusIn}/{@code FocusOut} off the client window (see {@code
-     * WindowFocusWatcher}); Win32 has no equivalent — an embedded child
-     * HWND's {@code WM_SETFOCUS}/{@code WM_KILLFOCUS} are delivered only
-     * inside the client's own message loop, unobservable from here without
-     * a hook this backend doesn't install. The callback is accepted (so
-     * cross-platform calling code needn't branch) but never invoked.
+     * Registers a callback invoked when this window gains or loses Win32
+     * input focus, via {@link Win32FocusWatcher} — see that class's own
+     * Javadoc for the mechanism. An embedded child HWND's own {@code
+     * WM_SETFOCUS}/{@code WM_KILLFOCUS} are delivered only inside this
+     * process's own message loop and can't be observed cross-process
+     * directly, unlike X11's real, server-generated {@code FocusIn}/{@code
+     * FocusOut} events {@code WindowFocusWatcher} reads; {@link
+     * Win32FocusWatcher} instead watches system-wide via {@code
+     * SetWinEventHook(EVENT_OBJECT_FOCUS, ...)}, which does observe a focus
+     * change caused by another process (e.g. the host calling {@code
+     * SetFocus} on this window).
      */
     @Override
     public void onFocusChanged(FocusListener callback) {
+        onFocusChanged = callback;
     }
 
     @Override
     public void close() {
         watcher.close();
+        focusWatcher.close();
     }
 
     private void handleParentChanged(long newParent) {

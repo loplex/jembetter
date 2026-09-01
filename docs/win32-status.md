@@ -29,6 +29,7 @@ JDK, forked by the `windows-tests-on-linux` Surefire execution — see
 | Voluntary host-initiated detach (`Win32Reparent#release`, `EmbedSocketWin32#detachClient`) | `EmbedSocketWin32Test` under Wine only |
 | Multi-client reuse of one socket (`EmbedSocketWin32#listen`, accept-loop re-embed after a detach) | `EmbedSocketWin32Test` under Wine only |
 | `EmbedSocketWin32#setModal` send-only stub (opcode byte written into the `listen` control channel) | `EmbedSocketWin32Test` under Wine only — see "Not yet implemented" for why nothing receives it yet |
+| `EmbedPlugWin32#onFocusChanged` via a system-wide `SetWinEventHook(EVENT_OBJECT_FOCUS, ...)` — hook install/unwatch/close only | `Win32FocusWatcherTest`/`EmbedPlugWin32Test` under Wine |
 
 `embed`/`embedOpaque` need no distinction on this backend — both collapse
 into the same operation, since there's no `_XEMBED_INFO` to make them
@@ -36,8 +37,15 @@ differ.
 
 **Still unconfirmed:** UIPI blocking the click-to-focus hook against a
 higher-integrity-level target (the CI runner is itself elevated, so that
-direction can't be exercised), and `explorer.exe`/`dwm.exe` quirks specific
-to a Windows version beyond what the spikes above covered.
+direction can't be exercised), `explorer.exe`/`dwm.exe` quirks specific to a
+Windows version beyond what the spikes above covered, and real
+`EVENT_OBJECT_FOCUS` delivery to `Win32FocusWatcher` — Wine's
+`SetWinEventHook` emulation never delivers one (see
+[Mechanism notes](#mechanism-notes)), so this is reasoned by analogy with
+the already-confirmed click-to-focus hook rather than spiked on a real
+machine yet; `Win32FocusWatcherTest`'s and `EmbedPlugWin32Test`'s event-
+delivery cases are `@Tag("wine-incompatible")` and will get their first real
+run on `windows-latest` CI.
 
 ## Not yet implemented (no OS-level blocker)
 
@@ -76,10 +84,6 @@ gaps are blocked by a Windows API restriction:
 
   Deliberately not built now — asked and explicitly scoped down to the
   send-only stub above rather than the full two-module protocol.
-- **`onFocusChanged` for toolkit-opaque clients** — X11's `EmbedClient`
-  reads real `FocusIn`/`FocusOut` off its own X11 connection. A Win32
-  equivalent needs a global hook in `Win32ClickWatcher`'s family (e.g.
-  `SetWinEventHook`/`EVENT_OBJECT_FOCUS`), not yet built.
 
 ## Will never match X11
 
@@ -130,12 +134,32 @@ non-foreground process. See `Win32Focus`'s Javadoc.
 event-driven; `Win32ReparentWatcher` isn't, because Win32 has no
 externally-observable reparent event to wait on instead.
 
+**Client-side focus notification.** X11's `EmbedClient` reads real,
+server-generated `FocusIn`/`FocusOut` off its own X11 connection — any
+connection selecting for them on a window receives them, regardless of
+which connection actually changed the focus (see `WindowFocusWatcher`'s
+Javadoc). An embedded child HWND's `WM_SETFOCUS`/`WM_KILLFOCUS` have no
+Win32 equivalent: they're delivered only inside that window's own message
+loop, invisible cross-process. `Win32FocusWatcher` instead mirrors
+`Win32ClickWatcher`'s shape with a different hook:
+`SetWinEventHook(EVENT_OBJECT_FOCUS, ...)`, a `WINEVENT_OUTOFCONTEXT`
+system-wide accessibility hook (no DLL injected anywhere) that receives an
+event for every window in the system gaining focus, regardless of which
+process or thread caused it — including a host process calling `SetFocus`
+on a client's HWND via `Win32Focus.set`'s `AttachThreadInput` path. Since
+the event only ever signals a *gain*, a watched window previously reported
+focused is inferred to have lost it as soon as a different window's gain
+event arrives for it — the same "genuine transitions only" deduplication
+`WindowFocusWatcher` does. `EmbedPlugWin32#onFocusChanged` wires this to
+watch the client's own window.
+
 ## Test wiring
 
-`EmbedHostWin32Test`/`EmbedPlugWin32Test`/`Win32ReparentWatcherTest`/
-`Win32ClickWatcherTest` cover the mechanisms above, `@Tag("windows")` like
-the rest of this module's tests. They run on every push, both on real
-`windows-latest` (`.github/workflows/windows-ci.yml`) and under Wine
+`EmbedHostWin32Test`/`EmbedSocketWin32Test`/`EmbedPlugWin32Test`/
+`Win32ReparentWatcherTest`/`Win32ClickWatcherTest`/`Win32FocusWatcherTest`
+cover the mechanisms above, `@Tag("windows")` like the rest of this module's
+tests. They run on every push, both on real `windows-latest`
+(`.github/workflows/windows-ci.yml`) and under Wine
 (`.github/workflows/linux-ci.yml`).
 
 What Wine can't replicate closely enough — foreground-lock policy,
@@ -143,6 +167,9 @@ cross-process reparent/DWM behaviour, `WH_MOUSE_LL` under an
 injected-input burst — is covered instead by
 [`build-tools/win32-real-machine-checks`](../build-tools/win32-real-machine-checks/README.md),
 standalone checks run by hand against a real Windows machine.
+`SetWinEventHook`/`EVENT_OBJECT_FOCUS` delivery has no check there yet
+either — same "still unconfirmed" gap noted above, not just a Wine-vs-CI
+split.
 
 `maven-surefire-plugin`'s `<jvm>` wrapper
 (`build-tools/test-jvm-wrapper/bin/java`) only applies under an

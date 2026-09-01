@@ -1,6 +1,7 @@
 package cz.loplex.jembetter.client;
 
 import cz.loplex.jembetter.common.ipc.PidHandshake;
+import cz.loplex.jembetter.core.win32.Win32Focus;
 import cz.loplex.jembetter.core.win32.Win32Reparent;
 import cz.loplex.jembetter.core.win32.Win32WindowFinder;
 import org.junit.jupiter.api.AfterEach;
@@ -73,6 +74,44 @@ class EmbedPlugWin32Test {
 
         assertTrue(embedded.await(5, TimeUnit.SECONDS), "onEmbedded was never invoked after announce(wmClass)");
         assertEquals(fakeHostHwnd, reportedEmbedderWindow.get());
+    }
+
+    /**
+     * Regression coverage for {@link EmbedPlug#onFocusChanged}: since the
+     * 2026-09-01 {@code Win32FocusWatcher} addition, this backend actually
+     * delivers it (was previously a documented no-op). {@link Win32Focus#set}
+     * here stands in for a host calling it on the client's window (see
+     * {@code jembetter-host.Win32EmbedCore#reparentAndWatch}) — Windows'
+     * {@code EVENT_OBJECT_FOCUS} is a genuine system accessibility event, so
+     * it doesn't matter that this test calls {@code SetFocus} from the same
+     * process rather than a separate host process.
+     *
+     * <p>{@code @Tag("wine-incompatible")}: Wine's {@code SetWinEventHook}
+     * emulation never delivers a real {@code EVENT_OBJECT_FOCUS} to the hook
+     * (see {@code Win32FocusWatcher}'s Javadoc and {@code
+     * docs/win32-status.md}), the same reason {@code Win32FocusWatcherTest}'s
+     * own event-delivery cases carry this tag.
+     */
+    @Tag("wine-incompatible")
+    @Test
+    void onFocusChangedIsInvokedWhenFocusMovesToTheWatchedWindow() throws InterruptedException {
+        frame = new JFrame("EmbedPlugWin32Test focus");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+
+        CountDownLatch gained = new CountDownLatch(1);
+        plug = EmbedPlug.create();
+        plug.onFocusChanged(focused -> {
+            if (focused) {
+                gained.countDown();
+            }
+        });
+        plug.announce(null);
+
+        long ownHwnd = waitForOwnWindow(ProcessHandle.current().pid());
+        Win32Focus.set(ownHwnd);
+
+        assertTrue(gained.await(5, TimeUnit.SECONDS), "onFocusChanged(true) was never invoked after SetFocus");
     }
 
     @Test
