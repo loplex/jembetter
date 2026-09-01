@@ -4,6 +4,7 @@ import com.sun.jna.NativeLong;
 import com.sun.jna.platform.unix.X11.Window;
 import com.sun.jna.platform.unix.X11.XEvent;
 import com.sun.jna.platform.unix.X11.XFocusChangeEvent;
+import cz.loplex.jembetter.common.FocusListener;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
