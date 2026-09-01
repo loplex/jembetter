@@ -86,10 +86,37 @@
             </configuration>
           </execution>
           <execution>
+            <!-- Unlike host/client above, HostFacadeDemo spawns a second JVM
+                 itself (see HostFacadeDemo#spawnClient), built from its own
+                 `java.class.path` system property. Under goal `java`
+                 (exec:java), that property is Maven's own launcher
+                 classpath, not this module's - exec:java never forks a real
+                 process, it runs in-process on a thread with a private
+                 classloader - so the spawned child can't find its own
+                 classes (ClassNotFoundException on ClientFacadeDemo). Goal
+                 `exec` (exec:exec) genuinely forks `java`, so
+                 `java.class.path` inside it is the real classpath below, and
+                 the spawned grandchild works. The add-opens flags .mvn/jvm.config
+                 gives Maven's own JVM don't reach this forked process either, so
+                 they're repeated explicitly below. -->
             <id>host-facade</id>
+            <goals>
+              <goal>exec</goal>
+            </goals>
             <configuration>
-              <mainClass>cz.loplex.jembetter.demo.HostFacadeDemo</mainClass>
+              <executable>java</executable>
               <classpathScope>runtime</classpathScope>
+              <arguments>
+                <argument>--add-opens</argument>
+                <argument>java.desktop/java.awt=ALL-UNNAMED</argument>
+                <argument>--add-opens</argument>
+                <argument>java.desktop/sun.awt.X11=ALL-UNNAMED</argument>
+                <argument>--add-opens</argument>
+                <argument>java.desktop/sun.awt.windows=ALL-UNNAMED</argument>
+                <argument>-cp</argument>
+                <classpath/>
+                <argument>cz.loplex.jembetter.demo.HostFacadeDemo</argument>
+              </arguments>
             </configuration>
           </execution>
         </executions>
