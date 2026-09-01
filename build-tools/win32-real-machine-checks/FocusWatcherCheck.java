@@ -4,6 +4,12 @@ import cz.loplex.jembetter.core.win32.Win32Focus;
 import cz.loplex.jembetter.core.win32.Win32FocusWatcher;
 import cz.loplex.jembetter.core.win32.Win32WindowFinder;
 
+import com.sun.jna.Pointer;
+import com.sun.jna.platform.win32.User32;
+import com.sun.jna.platform.win32.WinDef.HWND;
+import com.sun.jna.platform.win32.WinUser.GUITHREADINFO;
+import com.sun.jna.ptr.IntByReference;
+
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -41,6 +47,13 @@ import java.util.concurrent.TimeUnit;
  * plain {@code STATIC}-class HWND, see {@code CheckWindows}); the
  * cross-process window is a separate-JVM {@link ChildWindowMain}, same as
  * {@link ReparentWatcherCheck} uses.
+ *
+ * <p>Each gated line is followed by an observational {@code
+ * actuallyHasFocus} diagnostic (via {@code GetGUIThreadInfo}, which reads a
+ * thread's focus HWND without needing an {@code AttachThreadInput} bridge)
+ * — on a {@code FAIL}, that line tells apart "{@code SetFocus} itself never
+ * took" from "focus genuinely moved but the {@code EVENT_OBJECT_FOCUS} hook
+ * never saw it".
  */
 final class FocusWatcherCheck {
 
@@ -83,14 +96,20 @@ final class FocusWatcherCheck {
             // (1) same-process gain
             Win32Focus.set(hwndA);
             sameProcessGain = pollUntil(() -> events.contains("A:true"), 3000);
-            System.out.println("FOCUSWATCH: (1) same-process gain observed=" + sameProcessGain);
+            System.out.println("FOCUSWATCH: (1) same-process gain observed=" + sameProcessGain
+                    + " - diagnostic: GetGUIThreadInfo says hwndA "
+                    + (actuallyHasFocus(hwndA) ? "DOES" : "does NOT")
+                    + " actually hold keyboard focus (rules SetFocus itself in/out as the cause)");
 
             // (2) cross-process gain + loss - focus a separate JVM's window.
             Win32Focus.set(hwndB);
             crossProcessGain = pollUntil(() -> events.contains("B:true"), 3000);
             crossProcessLoss = pollUntil(() -> events.contains("A:false"), 3000);
             System.out.println("FOCUSWATCH: (2) cross-process gain(B)=" + crossProcessGain
-                    + " loss(A)=" + crossProcessLoss);
+                    + " loss(A)=" + crossProcessLoss
+                    + " - diagnostic: GetGUIThreadInfo says hwndB "
+                    + (actuallyHasFocus(hwndB) ? "DOES" : "does NOT")
+                    + " actually hold keyboard focus");
         } finally {
             CheckWindows.destroyWindow(hwndA);
             endChild(child);
@@ -134,6 +153,30 @@ final class FocusWatcherCheck {
             Thread.sleep(50);
         }
         return condition.getAsBoolean();
+    }
+
+    /**
+     * Whether {@code hwnd} genuinely holds keyboard focus right now, per
+     * {@code GetGUIThreadInfo} on its owning thread — works cross-thread and
+     * cross-process without an {@code AttachThreadInput} bridge, unlike
+     * plain {@code GetFocus()}. Used only as a diagnostic: it tells apart
+     * "{@code SetFocus} itself never took" from "focus genuinely moved but
+     * {@code Win32FocusWatcher}'s hook never saw it" when a gated check
+     * above reports {@code false}.
+     */
+    private static boolean actuallyHasFocus(long hwnd) {
+        HWND target = new HWND(new Pointer(hwnd));
+        IntByReference pid = new IntByReference();
+        int threadId = User32.INSTANCE.GetWindowThreadProcessId(target, pid);
+        if (threadId == 0) {
+            return false;
+        }
+        GUITHREADINFO info = new GUITHREADINFO();
+        info.cbSize = info.size();
+        if (!User32.INSTANCE.GetGUIThreadInfo(threadId, info)) {
+            return false;
+        }
+        return info.hwndFocus != null && Pointer.nativeValue(info.hwndFocus.getPointer()) == hwnd;
     }
 
     private static void endChild(Process child) throws Exception {
