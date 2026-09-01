@@ -60,3 +60,14 @@ lock, some reparent-watcher transitions); those are excluded from the Wine
 fork and covered instead by
 [`build-tools/win32-real-machine-checks`](../build-tools/win32-real-machine-checks/README.md),
 a set of standalone checks run by hand against a real Windows machine.
+
+Every fork above — plain Linux or Wine-hosted — spawns its own Xvfb and
+openbox via `build-tools/test-jvm-wrapper/spawn-xserver.sh`. Their own
+boot/shutdown chatter (keysym warnings, GPU probing, ...) is captured to a
+temp file rather than relayed straight through, and only dumped to the
+console if that fork itself fails to start; a fork that starts fine reports
+its actual test results exactly as before, unaffected. If you do need the
+raw, unfiltered build output for something else, redirect `mvn test` to a
+file and grep it instead of scrolling past it — a multi-module run reforks
+Xvfb/openbox once per module/execution, so the boilerplate this avoids adds
+up quickly across a whole reactor build.
