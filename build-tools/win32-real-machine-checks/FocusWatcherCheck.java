@@ -18,18 +18,24 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Real-machine check for {@link Win32FocusWatcher}: the one caveat {@code
- * docs/win32-status.md} still lists as unconfirmed — real {@code
- * EVENT_OBJECT_FOCUS} delivery. Wine's {@code SetWinEventHook} emulation
- * never delivers one at all, so {@code Win32FocusWatcherTest}'s
- * event-delivery cases are {@code @Tag("wine-incompatible")} and, until this
- * check runs, the mechanism has only been reasoned about by analogy with
- * {@code Win32ClickWatcher}'s confirmed {@code WH_MOUSE_LL} hook, never
- * actually spiked.
+ * Real-machine check for {@link Win32FocusWatcher}, confirming its
+ * cross-process, real-{@code windows-latest} behaviour beyond what {@code
+ * Win32FocusWatcherTest}'s same-process HWNDs cover.
+ *
+ * <p><b>History:</b> the first version of this check (2026-09-02) tested an
+ * earlier, since-abandoned {@code SetWinEventHook(EVENT_OBJECT_FOCUS, ...)}
+ * implementation and gated {@code FAIL} on real {@code windows-latest} —
+ * {@code GetGUIThreadInfo} confirmed focus genuinely moved, but the hook's
+ * callback never fired, because that WinEvent is a Microsoft Active
+ * Accessibility notification a window has to raise itself via {@code
+ * NotifyWinEvent}, which a plain top-level window never does. {@link
+ * Win32FocusWatcher} was rewritten to poll {@code GetGUIThreadInfo} instead
+ * (see its Javadoc), and this check now confirms that replacement actually
+ * works cross-process on real hardware.
  *
  * <p>Two gated checks, both against a watcher installed in <em>this</em>
- * process (the hook is system-wide, so which process installs it doesn't
- * matter for delivery — see {@link Win32FocusWatcher}'s Javadoc):
+ * process (poll-based, so which process installs it doesn't matter for
+ * delivery — see {@link Win32FocusWatcher}'s Javadoc):
  *
  * <ol>
  *   <li><b>same-process gain:</b> {@link Win32Focus#set} on a watched window
@@ -49,11 +55,10 @@ import java.util.concurrent.TimeUnit;
  * {@link ReparentWatcherCheck} uses.
  *
  * <p>Each gated line is followed by an observational {@code
- * actuallyHasFocus} diagnostic (via {@code GetGUIThreadInfo}, which reads a
- * thread's focus HWND without needing an {@code AttachThreadInput} bridge)
- * — on a {@code FAIL}, that line tells apart "{@code SetFocus} itself never
- * took" from "focus genuinely moved but the {@code EVENT_OBJECT_FOCUS} hook
- * never saw it".
+ * actuallyHasFocus} diagnostic — an independent {@code GetGUIThreadInfo}
+ * call outside the watcher itself. A {@code FAIL} with this line still
+ * saying the window genuinely holds focus would point at a bug in {@code
+ * Win32FocusWatcher}'s own poll loop rather than at focus not moving.
  */
 final class FocusWatcherCheck {
 
