@@ -93,6 +93,11 @@ final class Win32EmbedCore {
         onDetached = callback;
     }
 
+    /** Whether a client is currently embedded — for {@link EmbedSocketWin32}'s accept loop to poll for a detach (voluntary or via death). */
+    boolean isEmbedded() {
+        return embeddedHwnd >= 0;
+    }
+
     void requestFocus() {
         long id = embeddedHwnd;
         if (id >= 0) {
