@@ -25,7 +25,6 @@ import java.net.UnixDomainSocketAddress;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -71,9 +70,9 @@ class EmbedHostWin32Test {
         CountDownLatch detached = new CountDownLatch(1);
         host.onDetached(detached::countDown);
 
-        clientProcess = startFakeClientProcess();
+        clientProcess = Win32TestClients.startFakeClientProcess();
         long clientPid = clientProcess.pid();
-        long clientHwnd = waitForOwnWindow(clientPid);
+        long clientHwnd = Win32TestClients.waitForOwnWindow(clientPid);
 
         host.embed(clientPid);
 
@@ -91,9 +90,9 @@ class EmbedHostWin32Test {
         Canvas canvas = newVisibleHostCanvas();
         host = EmbedHost.create(canvas);
 
-        clientProcess = startFakeClientProcess();
+        clientProcess = Win32TestClients.startFakeClientProcess();
         long clientPid = clientProcess.pid();
-        waitForOwnWindow(clientPid);
+        Win32TestClients.waitForOwnWindow(clientPid);
         host.embed(clientPid);
 
         Point center = new Point(canvas.getLocationOnScreen());
@@ -131,9 +130,9 @@ class EmbedHostWin32Test {
         Canvas canvas = newVisibleHostCanvas();
         host = EmbedHost.create(canvas);
 
-        clientProcess = startFakeClientProcess();
+        clientProcess = Win32TestClients.startFakeClientProcess();
         long clientPid = clientProcess.pid();
-        long clientHwnd = waitForOwnWindow(clientPid);
+        long clientHwnd = Win32TestClients.waitForOwnWindow(clientPid);
 
         host.embed(clientPid);
 
@@ -149,8 +148,8 @@ class EmbedHostWin32Test {
         Canvas canvas = newVisibleHostCanvas();
         host = EmbedHost.create(canvas);
 
-        clientProcess = startFakeClientProcess();
-        long clientHwnd = waitForOwnWindow(clientProcess.pid());
+        clientProcess = Win32TestClients.startFakeClientProcess();
+        long clientHwnd = Win32TestClients.waitForOwnWindow(clientProcess.pid());
 
         host.embedOpaque(clientHwnd);
 
@@ -173,9 +172,9 @@ class EmbedHostWin32Test {
         embedder.setUncaughtExceptionHandler((t, e) -> embedderFailure.set(e));
         embedder.start();
 
-        clientProcess = startFakeClientProcess();
+        clientProcess = Win32TestClients.startFakeClientProcess();
         long clientPid = clientProcess.pid();
-        long clientHwnd = waitForOwnWindow(clientPid);
+        long clientHwnd = Win32TestClients.waitForOwnWindow(clientPid);
 
         try (SocketChannel channel = connectWhenReady(socketPath, embedderFailure)) {
             PidHandshake.send(channel, clientPid);
@@ -232,17 +231,6 @@ class EmbedHostWin32Test {
         }
     }
 
-    private static Process startFakeClientProcess() throws IOException {
-        String javaBin = System.getProperty("java.home") + "\\bin\\java.exe";
-        ProcessBuilder processBuilder = new ProcessBuilder(javaBin,
-                "--enable-native-access=ALL-UNNAMED",
-                "-cp", System.getProperty("java.class.path"),
-                FakeClientProcessMain.class.getName());
-        processBuilder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-        processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
-        return processBuilder.start();
-    }
-
     /** Polls {@code IsWindow} until {@code hwnd} no longer refers to a live window. */
     private static boolean waitUntilWindowDestroyed(long hwnd) throws InterruptedException {
         HWND handle = new HWND(new Pointer(hwnd));
@@ -254,20 +242,5 @@ class EmbedHostWin32Test {
             Thread.sleep(50);
         } while (System.nanoTime() < deadline);
         return false;
-    }
-
-    private static long waitForOwnWindow(long pid) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        do {
-            List<Long> found = Win32WindowFinder.findApplicationWindowsByPid(pid);
-            if (!found.isEmpty()) {
-                return found.get(0);
-            }
-            Thread.sleep(50);
-        } while (System.nanoTime() < deadline);
-        throw new IllegalStateException("Fake client window never became visible; top-level windows for pid " + pid
-                + ": " + Win32WindowFinder.findTopLevelWindowsByPid(pid).stream()
-                        .map(Win32WindowFinder::describeWindow)
-                        .collect(java.util.stream.Collectors.joining("; ")));
     }
 }
