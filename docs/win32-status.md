@@ -1,128 +1,128 @@
 # Win32 backend status
 
-`jembetter-core-win32` has `Win32Reparent`/`Win32WindowGeometry`/`Win32Focus`/
-`Win32WindowFinder`, mirroring `jembetter-core`'s X11 primitives 1:1
-(`SetParent`+style-flip, `MoveWindow`/`ShowWindow`, `SetFocus`,
-`EnumWindows`+`GetWindowThreadProcessId`), plus `Win32ReparentWatcher` and
-`Win32ClickWatcher`, which have no 1:1 X11 primitive to mirror since they
-stand in for event mechanisms X11 has and Win32 doesn't. Its JUnit tests
-are `@Tag("windows")`: excluded from the default `mvn test` fork on Linux,
-but run two other ways — on real `windows-latest` via
-`.github/workflows/windows-ci.yml`, and under Wine (a downloaded Windows
-JDK, forked by the `windows-tests-on-linux` surefire execution wherever
-`wine` is installed — see `build-tools/test-jvm-wrapper/`).
+`jembetter-core-win32` mirrors `jembetter-core`'s X11 primitives 1:1 via
+JNA's bundled `user32`/`kernel32` declarations (`Win32Reparent`,
+`Win32WindowGeometry`, `Win32Focus`, `Win32WindowFinder`). Two more,
+`Win32ReparentWatcher` and `Win32ClickWatcher`, have no 1:1 X11 primitive to
+mirror — they stand in for event mechanisms X11 has and Win32 doesn't (see
+[Mechanism notes](#mechanism-notes)).
 
-Running those tests under Wine had already confirmed the JNA bindings link
-against real `user32.dll`/`kernel32.dll` entry points, and that basic
-`SetParent`/`MoveWindow`/`EnumWindows` mechanics plausibly work. A one-off
-real-machine spike, run against real `windows-latest` CI on 2026-08-26,
-then confirmed, on genuine Windows rather than Wine, the following:
+Its tests are `@Tag("windows")`: excluded from the default `mvn test` fork
+on Linux, but run both on real `windows-latest`
+(`.github/workflows/windows-ci.yml`) and under Wine (a downloaded Windows
+JDK, forked by the `windows-tests-on-linux` Surefire execution — see
+`build-tools/test-jvm-wrapper/`).
 
-1. `SetParent`+style-flip+poll-verify between a real AWT `Canvas` HWND and a
-   separate JVM's window — **confirmed working**.
-2. `SetFocus`/`SetForegroundWindow`'s foreground-lock restriction from a
-   non-foreground process — **confirmed to actually bite** (a silent
-   no-op; `SetForegroundWindow` can even return `true` without the
-   foreground actually changing). A 2026-08-28 follow-up spike compared
-   workarounds head to head and **confirmed** that `AttachThreadInput` to
-   the foreground thread + `SetForegroundWindow`/`BringWindowToTop`/`SetFocus`
-   does move the foreground, where a plain (even retried) `SetForegroundWindow`
-   does not. `Win32Focus.set` verifies the result with `GetForegroundWindow`
-   and uses that fallback — see its Javadoc.
-3. `ProcessHandle.onExit()` for a foreign (not self-spawned) pid —
-   **confirmed reliable**.
-4. `AF_UNIX` rendezvous between two JVMs on Windows — **confirmed working**.
+## Confirmed working
 
-Windows-version-specific `explorer.exe`/`dwm.exe` policy quirks beyond what
-the spike exercised remain unconfirmed.
+| Primitive / behaviour | Confirmed by |
+| --- | --- |
+| `SetParent`+style-flip+poll-verify, embedding a real AWT `Canvas` HWND | Real `windows-latest`, 2026-08-26 spike |
+| `SetForegroundWindow` foreground-lock actually bites (can return `true` without moving the foreground) | Real `windows-latest`, 2026-08-26 spike |
+| `Win32Focus.set`'s `AttachThreadInput` fallback moves the foreground when a plain call doesn't | Real `windows-latest`, 2026-08-28 follow-up |
+| `ProcessHandle.onExit()` for a foreign (not self-spawned) pid | Real `windows-latest`, 2026-08-26 spike |
+| `AF_UNIX` rendezvous between two JVMs | Real `windows-latest`, 2026-08-26 spike |
+| `Win32ReparentWatcher`: all 3 transitions (embed, host-detach, parent-destroy) | Real `windows-latest`, 2026-08-28 follow-up |
+| Click-to-focus hook install, hit-test, clean unhook | `Win32ClickWatcherTest` under Wine |
+| Click-to-focus survives an injected-click burst; latency a few µs/event | Real `windows-latest`, 2026-08-28 follow-up |
+| Destroying-close (`WM_CLOSE` instead of cross-process `DestroyWindow`) | `EmbedHostWin32Test` under Wine only |
 
-`os.name` dispatch now wires these primitives into `EmbedHost`/`EmbedPlug`
-(`EmbedHostWin32`/`EmbedPlugWin32`), settling the two design questions that
-were still open pending this spike: host-initiated reparent stays symmetric
-with X11 (confirmed by question 1 above), and `embedOpaque`/`embed` collapse
-into the exact same `SetParent`+poll-verify operation on this backend, since
-there's no `_XEMBED_INFO` equivalent to make them differ. `EmbedSocket`/
-`EmbedClient` (the advanced, multi-client X11 API) have no Win32 counterpart.
+`embed`/`embedOpaque` need no distinction on this backend — both collapse
+into the same operation, since there's no `_XEMBED_INFO` to make them
+differ.
 
-A 2026-08-28 follow-up round then exercised the pieces the first round
-hadn't, and both are now **confirmed on real Windows** (that harness has
-since been kept as the ongoing `build-tools/win32-real-machine-checks/`,
-run on `windows-latest` per its own workflow):
+**Still unconfirmed:** UIPI blocking the click-to-focus hook against a
+higher-integrity-level target (the CI runner is itself elevated, so that
+direction can't be exercised), and `explorer.exe`/`dwm.exe` quirks specific
+to a Windows version beyond what the spikes above covered.
 
-- `Win32Focus.set`'s `AttachThreadInput` fallback (see its own Javadoc) —
-  the strategy matrix confirmed it moves the foreground where a plain
-  `SetForegroundWindow` (even retried) does not; the plain call's `true`
-  return is not trustworthy, so `Win32Focus.set` verifies with
-  `GetForegroundWindow` instead.
-- `Win32ReparentWatcher`, a poll-based stand-in for X11's event-driven
-  `WindowReparentWatcher` that `EmbedPlugWin32` uses to detect being embedded
-  and the host detaching, since Win32 has no externally-observable reparent
-  event and no save-set mechanism — destroying a parent HWND destroys its
-  children outright, unlike X11 reparenting a released child back to the
-  root window alive. The spike watched all three transitions (embed, host
-  detach, parent-destroy) and the watcher fired correctly for each,
-  including the destroy that took the embedded child with it. See
-  `Win32ReparentWatcher`'s and `EmbedPlugWin32`'s Javadoc for that asymmetry.
+## Not yet implemented (no OS-level blocker)
 
-**Click-to-focus (implemented, Wine-tested, caveats partly real-machine
-spiked).** X11's `EmbedSocket` returns input focus to the embedded client
-automatically on a real click back into the embedded area (a passive
-`XGrabButton` that intercepts the press before the client's own toolkit
-sees it, then replays it — see `EmbedSocket#open(Canvas)`'s Javadoc).
-`EmbedHostWin32` now has an equivalent, `Win32ClickWatcher`: since ordinary
-subclassing (`SetWindowSubclass`) can't reach across into a genuinely
-separate process's HWND the way this backend embeds one (it installs a
-callback the *target thread* would have to execute, only within the
-subclassing process's own address space), it instead installs a low-level
-mouse hook (`SetWindowsHookEx(WH_MOUSE_LL, ...)`, which runs in the
-*hooking* process, unlike a non-low-level hook, so it needs no DLL injected
-into the embedded process): watches every `WM_LBUTTONDOWN` system-wide,
-checks whether it lands inside the embedded HWND's rect, and calls
-`Win32Focus.set` if so — structurally an observe-and-react mechanism rather
-than X11's intercept-and-replay one (nothing to replay; a low-level hook
-never blocks the click it observes).
+`EmbedSocket`/`EmbedClient` (the advanced, multi-client X11 API — see
+[Advanced usage](advanced-usage.md)) have no Win32 counterpart at all yet.
+None of this is blocked by a Windows API restriction:
 
-`Win32ClickWatcherTest` (with real injected clicks via `SendInput`), run
-under Wine by the `windows-tests-on-linux` execution, confirms the hook
-installs, the `LowLevelMouseProc`/`MSLLHOOKSTRUCT` marshaling works, the
-message pump dispatches, the hit-test is correct, and `close()` unhooks
-cleanly. Wine can't replicate the documented `SetWindowsHookEx` caveats, so
-the 2026-08-28 follow-up spike checked them on real Windows: under a burst
-of injected clicks the dispatch-thread offload kept the hook proc under
-`LowLevelHooksTimeout` (every click reached the callback), and the added
-system-wide mouse latency measured at a few microseconds per event —
-negligible on that runner. UIPI blocking the hook against a
-higher-integrity-level target is still unspiked (the CI runner process is
-itself elevated, so the blocking direction can't be exercised) — see
-`EmbedHostWin32`'s and `Win32ClickWatcher`'s own Javadoc.
+- **Multi-client reuse of one socket** — `EmbedSocket#listen` keeps
+  accepting a new client after a detach. Plain bookkeeping over
+  `Win32Reparent`.
+- **Voluntary host-initiated detach** — `Win32Reparent#release` (the reverse
+  of `reparent`) already exists as a primitive, but nothing wires it into a
+  Win32 `EmbedSocket`/`detachClient` equivalent yet, and it's still
+  unconfirmed on a real machine (only the embed direction was spiked).
+- **Focus-next/prev tab-cycling** between multiple embedded clients.
+- **Modality signaling** — X11 does this over `_XEMBED_INFO`/XEmbed
+  `ClientMessage`s, which Win32 has nothing like. The `AF_UNIX` channel
+  already used for the pid handshake could carry an equivalent, though.
+- **`onFocusChanged` for toolkit-opaque clients** — X11's `EmbedClient`
+  reads real `FocusIn`/`FocusOut` off its own X11 connection. A Win32
+  equivalent needs a global hook in `Win32ClickWatcher`'s family (e.g.
+  `SetWinEventHook`/`EVENT_OBJECT_FOCUS`), not yet built.
+
+## Will never match X11
+
+Both rooted in the same Win32 rule: only the thread that owns a window may
+destroy it, and a `WS_CHILD` window dies unconditionally with its parent.
+
+- **Forced destroy stays best-effort.** `XDestroyWindow` works from any X11
+  connection, against any window. `DestroyWindow` doesn't cross processes —
+  a direct cross-process call silently returns `FALSE` and leaves the window
+  intact. `Win32Window#destroy` posts `WM_CLOSE` instead, which only closes
+  the window if its own handler doesn't override that default.
+  `EmbedHost#close(true)`/`EmbedSocket#destroyClient()`'s unconditional X11
+  guarantee has no Win32 equivalent — structurally can't become one.
+- **The embedded window never survives a host crash.** X11 has a save-set: a
+  released child is reparented back to root and stays alive. Win32 has
+  nothing like it — a parent HWND's destruction takes its children with it,
+  unconditionally. `Win32ReparentWatcher` still detects this (and
+  `onHostDetached` still fires correctly), but the specific embedded HWND is
+  already gone by then. A client that wants to keep running visibly has to
+  build a new top-level window, not recover the old one.
+
+## Mechanism notes
+
+**Click-to-focus.** X11's `EmbedSocket` returns focus to the embedded
+client on a real click back into the embedded area — a passive `XGrabButton`
+intercepts the press before the client's own toolkit sees it, then replays
+it (see `EmbedSocket#open(Canvas)`'s Javadoc).
+
+Win32 can't do the same trick: ordinary subclassing (`SetWindowSubclass`)
+can't reach into a genuinely separate process's HWND, since its callback
+would have to run on the *target* thread. `Win32ClickWatcher` instead
+installs a low-level mouse hook (`SetWindowsHookEx(WH_MOUSE_LL, ...)`, which
+runs in the *hooking* process — no DLL injected into the embedded process).
+It watches every `WM_LBUTTONDOWN` system-wide, hit-tests it against the
+embedded HWND's rect, and calls `Win32Focus.set` on a hit. That makes it
+observe-and-react rather than X11's intercept-and-replay — a low-level hook
+never blocks the click it observes, so there's nothing to replay.
+
+**Foreground-lock fallback.** A plain `SetForegroundWindow` can return
+`true` without the foreground actually moving, so `Win32Focus.set` verifies
+with `GetForegroundWindow` instead of trusting the return value. On
+failure, it falls back to `AttachThreadInput` to the foreground thread, then
+`SetForegroundWindow`/`BringWindowToTop`/`SetFocus` — the one strategy the
+2026-08-28 spike confirmed actually moves the foreground from a
+non-foreground process. See `Win32Focus`'s Javadoc.
+
+**Reparent watching is poll-based.** X11's `WindowReparentWatcher` is
+event-driven; `Win32ReparentWatcher` isn't, because Win32 has no
+externally-observable reparent event to wait on instead.
+
+## Test wiring
 
 `EmbedHostWin32Test`/`EmbedPlugWin32Test`/`Win32ReparentWatcherTest`/
-`Win32ClickWatcherTest` cover this wiring, `@Tag("windows")` like the rest
-of this module's tests, and run on every push via
-`.github/workflows/windows-ci.yml`, a persistent `windows-latest` job.
-`.github/workflows/linux-ci.yml` runs the same reactor's tests against a
-real Xvfb + openbox pair, and the `@Tag("windows")` ones additionally under
-Wine.
+`Win32ClickWatcherTest` cover the mechanisms above, `@Tag("windows")` like
+the rest of this module's tests. They run on every push, both on real
+`windows-latest` (`.github/workflows/windows-ci.yml`) and under Wine
+(`.github/workflows/linux-ci.yml`).
 
-**Destroying-close (`EmbedHost#close(boolean)`/`EmbedHostWin32`, implemented,
-Wine-tested, real-machine unspiked).** `Win32Window#destroy` was originally
-written as a direct `DestroyWindow` call, mirroring X11's `RawWindow#destroy`
-1:1 the way the rest of this module's primitives do — but unlike
-`XDestroyWindow`, which any X11 connection can issue against any window,
-Win32's `DestroyWindow` can only be called by the thread that created the
-window. A direct cross-process call against the embedded client's HWND
-silently returns `FALSE` and leaves the window intact; caught by
-`EmbedHostWin32Test`'s own coverage under Wine before this ever reached real
-Windows CI. `Win32Window#destroy` now posts `WM_CLOSE` instead, which is
-cross-process-safe (delivered via the target's own message queue) and
-results in `DestroyWindow` running correctly on the window's own thread —
-but only when the target's own `WM_CLOSE` handling doesn't override the
-default of destroying itself, so unlike the X11 backend's unconditional
-`XDestroyWindow`, this is best-effort, not guaranteed. See `Win32Window`'s
-own Javadoc.
+What Wine can't replicate closely enough — foreground-lock policy,
+cross-process reparent/DWM behaviour, `WH_MOUSE_LL` under an
+injected-input burst — is covered instead by
+[`build-tools/win32-real-machine-checks`](../build-tools/win32-real-machine-checks/README.md),
+standalone checks run by hand against a real Windows machine.
 
-`maven-surefire-plugin`'s `<jvm>` wrapper (see `build-tools/test-jvm-wrapper/bin/java`,
-in the repo root) only applies under an `os.family=unix`-activated Maven
-profile: it's a bash script, and Windows can't launch it as the forked test
-JVM's executable at all, so plain `mvn test` needs the default fork there
-instead.
+`maven-surefire-plugin`'s `<jvm>` wrapper
+(`build-tools/test-jvm-wrapper/bin/java`) only applies under an
+`os.family=unix`-activated Maven profile — it's a bash script, and Windows
+can't launch it as the forked test JVM's executable at all. Plain `mvn test`
+uses the default fork there instead.
