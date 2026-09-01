@@ -26,6 +26,7 @@ JDK, forked by the `windows-tests-on-linux` Surefire execution — see
 | Click-to-focus hook install, hit-test, clean unhook | `Win32ClickWatcherTest` under Wine |
 | Click-to-focus survives an injected-click burst; latency a few µs/event | Real `windows-latest`, 2026-08-28 follow-up |
 | Destroying-close (`WM_CLOSE` instead of cross-process `DestroyWindow`) | `EmbedHostWin32Test` under Wine only |
+| Voluntary host-initiated detach (`Win32Reparent#release`, `EmbedSocketWin32#detachClient`) | `EmbedSocketWin32Test` under Wine only |
 
 `embed`/`embedOpaque` need no distinction on this backend — both collapse
 into the same operation, since there's no `_XEMBED_INFO` to make them
@@ -39,16 +40,15 @@ to a Windows version beyond what the spikes above covered.
 ## Not yet implemented (no OS-level blocker)
 
 `EmbedSocket`/`EmbedClient` (the advanced, multi-client X11 API — see
-[Advanced usage](advanced-usage.md)) have no Win32 counterpart at all yet.
-None of this is blocked by a Windows API restriction:
+[Advanced usage](advanced-usage.md)) have no full Win32 counterpart yet. A
+new `EmbedSocketWin32` (`jembetter-host`) has started growing toward one —
+see its Javadoc for exactly what it covers so far. None of the remaining
+gaps are blocked by a Windows API restriction:
 
 - **Multi-client reuse of one socket** — `EmbedSocket#listen` keeps
-  accepting a new client after a detach. Plain bookkeeping over
-  `Win32Reparent`.
-- **Voluntary host-initiated detach** — `Win32Reparent#release` (the reverse
-  of `reparent`) already exists as a primitive, but nothing wires it into a
-  Win32 `EmbedSocket`/`detachClient` equivalent yet, and it's still
-  unconfirmed on a real machine (only the embed direction was spiked).
+  accepting a new client after a detach. `EmbedSocketWin32` has voluntary
+  detach (see below) but no accept-loop equivalent yet; a caller drives
+  re-embedding itself, one `embed` call at a time.
 - **Focus-next/prev tab-cycling** between multiple embedded clients.
 - **Modality signaling** — X11 does this over `_XEMBED_INFO`/XEmbed
   `ClientMessage`s, which Win32 has nothing like. The `AF_UNIX` channel
