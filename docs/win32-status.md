@@ -29,7 +29,7 @@ JDK, forked by the `windows-tests-on-linux` Surefire execution — see
 | Voluntary host-initiated detach (`Win32Reparent#release`, `EmbedSocketWin32#detachClient`) | `EmbedSocketWin32Test` under Wine only |
 | Multi-client reuse of one socket (`EmbedSocketWin32#listen`, accept-loop re-embed after a detach) | `EmbedSocketWin32Test` under Wine only |
 | `EmbedSocketWin32#setModal` opcode delivery, end-to-end (`EmbedSocketWin32#listen`'s control channel → `EmbedClientWin32#onModalityChanged`) | `EmbedSocketWin32Test` (send side) + `EmbedClientWin32Test` (receive side) under Wine only |
-| `EmbedPlugWin32#onFocusChanged` via a system-wide `SetWinEventHook(EVENT_OBJECT_FOCUS, ...)` — hook install/unwatch/close only | `Win32FocusWatcherTest`/`EmbedPlugWin32Test` under Wine |
+| `EmbedPlugWin32#onFocusChanged` via `Win32FocusWatcher`'s `GetGUIThreadInfo` poll loop, same-process and cross-process | `Win32FocusWatcherTest`/`EmbedPlugWin32Test`, all cases, under Wine — real `windows-latest` confirmation of the poll-based rewrite still pending, see below |
 
 `embed`/`embedOpaque` need no distinction on this backend — both collapse
 into the same operation, since there's no `_XEMBED_INFO` to make them
@@ -37,19 +37,25 @@ differ.
 
 **Still unconfirmed:** UIPI blocking the click-to-focus hook against a
 higher-integrity-level target (the CI runner is itself elevated, so that
-direction can't be exercised), `explorer.exe`/`dwm.exe` quirks specific to a
-Windows version beyond what the spikes above covered, and real
-`EVENT_OBJECT_FOCUS` delivery to `Win32FocusWatcher` — Wine's
-`SetWinEventHook` emulation never delivers one (see
-[Mechanism notes](#mechanism-notes)), so this is still reasoned by analogy
-with the already-confirmed click-to-focus hook rather than spiked on a real
-machine yet; `Win32FocusWatcherTest`'s and `EmbedPlugWin32Test`'s event-
-delivery cases are `@Tag("wine-incompatible")` and will get their first real
-run on `windows-latest` CI. `build-tools/win32-real-machine-checks`' new
-`FocusWatcherCheck` (same-process + cross-process gain/loss, mirroring
-`ReparentWatcherCheck`'s separate-JVM client window) is written and wired
-into `run.ps1`, but hasn't executed on a real machine yet either — this
-line stays "unconfirmed" until a `windows-latest` run reports its verdict.
+direction can't be exercised), and `explorer.exe`/`dwm.exe` quirks specific
+to a Windows version beyond what the spikes above covered.
+
+**`Win32FocusWatcher` was rewritten 2026-09-02 after a confirmed real-machine
+failure**, not just an unconfirmed caveat — see
+[Mechanism notes](#mechanism-notes) for the full story and
+`build-tools/win32-real-machine-checks/FocusWatcherCheck`'s Javadoc for the
+check that caught it. In short: the original design assumed `SetFocus`
+generates a `SetWinEventHook(EVENT_OBJECT_FOCUS, ...)` notification for any
+window; a real `windows-latest` run of `FocusWatcherCheck` showed that's
+false — `GetGUIThreadInfo` confirmed focus genuinely moved, but the hook's
+callback never fired, because `EVENT_OBJECT_FOCUS` is an accessibility
+notification a window has to raise itself via `NotifyWinEvent`, which a
+plain top-level window never does. `Win32FocusWatcher` now polls `
+GetGUIThreadInfo` directly instead (the same call the check used to catch
+the bug) — confirmed under Wine (all `Win32FocusWatcherTest`/
+`EmbedPlugWin32Test` cases pass now, no `wine-incompatible` tag needed
+anymore, unlike the abandoned hook), but **not yet re-confirmed on real
+`windows-latest`** — that's the next `FocusWatcherCheck` run to watch for.
 
 ## Not yet implemented (no OS-level blocker)
 
@@ -142,18 +148,35 @@ connection selecting for them on a window receives them, regardless of
 which connection actually changed the focus (see `WindowFocusWatcher`'s
 Javadoc). An embedded child HWND's `WM_SETFOCUS`/`WM_KILLFOCUS` have no
 Win32 equivalent: they're delivered only inside that window's own message
-loop, invisible cross-process. `Win32FocusWatcher` instead mirrors
-`Win32ClickWatcher`'s shape with a different hook:
-`SetWinEventHook(EVENT_OBJECT_FOCUS, ...)`, a `WINEVENT_OUTOFCONTEXT`
-system-wide accessibility hook (no DLL injected anywhere) that receives an
-event for every window in the system gaining focus, regardless of which
-process or thread caused it — including a host process calling `SetFocus`
-on a client's HWND via `Win32Focus.set`'s `AttachThreadInput` path. Since
-the event only ever signals a *gain*, a watched window previously reported
-focused is inferred to have lost it as soon as a different window's gain
-event arrives for it — the same "genuine transitions only" deduplication
-`WindowFocusWatcher` does. `EmbedPlugWin32#onFocusChanged` wires this to
-watch the client's own window.
+loop, invisible cross-process.
+
+A first `Win32FocusWatcher` (2026-09-01) tried mirroring `Win32ClickWatcher`'s
+shape with a different hook: `SetWinEventHook(EVENT_OBJECT_FOCUS, ...)`, a
+`WINEVENT_OUTOFCONTEXT` system-wide accessibility hook (no DLL injected
+anywhere), on the assumption that it would receive an event for every window
+in the system gaining focus regardless of which process or thread caused it.
+A 2026-09-02 real-machine run of `FocusWatcherCheck` (`build-tools/
+win32-real-machine-checks`) disproved that: it called `Win32Focus.set` on a
+watched window, confirmed via `GetGUIThreadInfo` that the window genuinely
+now held focus, and the hook's callback still never fired — on real
+`windows-latest`, not just under Wine. `EVENT_OBJECT_FOCUS` turns out to be
+an Active Accessibility notification a window's own message handling has to
+raise itself via `NotifyWinEvent`; standard common controls (edit, button,
+...) do that internally on `WM_SETFOCUS`, but a plain top-level window
+(whether a bare `STATIC` HWND or a real AWT/Swing peer, this class's actual
+target) never does, so the hook had nothing to ever receive.
+
+`Win32FocusWatcher` was rewritten to poll `GetGUIThreadInfo` directly
+instead — the same call the check used to catch the bug, and the same
+poll-based shape `Win32ReparentWatcher` already uses for its own "no
+observable event" gap (see above). Only genuine transitions are reported,
+the same deduplication `WindowFocusWatcher` does: a watched window never
+before seen as focused doesn't get a spurious initial "lost" callback, and a
+repeat poll of an unchanged state fires nothing. `EmbedPlugWin32#onFocusChanged`
+wires this to watch the client's own window; a host process's `SetFocus` on
+that window via `Win32Focus.set`'s `AttachThreadInput` path is visible to
+`GetGUIThreadInfo` the same as any other focus change, cross-process,
+without needing its own `AttachThreadInput` bridge.
 
 ## Test wiring
 

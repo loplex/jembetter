@@ -81,18 +81,15 @@ class EmbedPlugWin32Test {
      * 2026-09-01 {@code Win32FocusWatcher} addition, this backend actually
      * delivers it (was previously a documented no-op). {@link Win32Focus#set}
      * here stands in for a host calling it on the client's window (see
-     * {@code jembetter-host.Win32EmbedCore#reparentAndWatch}) — Windows'
-     * {@code EVENT_OBJECT_FOCUS} is a genuine system accessibility event, so
-     * it doesn't matter that this test calls {@code SetFocus} from the same
-     * process rather than a separate host process.
-     *
-     * <p>{@code @Tag("wine-incompatible")}: Wine's {@code SetWinEventHook}
-     * emulation never delivers a real {@code EVENT_OBJECT_FOCUS} to the hook
-     * (see {@code Win32FocusWatcher}'s Javadoc and {@code
-     * docs/win32-status.md}), the same reason {@code Win32FocusWatcherTest}'s
-     * own event-delivery cases carry this tag.
+     * {@code jembetter-host.Win32EmbedCore#reparentAndWatch}) — {@code
+     * Win32FocusWatcher} polls {@code GetGUIThreadInfo} rather than watching
+     * a system event, so it doesn't matter that this test calls {@code
+     * SetFocus} from the same process rather than a separate host process,
+     * and it needs no {@code wine-incompatible} tag: unlike the {@code
+     * SetWinEventHook(EVENT_OBJECT_FOCUS, ...)} approach this replaced (see
+     * {@code Win32FocusWatcher}'s Javadoc and {@code docs/win32-status.md}),
+     * plain {@code GetGUIThreadInfo} polling works fine under Wine too.
      */
-    @Tag("wine-incompatible")
     @Test
     void onFocusChangedIsInvokedWhenFocusMovesToTheWatchedWindow() throws InterruptedException {
         frame = new JFrame("EmbedPlugWin32Test focus");

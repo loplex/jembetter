@@ -1,24 +1,14 @@
 package cz.loplex.jembetter.core.win32;
 
 import com.sun.jna.Pointer;
-import com.sun.jna.platform.win32.Kernel32;
 import com.sun.jna.platform.win32.User32;
-import com.sun.jna.platform.win32.WinDef.DWORD;
 import com.sun.jna.platform.win32.WinDef.HWND;
-import com.sun.jna.platform.win32.WinDef.LONG;
-import com.sun.jna.platform.win32.WinDef.LPARAM;
-import com.sun.jna.platform.win32.WinDef.WPARAM;
-import com.sun.jna.platform.win32.WinNT.HANDLE;
-import com.sun.jna.platform.win32.WinUser.MSG;
-import com.sun.jna.platform.win32.WinUser.WinEventProc;
+import com.sun.jna.platform.win32.WinUser.GUITHREADINFO;
+import com.sun.jna.ptr.IntByReference;
 import cz.loplex.jembetter.common.FocusListener;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Fires a callback when a watched window gains or loses Win32 input focus —
@@ -26,68 +16,56 @@ import java.util.concurrent.TimeUnit;
  * WindowFocusWatcher}, watched by a client process on its own top-level
  * window (see {@code jembetter-client.EmbedPlugWin32#onFocusChanged}).
  *
- * <p>An embedded child HWND's own {@code WM_SETFOCUS}/{@code WM_KILLFOCUS}
- * are delivered only inside that window's own message loop — invisible from
- * here without a hook, and per-window messages can't cross process
- * boundaries the way a genuinely embedded child's messages could if this
- * were the same process. This class instead installs a single system-wide
- * {@code SetWinEventHook(EVENT_OBJECT_FOCUS, ...)}, mirroring {@link
- * Win32ClickWatcher}'s {@code WH_MOUSE_LL} shape: a {@code WINEVENT_OUTOFCONTEXT}
- * hook (no DLL injected anywhere) runs in <em>this</em> process and receives
- * an event for every window in the system gaining focus, regardless of
- * which process or thread actually caused it — including a host process
- * calling {@code SetFocus} on this process's own HWND via {@link
- * Win32Focus#set}'s {@code AttachThreadInput} path. Each event is
- * hit-tested against every watched HWND: the one matching the event's
- * {@code hwnd} just gained focus, and any other watched HWND last reported
- * as focused just lost it — {@code EVENT_OBJECT_FOCUS} only ever signals a
- * gain, never a loss directly.
+ * <p><b>Poll-based, the same way {@link Win32ReparentWatcher} is, and for
+ * the same underlying reason:</b> Win32 has no externally-observable event
+ * this actually fires on. An embedded child HWND's own {@code
+ * WM_SETFOCUS}/{@code WM_KILLFOCUS} are delivered only inside that window's
+ * own message loop — invisible from here without a hook. A first attempt
+ * used a system-wide {@code SetWinEventHook(EVENT_OBJECT_FOCUS, ...)} hook
+ * instead (mirroring {@link Win32ClickWatcher}'s {@code WH_MOUSE_LL} shape),
+ * on the assumption that {@code SetFocus} generates that WinEvent for any
+ * window the way it always sends {@code WM_SETFOCUS}/{@code WM_KILLFOCUS} —
+ * a 2026-09-02 real-machine check ({@code FocusWatcherCheck}, in {@code
+ * build-tools/win32-real-machine-checks}) disproved that: {@code
+ * GetGUIThreadInfo} confirmed the target window genuinely held focus after
+ * {@code Win32Focus#set}, yet the hook's callback never fired, on real
+ * {@code windows-latest}. {@code EVENT_OBJECT_FOCUS} is a Microsoft Active
+ * Accessibility notification that a window's own message handling has to
+ * raise itself via {@code NotifyWinEvent} — standard common controls (edit,
+ * button, ...) do that internally on {@code WM_SETFOCUS}, but a plain
+ * top-level window (this class's target, whether a bare {@code STATIC}
+ * HWND or a real AWT/Swing peer) never does, so the hook had nothing to
+ * ever receive.
  *
- * <p>Only genuine transitions are reported, the same deduplication {@code
- * WindowFocusWatcher} does: a watched window never before seen as focused
- * doesn't get a spurious initial "lost" callback, and a repeat event for a
- * window already in its current state is suppressed.
+ * <p>This class instead polls {@code GetGUIThreadInfo} on each watched
+ * window's owning thread — the same call the real-machine check used to
+ * tell the two failure modes apart, and confirmed reliable cross-thread and
+ * cross-process without needing an {@code AttachThreadInput} bridge (unlike
+ * plain {@code GetFocus()}, which only ever answers for the calling
+ * thread's own queue). Only genuine transitions are reported, the same
+ * deduplication {@code WindowFocusWatcher} does: a watched window never
+ * before seen as focused doesn't get a spurious initial "lost" callback,
+ * repeat polls of an unchanged state fire nothing, and callbacks run
+ * directly on the watcher's own poll thread (no separate dispatch thread
+ * needed — unlike the abandoned hook-based version, nothing here is a
+ * Windows callback under an OS-imposed time budget).
  */
 public final class Win32FocusWatcher implements AutoCloseable {
 
-    // Not exposed by JNA's WinUser; values per winuser.h.
-    private static final int EVENT_OBJECT_FOCUS = 0x8005;
-    private static final int WINEVENT_OUTOFCONTEXT = 0x0000;
-    private static final int OBJID_WINDOW = 0x00000000;
-    private static final int CHILDID_SELF = 0;
-    private static final int WM_QUIT = 0x0012;
+    private static final long POLL_INTERVAL_MILLIS = 50;
 
+    private final Thread thread;
     private final Map<Long, FocusListener> callbacks = new ConcurrentHashMap<>();
     private final Map<Long, Boolean> lastReported = new ConcurrentHashMap<>();
-    private final ExecutorService dispatch =
-            Executors.newSingleThreadExecutor(runnable -> {
-                Thread thread = new Thread(runnable, "jembetter-win32-focus-dispatch");
-                thread.setDaemon(true);
-                return thread;
-            });
-    private final Thread pumpThread;
-    private final CountDownLatch installed = new CountDownLatch(1);
-
-    // Strong reference: JNA collects an unreferenced callback, which crashes
-    // the process the next time Windows invokes the hook - same precaution
-    // Win32ClickWatcher takes for its LowLevelMouseProc.
-    private final WinEventProc hookProc = this::onFocusEvent;
-
-    private volatile HANDLE hook;
-    private volatile int pumpThreadId;
     private volatile boolean running = true;
 
     public Win32FocusWatcher() {
-        this.pumpThread = new Thread(this::pump, "jembetter-win32-focus-watcher");
-        pumpThread.setDaemon(true);
-        pumpThread.start();
-        // The watcher isn't functional until the hook is actually installed
-        // on the pump thread; block here so a watch() right after
-        // construction can't race past a not-yet-installed hook.
-        awaitInstalled();
+        this.thread = new Thread(this::loop, "jembetter-win32-focus-watcher");
+        thread.setDaemon(true);
+        thread.start();
     }
 
-    /** Starts firing {@code onFocusChanged} (on a private dispatch thread) whenever {@code hwnd}'s focus state changes, until {@link #unwatch} or {@link #close}. */
+    /** Starts firing {@code onFocusChanged} (on the watcher's own poll thread) whenever {@code hwnd}'s focus state changes, until {@link #unwatch} or {@link #close}. */
     public void watch(long hwnd, FocusListener onFocusChanged) {
         callbacks.put(hwnd, onFocusChanged);
     }
@@ -97,85 +75,66 @@ public final class Win32FocusWatcher implements AutoCloseable {
         lastReported.remove(hwnd);
     }
 
-    private void pump() {
-        pumpThreadId = Kernel32.INSTANCE.GetCurrentThreadId();
-        hook = User32.INSTANCE.SetWinEventHook(EVENT_OBJECT_FOCUS, EVENT_OBJECT_FOCUS, null, hookProc, 0, 0,
-                WINEVENT_OUTOFCONTEXT);
-        installed.countDown();
-        if (hook == null) {
-            return;
-        }
-        try {
-            MSG msg = new MSG();
-            int result;
-            while (running && (result = User32.INSTANCE.GetMessage(msg, null, 0, 0)) != 0) {
-                if (result == -1) {
-                    break;
-                }
-                User32.INSTANCE.TranslateMessage(msg);
-                User32.INSTANCE.DispatchMessage(msg);
+    private void loop() {
+        while (running) {
+            for (Map.Entry<Long, FocusListener> entry : callbacks.entrySet()) {
+                pollOne(entry.getKey(), entry.getValue());
             }
-        } finally {
-            User32.INSTANCE.UnhookWinEvent(hook);
-            hook = null;
+            idle();
         }
     }
 
-    private void onFocusEvent(HANDLE hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild,
-            DWORD idEventThread, DWORD dwmsEventTime) {
-        if (hwnd == null || idObject == null || idChild == null
-                || idObject.intValue() != OBJID_WINDOW || idChild.intValue() != CHILDID_SELF) {
-            return;
-        }
-        long focusedHwnd = Pointer.nativeValue(hwnd.getPointer());
-        for (long watched : callbacks.keySet()) {
-            boolean isNowFocused = watched == focusedHwnd;
-            boolean wasFocused = Boolean.TRUE.equals(lastReported.get(watched));
-            if (isNowFocused && !wasFocused) {
-                report(watched, true);
-            } else if (!isNowFocused && wasFocused) {
-                report(watched, false);
-            }
+    private void pollOne(long hwnd, FocusListener callback) {
+        boolean isNowFocused = currentlyFocused(hwnd);
+        Boolean previous = lastReported.put(hwnd, isNowFocused);
+        boolean wasFocused = Boolean.TRUE.equals(previous);
+        if (isNowFocused != wasFocused) {
+            runQuietly(callback, isNowFocused);
         }
     }
 
-    private void report(long hwnd, boolean focused) {
-        lastReported.put(hwnd, focused);
-        FocusListener callback = callbacks.get(hwnd);
-        if (callback == null) {
-            return;
+    private static boolean currentlyFocused(long hwnd) {
+        HWND handle = new HWND(new Pointer(hwnd));
+        if (!User32.INSTANCE.IsWindow(handle)) {
+            return false;
         }
-        dispatch.execute(() -> runQuietly(callback, focused));
+        IntByReference pid = new IntByReference();
+        int threadId = User32.INSTANCE.GetWindowThreadProcessId(handle, pid);
+        if (threadId == 0) {
+            return false;
+        }
+        GUITHREADINFO info = new GUITHREADINFO();
+        info.cbSize = info.size();
+        if (!User32.INSTANCE.GetGUIThreadInfo(threadId, info)) {
+            return false;
+        }
+        return info.hwndFocus != null && Pointer.nativeValue(info.hwndFocus.getPointer()) == hwnd;
     }
 
     private static void runQuietly(FocusListener callback, boolean focused) {
         try {
             callback.focusChanged(focused);
         } catch (RuntimeException e) {
-            // A misbehaving callback must not take the dispatch thread down.
+            // A misbehaving callback must not take the watcher thread down.
             e.printStackTrace();
+        }
+    }
+
+    private void idle() {
+        try {
+            Thread.sleep(POLL_INTERVAL_MILLIS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            running = false;
         }
     }
 
     @Override
     public void close() {
         running = false;
-        awaitInstalled();
-        int threadId = pumpThreadId;
-        if (threadId != 0) {
-            User32.INSTANCE.PostThreadMessage(threadId, WM_QUIT, new WPARAM(0), new LPARAM(0));
-        }
+        thread.interrupt();
         try {
-            pumpThread.join(TimeUnit.SECONDS.toMillis(1));
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        dispatch.shutdownNow();
-    }
-
-    private void awaitInstalled() {
-        try {
-            installed.await(1, TimeUnit.SECONDS);
+            thread.join(1000);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }

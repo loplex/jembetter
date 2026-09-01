@@ -17,12 +17,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Exercises {@link Win32FocusWatcher} against real HWNDs and a real {@code
  * SetFocus} call (via {@link Win32Focus#set}, not synthesized input, unlike
- * {@link Win32ClickWatcherTest}) — that the {@code SetWinEventHook} hook
- * installs, its {@code WinEventProc} callback marshals, the message pump
- * dispatches, and {@code close()} unhooks cleanly. {@code @Tag("windows")}
- * like this package's other primitive tests, so it runs on real Windows in
- * {@code windows-ci.yml} and under Wine via {@code mvn test}'s {@code
- * windows-tests-on-linux} execution.
+ * {@link Win32ClickWatcherTest}) — that the poll loop's {@code
+ * GetGUIThreadInfo} calls actually observe a focus change, and that {@code
+ * close()} stops the poll thread cleanly. {@code @Tag("windows")} like this
+ * package's other primitive tests, so it runs on real Windows in {@code
+ * windows-ci.yml} and under Wine via {@code mvn test}'s {@code
+ * windows-tests-on-linux} execution — no longer {@code @Tag("wine-incompatible")}
+ * anywhere in this class: unlike the abandoned {@code SetWinEventHook}
+ * approach, {@code GetGUIThreadInfo} is a plain WinAPI query Wine supports
+ * fine (see {@link Win32FocusWatcher}'s Javadoc for why the mechanism
+ * changed).
  */
 @Tag("windows")
 class Win32FocusWatcherTest {
@@ -40,14 +44,6 @@ class Win32FocusWatcherTest {
         destroyWindow(hwndB);
     }
 
-    // Wine's SetWinEventHook emulation never delivers a real EVENT_OBJECT_FOCUS
-    // to the hook here, unlike real Windows (see Win32FocusWatcher's Javadoc
-    // and docs/win32-status.md) - excluded from the pom.xml Wine-forked test
-    // run via this tag, the same way Win32ClickWatcherTest's WH_MOUSE_LL
-    // event-delivery cases are, so that run doesn't permanently fail on it,
-    // while windows-ci.yml (real windows-latest, no Wine involved) still
-    // exercises it normally.
-    @Tag("wine-incompatible")
     @Test
     void settingFocusOnAWatchedWindowInvokesTheCallbackWithTrue() throws InterruptedException {
         hwndA = createVisibleTopLevelWindowAt("Win32FocusWatcherTest A", 120, 120, 200, 150);
@@ -66,7 +62,6 @@ class Win32FocusWatcherTest {
         assertTrue(sawFocused.get(), "the callback was invoked with focused=false for a window that just gained focus");
     }
 
-    @Tag("wine-incompatible")
     @Test
     void movingFocusAwayInvokesTheCallbackWithFalse() throws InterruptedException {
         hwndA = createVisibleTopLevelWindowAt("Win32FocusWatcherTest away-A", 120, 120, 200, 150);
@@ -108,7 +103,7 @@ class Win32FocusWatcherTest {
     }
 
     @Test
-    void closeUnhooksWithoutThrowing() {
+    void closeStopsThePollThreadWithoutThrowing() {
         assertDoesNotThrow(() -> new Win32FocusWatcher().close());
     }
 }
