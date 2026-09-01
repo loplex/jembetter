@@ -61,13 +61,11 @@ public interface EmbedPlug extends AutoCloseable {
     /**
      * Registers a callback invoked when this window gains ({@code true}) or
      * loses ({@code false}) input focus — see {@link
-     * EmbedClient#onFocusChanged}.
-     *
-     * <p><b>X11 backend only.</b> The Win32 backend has no equivalent
-     * externally-observable signal (a child HWND's {@code
-     * WM_SETFOCUS}/{@code WM_KILLFOCUS} only reach the client's own message
-     * loop), so the callback registered here is never invoked on Windows —
-     * see {@link EmbedPlugWin32}.
+     * EmbedClient#onFocusChanged} for the X11 mechanism, {@link
+     * EmbedPlugWin32}'s Javadoc for the Win32 one (a system-wide {@code
+     * SetWinEventHook(EVENT_OBJECT_FOCUS, ...)}, since a child HWND's own
+     * {@code WM_SETFOCUS}/{@code WM_KILLFOCUS} reach only the client's own
+     * message loop, not cross-process).
      */
     void onFocusChanged(FocusListener callback);
 
