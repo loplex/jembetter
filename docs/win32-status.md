@@ -28,7 +28,7 @@ JDK, forked by the `windows-tests-on-linux` Surefire execution — see
 | Destroying-close (`WM_CLOSE` instead of cross-process `DestroyWindow`) | `EmbedHostWin32Test` under Wine only |
 | Voluntary host-initiated detach (`Win32Reparent#release`, `EmbedSocketWin32#detachClient`) | `EmbedSocketWin32Test` under Wine only |
 | Multi-client reuse of one socket (`EmbedSocketWin32#listen`, accept-loop re-embed after a detach) | `EmbedSocketWin32Test` under Wine only |
-| `EmbedSocketWin32#setModal` send-only stub (opcode byte written into the `listen` control channel) | `EmbedSocketWin32Test` under Wine only — see "Not yet implemented" for why nothing receives it yet |
+| `EmbedSocketWin32#setModal` opcode delivery, end-to-end (`EmbedSocketWin32#listen`'s control channel → `EmbedClientWin32#onModalityChanged`) | `EmbedSocketWin32Test` (send side) + `EmbedClientWin32Test` (receive side) under Wine only |
 | `EmbedPlugWin32#onFocusChanged` via a system-wide `SetWinEventHook(EVENT_OBJECT_FOCUS, ...)` — hook install/unwatch/close only | `Win32FocusWatcherTest`/`EmbedPlugWin32Test` under Wine |
 
 `embed`/`embedOpaque` need no distinction on this backend — both collapse
@@ -62,28 +62,26 @@ gaps are blocked by a Windows API restriction:
   only a genuinely XEmbed-aware external toolkit (e.g. GTK) would — so
   there's no working X11 shape to mirror in the first place, and building a
   Win32-only version nothing calls either would be new dead code, not parity.
-- **Real delivery of `EmbedSocketWin32#setModal`'s signal to the client.**
-  The send side is implemented (see "Confirmed working" above): a single
-  opcode byte written into the same control channel `EmbedSocketWin32#listen`
-  keeps open for the life of a client's embed. But nothing on the client side
-  reads it yet, so in every case this codebase can currently produce the
-  write fails silently against an already-closed peer:
-  `EmbedPlugWin32#announce(Path, String)` — the only Win32 client-side class
-  today — closes its own end of the handshake channel immediately after
-  sending its pid, and there is no Win32 counterpart to `jembetter-client`'s
-  X11-only `EmbedClient` at all (only the narrow `EmbedPlugWin32` facade)
-  for a receiver to live on. Real end-to-end delivery needs:
-  1. A small message-framing protocol over the control channel (today it
-     only ever carries the initial 8-byte pid).
-  2. A new `EmbedClientWin32` (mirroring `EmbedClient`) that keeps its end of
-     the channel open instead of closing it right after the handshake, and
-     reads the opcode on a background thread, exposing an
-     `onModalityChanged`-style callback — plus wiring that up through
-     `EmbedPlug`/`EmbedPlugWin32` if it should also be reachable from the
-     narrow facade.
-
-  Deliberately not built now — asked and explicitly scoped down to the
-  send-only stub above rather than the full two-module protocol.
+- **`EmbedClientWin32` is deliberately narrower than X11's `EmbedClient`.**
+  It exists solely to receive `EmbedSocketWin32#setModal`'s opcode (see
+  "Confirmed working" above) — connect, keep the control channel open,
+  read opcodes on a background thread, dispatch `onModalityChanged`. It does
+  nothing to resolve or watch this process's own window: reparenting, focus,
+  and host-detach detection stay on `EmbedPlugWin32`, which a Win32 client
+  can use independently of (and alongside) `EmbedClientWin32`. A fuller
+  mirror of X11's `EmbedClient` — its own reparent/focus/resize watching,
+  `requestFocus`, all folded into one class the way `EmbedSocketWin32`
+  already folds together everything `EmbedSocket` does — was deliberately
+  scoped down, not overlooked.
+- **`onModalityChanged` is not reachable from the narrow `EmbedPlug` facade.**
+  `EmbedPlugWin32#announce(Path, String)` still closes its handshake channel
+  immediately after sending the pid, unaffected by `EmbedClientWin32`'s
+  existence — a caller wanting modality delivery through `EmbedPlug` has to
+  use `EmbedClientWin32` directly instead (or alongside it) rather than
+  through `EmbedPlug#announce(Path, String)`. Wiring it into the narrow
+  facade would mean changing `announce(Path, String)`'s own channel-lifetime
+  behavior, which today is tested and documented the other way; deliberately
+  scoped down rather than done as a side effect of adding the receiver.
 
 ## Will never match X11
 
@@ -156,9 +154,9 @@ watch the client's own window.
 ## Test wiring
 
 `EmbedHostWin32Test`/`EmbedSocketWin32Test`/`EmbedPlugWin32Test`/
-`Win32ReparentWatcherTest`/`Win32ClickWatcherTest`/`Win32FocusWatcherTest`
-cover the mechanisms above, `@Tag("windows")` like the rest of this module's
-tests. They run on every push, both on real `windows-latest`
+`EmbedClientWin32Test`/`Win32ReparentWatcherTest`/`Win32ClickWatcherTest`/
+`Win32FocusWatcherTest` cover the mechanisms above, `@Tag("windows")` like
+the rest of this module's tests. They run on every push, both on real `windows-latest`
 (`.github/workflows/windows-ci.yml`) and under Wine
 (`.github/workflows/linux-ci.yml`).
 

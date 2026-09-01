@@ -1,5 +1,6 @@
 package cz.loplex.jembetter.host;
 
+import cz.loplex.jembetter.common.ipc.ModalityOpcode;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 
 import java.awt.Canvas;
@@ -40,33 +41,28 @@ import java.nio.file.Path;
  * indefinitely.
  *
  * <p><strong>{@link #setModal(boolean)}</strong> mirrors {@code
- * EmbedSocket#setModal}: a one-way, best-effort send with no receiver on
- * this backend either (X11's own version has none too — it relies on
- * {@code XSetInputFocus} to actually do the work and only sends the
- * {@code ClientMessage} as a courtesy for an app that wants to grey itself
- * out). Written as a single opcode byte to the client's own control
- * channel, the same {@link SocketChannel} {@link #listen} accepted the
- * pid handshake on — kept open for the life of the embed instead of closed
- * right after, unlike {@link #embed(Path)}'s one-shot handshake. That means
- * this only has anywhere to send <em>to</em> for a client embedded via
- * {@link #listen}; a no-op for one embedded via {@link #embed(long)}/{@link
- * #embed(Path)}/{@link #embedOpaque(long)}, which never open a channel that
- * outlives the handshake. <b>Not yet received by anything even when a
- * channel exists</b> — {@code EmbedPlugWin32} (the only Win32 client-side
- * class today) closes its own end of the handshake channel immediately
- * after sending its pid (see its {@code announce(Path, String)}), so this
- * write fails silently against an already-closed peer in every case this
- * codebase can currently produce. Real end-to-end delivery needs a new
- * {@code EmbedClientWin32} (there is no Win32 counterpart to {@code
- * jembetter-client}'s X11-only {@code EmbedClient} at all yet) that keeps
- * its side of the same channel open and reads this opcode on a background
- * thread — deliberately not built now; see {@code docs/win32-status.md}.
+ * EmbedSocket#setModal}: a one-way, best-effort send (X11's own version is
+ * best-effort in a different sense — it relies on {@code XSetInputFocus} to
+ * actually do the work and only sends the {@code ClientMessage} as a
+ * courtesy). Written as a single {@link ModalityOpcode}-encoded byte to the
+ * client's own control channel, the same {@link SocketChannel} {@link
+ * #listen} accepted the pid handshake on — kept open for the life of the
+ * embed instead of closed right after, unlike {@link #embed(Path)}'s
+ * one-shot handshake. That means this only has anywhere to send <em>to</em>
+ * for a client embedded via {@link #listen}; a no-op for one embedded via
+ * {@link #embed(long)}/{@link #embed(Path)}/{@link #embedOpaque(long)},
+ * which never open a channel that outlives the handshake. A client built on
+ * {@code jembetter-client}'s {@code EmbedClientWin32} reads this back via
+ * its own {@code onModalityChanged}; one that only uses the narrower {@code
+ * EmbedPlugWin32} facade still sees this fail silently against an
+ * already-closed peer, since that facade's {@code announce(Path, String)}
+ * closes its handshake channel immediately after sending its pid rather
+ * than keeping it open.
  *
  * <p><strong>What this still lacks</strong> (see {@code
  * docs/win32-status.md}): no focus-next/focus-prev tab-cycling (X11's own
  * version has no working sender either — deliberately not chased for the
- * same reason), and no real receiver for {@link #setModal(boolean)} (see
- * above). {@code EmbedSocket}'s {@code expectClientWindowClass} has no
+ * same reason). {@code EmbedSocket}'s {@code expectClientWindowClass} has no
  * counterpart here yet either — {@code Win32WindowFinder} has no {@code
  * WM_CLASS} equivalent to disambiguate multiple client windows with in the
  * first place (see {@code Win32EmbedCore}'s own {@code
@@ -238,7 +234,7 @@ public final class EmbedSocketWin32 implements AutoCloseable {
             return;
         }
         try {
-            ByteBuffer opcode = ByteBuffer.wrap(new byte[] { (byte) (modal ? 1 : 0) });
+            ByteBuffer opcode = ByteBuffer.wrap(new byte[] { ModalityOpcode.encode(modal) });
             while (opcode.hasRemaining()) {
                 channel.write(opcode);
             }
