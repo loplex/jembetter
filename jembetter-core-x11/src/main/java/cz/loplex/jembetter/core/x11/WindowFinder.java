@@ -18,7 +18,7 @@ import java.util.Optional;
  * manager that publishes both EWMH properties.
  *
  * <p>Returns raw X11 window ids rather than JNA's {@link Window} type so
- * that callers outside {@code jembetter-core} never need a compile-time
+ * that callers outside {@code jembetter-core-x11} never need a compile-time
  * dependency on JNA, and so the type name doesn't collide with
  * {@link java.awt.Window}.
  */

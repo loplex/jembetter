@@ -14,7 +14,7 @@
   <packaging>jar</packaging>
 
   <name>jembetter-core-win32</name>
-  <description>Win32 native bindings (via JNA) mirroring jembetter-core's X11 primitives, shared by the host and client sides. Unverified against a real Windows machine - see this module's package-info.</description>
+  <description>Win32 native bindings (via JNA) mirroring jembetter-core-x11's primitives, shared by the host and client sides. Unverified against a real Windows machine - see this module's package-info.</description>
 
   <dependencies>
     <dependency>

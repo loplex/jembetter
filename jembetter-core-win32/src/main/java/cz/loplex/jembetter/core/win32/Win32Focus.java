@@ -9,7 +9,7 @@ import com.sun.jna.ptr.IntByReference;
 
 /**
  * Wrapper around {@code SetFocus}/{@code SetForegroundWindow} operating on
- * a raw HWND value. Mirrors {@code jembetter-core}'s {@code InputFocus}.
+ * a raw HWND value. Mirrors {@code jembetter-core-x11}'s {@code InputFocus}.
  *
  * <p><b>Foreground-lock, confirmed on a real Windows machine:</b> a
  * 2026-08-26 real-machine spike (see this module's package-info)

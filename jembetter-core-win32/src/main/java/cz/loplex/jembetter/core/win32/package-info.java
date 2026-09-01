@@ -1,6 +1,6 @@
 /**
  * Win32 native bindings (via JNA's bundled {@code user32}/{@code kernel32}
- * declarations) mirroring {@code jembetter-core}'s X11 primitives 1:1:
+ * declarations) mirroring {@code jembetter-core-x11}'s primitives 1:1:
  * {@link cz.loplex.jembetter.core.win32.Win32Reparent} for {@code Reparenting},
  * {@link cz.loplex.jembetter.core.win32.Win32WindowGeometry} for {@code
  * WindowGeometry}, {@link cz.loplex.jembetter.core.win32.Win32Focus} for {@code

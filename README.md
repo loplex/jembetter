@@ -18,7 +18,7 @@ reasoned-about implementation choice on top.
 
 ## Modules
 
-Six modules: `jembetter-core-common` and `jembetter-core`/`jembetter-core-win32`
+Six modules: `jembetter-core-common` and `jembetter-core-x11`/`jembetter-core-win32`
 hold the shared/native-binding plumbing (not meant to be depended on
 directly), `jembetter-host`/`jembetter-client` are the public APIs — a host
 process depends on `jembetter-host`, a client process on `jembetter-client` —

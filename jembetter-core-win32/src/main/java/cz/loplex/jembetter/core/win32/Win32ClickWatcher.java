@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Fires a callback when a real left click lands inside a watched window's
  * screen rect — the Win32 stand-in for {@code EmbedSocket}'s X11
- * click-to-focus ({@code jembetter-core}, a passive {@code XGrabButton} that
+ * click-to-focus ({@code jembetter-core-x11}, a passive {@code XGrabButton} that
  * intercepts the press and replays it). No X11-style intercept-and-replay is
  * possible here: this is observe-and-react. A single system-wide low-level
  * mouse hook ({@code SetWindowsHookEx(WH_MOUSE_LL, ...)}, which runs in this

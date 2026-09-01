@@ -13,7 +13,7 @@ import com.sun.jna.platform.unix.X11.Window;
  * instead of being reparented into the AWT window tree.
  *
  * <p>Returns/accepts raw window ids rather than JNA's {@code Window} type
- * so that callers outside {@code jembetter-core} never need a compile-time
+ * so that callers outside {@code jembetter-core-x11} never need a compile-time
  * dependency on JNA.
  */
 public final class RawWindow {
