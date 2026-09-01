@@ -144,19 +144,19 @@ final class EmbedHostWin32 implements EmbedHost {
     }
 
     /**
-     * Same as {@link #close()}, but when {@code destroyClient} is {@code
-     * true}, also asks the embedded HWND to close via {@link
-     * Win32Window#destroy} — unlike X11, Win32's {@code SetParent} has no
-     * save-set concept to preserve, so there's no "graceful release" step on
-     * this backend to begin with, just leaving the embedded HWND as-is.
-     * See {@link EmbedHost#close(boolean)} for why this is best-effort here,
-     * unlike the unconditional {@code XDestroyWindow} the X11 backend uses.
+     * Same as {@link #close()}, but also asks the embedded HWND to close via
+     * {@link Win32Window#destroy} — unlike X11, Win32's {@code SetParent}
+     * has no save-set concept to preserve, so there's no "graceful release"
+     * step on this backend to begin with, just leaving the embedded HWND
+     * as-is. See {@link EmbedHost#tryDestroy()} for why this is best-effort
+     * here, unlike the unconditional {@code XDestroyWindow} the X11 backend
+     * uses.
      */
     @Override
-    public void close(boolean destroyClient) {
+    public void tryDestroy() {
         clickWatcher.close();
         long id = embeddedHwnd;
-        if (destroyClient && id >= 0) {
+        if (id >= 0) {
             Win32Window.destroy(id);
         }
     }

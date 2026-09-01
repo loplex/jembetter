@@ -427,16 +427,15 @@ class EmbedSocketTest {
 
     /**
      * Regression coverage for the opt-in destroying close: {@link
-     * EmbedSocket#close(boolean)} with {@code true} destroys a still-
-     * embedded client's window outright via {@link EmbedSocket#destroyClient()}
-     * instead of releasing it back to root the way plain {@link
-     * EmbedSocket#close()} (equivalently {@code close(false)}) does —
+     * EmbedSocket#tryDestroy()} destroys a still-embedded client's window
+     * outright via {@link EmbedSocket#destroyClient()} instead of releasing
+     * it back to root the way plain {@link EmbedSocket#close()} does —
      * contrasted directly against {@link
      * #closeReleasesAStillEmbeddedClientInsteadOfDestroyingIt} above, which
      * asserts the opposite outcome for the default, non-destroying path.
      */
     @Test
-    void closeWithDestroyClientDestroysAStillEmbeddedClientInsteadOfReleasingIt()
+    void tryDestroyDestroysAStillEmbeddedClientInsteadOfReleasingIt()
             throws IOException, InterruptedException {
         Canvas canvas = new Canvas();
         canvas.setPreferredSize(new Dimension(100, 100));
@@ -460,11 +459,11 @@ class EmbedSocketTest {
             }
             socket.embed(clientPid);
 
-            socket.close(true);
+            socket.tryDestroy();
 
             try (X11Display probe = X11Display.open(null)) {
                 assertTrue(waitUntilWindowDestroyed(probe, clientWindowId),
-                        "close(true) did not destroy the still-embedded client window");
+                        "tryDestroy() did not destroy the still-embedded client window");
             }
         } finally {
             clientProcess.destroy();

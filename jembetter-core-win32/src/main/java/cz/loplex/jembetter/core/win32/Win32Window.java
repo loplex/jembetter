@@ -9,7 +9,7 @@ import com.sun.jna.platform.win32.WinUser;
 
 /**
  * Posts {@code WM_CLOSE} to a raw HWND, for the Win32 backend's
- * destroying-close (see {@code EmbedHostWin32#close(boolean)}). Nominally
+ * destroying-close (see {@code EmbedHostWin32#tryDestroy()}). Nominally
  * mirrors {@code jembetter-core}'s {@code RawWindow#destroy} — but unlike
  * {@code XDestroyWindow}, which any X11 connection can issue against any
  * window regardless of which connection created it, Win32's own {@code

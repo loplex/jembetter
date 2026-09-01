@@ -81,7 +81,7 @@ final class EmbedHostX11 implements EmbedHost {
     }
 
     @Override
-    public void close(boolean destroyClient) {
-        socket.close(destroyClient);
+    public void tryDestroy() {
+        socket.tryDestroy();
     }
 }

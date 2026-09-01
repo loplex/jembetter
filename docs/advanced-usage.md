@@ -37,10 +37,10 @@ instead of reparenting it back to root as a live top-level window. Use it
 when the embedded client is a private renderer process never meant to
 survive independently and that guarantee must hold regardless of call order
 — e.g. a caller that can't rely on always killing the client process before
-releasing the host. `socket.close(true)` applies the same distinction to
+releasing the host. `socket.tryDestroy()` applies the same distinction to
 shutdown: a still-embedded client is destroyed via `destroyClient()` rather
 than released via `detachClient()`, which is what plain `socket.close()`
-(equivalently `close(false)`) still does.
+still does.
 
 Each `EmbedSocket` holds **one** client at a time by design (its accept loop
 blocks until the current client detaches before taking the next). To embed
