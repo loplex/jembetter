@@ -25,6 +25,15 @@ declare -g xserver_pid='' wm_pid=''
 declare -ag child_pids=()
 declare -xg DISPLAY
 
+# Xvfb and openbox emit their own boot/shutdown chatter (keysym warnings,
+# amdgpu probing, ObRender messages, ...) on every single fork, success or
+# failure - collected here instead of relaying it straight to this script's
+# own stderr (which surefire's ForkStarter relays straight to the console),
+# so a normal edit-test loop isn't re-paying for the same boilerplate on
+# every fork. Dumped to stderr only if the wrapped command ends up failing
+# (see bottom of this script) and removed by cleanup() either way.
+declare -g xserver_log=''
+
 
 function run_debug() {
   echo 'spawn-xserver.sh: +' "${@@Q}" >&2
@@ -86,6 +95,10 @@ function refresh_pids() {
 function cleanup() {
   { set +x +e; } 2>/dev/null
 
+  if [[ -n "${xserver_log}" ]]; then
+    rm -f "${xserver_log}"
+  fi
+
   if refresh_pids; then
     echo 'spawn-xserver.sh: Nothing to be cleaned up - no child process running.' >&2
     return
@@ -118,11 +131,17 @@ function pre_check() {
 
 # spawn selected X server on background, wait until it reports display number and set DISPLAY env. variable (or timeout)
 function spawn_x_server() {
+  xserver_log=$( mktemp "${TMPDIR:-/tmp}/jembetter-xserver-boot.XXXXXX" )
 
   # spawn selected X server on background using Bash coprocess
   local -a X_SRV; local X_SRV_PID
   coproc X_SRV {
-    exec {handshake_fd}>&1 1>&2
+    # handshake_fd keeps a dup of this coprocess's real stdout (read by the
+    # parent below to learn the display number) - fd 1 and fd 2 are then
+    # both pointed at xserver_log so Xvfb's own output (boot chatter now,
+    # shutdown chatter later - same process, same fds throughout its life)
+    # lands there instead of on this script's own stderr.
+    exec {handshake_fd}>&1 2>>"${xserver_log}" 1>&2
     run_debug exec "${X_SERVER}" -displayfd "${handshake_fd}"
   }
   xserver_pid=${X_SRV_PID}
@@ -151,7 +170,7 @@ function spawn_x_server() {
 # spawn 'openbox' as X window manager for X server
 function spawn_x_window_manager() {
   echo 'spawn-xserver.sh: + openbox --sm-disable' >&2
-  openbox --sm-disable >&2 &
+  openbox --sm-disable >>"${xserver_log}" 2>&1 &
   wm_pid=$!
 
   # check if it is running
@@ -159,6 +178,23 @@ function spawn_x_window_manager() {
     echo "spawn-xserver.sh: ERROR - 'openbox' did not start successfully - cannot continue!" >&2
     return 2
   fi
+}
+
+
+# exit with the given code, surfacing the collected Xvfb/openbox boot/shutdown
+# chatter first if that exit is a failure one - on success it's just discarded
+# (by cleanup()'s EXIT trap) unread. Used for every exit path below so a
+# failure during X server/window manager setup itself stays as debuggable as
+# a failure in the wrapped command.
+function finish() {
+  local -ri rc=$1
+
+  if (( rc != 0 )) && [[ -n "${xserver_log}" && -s "${xserver_log}" ]]; then
+    printf 'spawn-xserver.sh: exiting %s - X server/window manager output follows:\n' "${rc}" >&2
+    cat "${xserver_log}" >&2
+  fi
+
+  exit "${rc}"
 }
 
 
@@ -175,9 +211,9 @@ if [[ -n "${X_SERVER-}" ]]; then
 
   echo "spawn-xserver.sh: X_SERVER=${X_SERVER} will be used" >&2
 
-  pre_check              || exit 1
-  spawn_x_server         || exit 2
-  spawn_x_window_manager || exit 3
+  pre_check              || finish 1
+  spawn_x_server         || finish 2
+  spawn_x_window_manager || finish 3
 
 else
 
@@ -191,6 +227,12 @@ fi
 # ForkStarter.fork()'s awaitExit() check), regardless of whether tests
 # actually ran fine over the fork channel, so falling off the end here
 # without forwarding "$@"'s real exit code would misreport success/failure.
-"$@"
-rc=$?
-exit "${rc}"
+#
+# "$@" is deliberately the non-last element of an OR-list here (rather than
+# a bare command followed by `rc=$?`) - under `set -e`, a bare failing
+# command aborts the script immediately, which would skip straight past
+# `finish` (and its failure-dump logic below) to the EXIT trap, silently
+# losing the exit-code-aware log dump on exactly the runs that need it most.
+declare -i rc=0
+"$@" || rc=$?
+finish "${rc}"
