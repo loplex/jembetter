@@ -29,7 +29,7 @@ JDK, forked by the `windows-tests-on-linux` Surefire execution — see
 | Voluntary host-initiated detach (`Win32Reparent#release`, `EmbedSocketWin32#detachClient`) | `EmbedSocketWin32Test` under Wine only |
 | Multi-client reuse of one socket (`EmbedSocketWin32#listen`, accept-loop re-embed after a detach) | `EmbedSocketWin32Test` under Wine only |
 | `EmbedSocketWin32#setModal` opcode delivery, end-to-end (`EmbedSocketWin32#listen`'s control channel → `EmbedClientWin32#onModalityChanged`) | `EmbedSocketWin32Test` (send side) + `EmbedClientWin32Test` (receive side) under Wine only |
-| `EmbedPlugWin32#onFocusChanged` via `Win32FocusWatcher`'s `GetGUIThreadInfo` poll loop, same-process and cross-process | `Win32FocusWatcherTest`/`EmbedPlugWin32Test`, all cases, under Wine — real `windows-latest` confirmation of the poll-based rewrite still pending, see below |
+| `EmbedPlugWin32#onFocusChanged` via `Win32FocusWatcher`'s `GetGUIThreadInfo` poll loop, same-process and cross-process | `Win32FocusWatcherTest`/`EmbedPlugWin32Test` under Wine + real `windows-latest`, 2026-09-02 follow-up |
 
 `embed`/`embedOpaque` need no distinction on this backend — both collapse
 into the same operation, since there's no `_XEMBED_INFO` to make them
@@ -40,22 +40,10 @@ higher-integrity-level target (the CI runner is itself elevated, so that
 direction can't be exercised), and `explorer.exe`/`dwm.exe` quirks specific
 to a Windows version beyond what the spikes above covered.
 
-**`Win32FocusWatcher` was rewritten 2026-09-02 after a confirmed real-machine
-failure**, not just an unconfirmed caveat — see
-[Mechanism notes](#mechanism-notes) for the full story and
-`build-tools/win32-real-machine-checks/FocusWatcherCheck`'s Javadoc for the
-check that caught it. In short: the original design assumed `SetFocus`
-generates a `SetWinEventHook(EVENT_OBJECT_FOCUS, ...)` notification for any
-window; a real `windows-latest` run of `FocusWatcherCheck` showed that's
-false — `GetGUIThreadInfo` confirmed focus genuinely moved, but the hook's
-callback never fired, because `EVENT_OBJECT_FOCUS` is an accessibility
-notification a window has to raise itself via `NotifyWinEvent`, which a
-plain top-level window never does. `Win32FocusWatcher` now polls `
-GetGUIThreadInfo` directly instead (the same call the check used to catch
-the bug) — confirmed under Wine (all `Win32FocusWatcherTest`/
-`EmbedPlugWin32Test` cases pass now, no `wine-incompatible` tag needed
-anymore, unlike the abandoned hook), but **not yet re-confirmed on real
-`windows-latest`** — that's the next `FocusWatcherCheck` run to watch for.
+`Win32FocusWatcher`'s poll-based mechanism (see
+[Mechanism notes](#mechanism-notes)) replaced an earlier
+`SetWinEventHook(EVENT_OBJECT_FOCUS, ...)` design that a real-machine check
+caught never actually delivering — full story in Mechanism notes below.
 
 ## Not yet implemented (no OS-level blocker)
 
@@ -176,7 +164,10 @@ repeat poll of an unchanged state fires nothing. `EmbedPlugWin32#onFocusChanged`
 wires this to watch the client's own window; a host process's `SetFocus` on
 that window via `Win32Focus.set`'s `AttachThreadInput` path is visible to
 `GetGUIThreadInfo` the same as any other focus change, cross-process,
-without needing its own `AttachThreadInput` bridge.
+without needing its own `AttachThreadInput` bridge. A follow-up real-machine
+run of `FocusWatcherCheck` against this replacement confirmed all three
+cases (same-process gain, cross-process gain, cross-process loss) on real
+`windows-latest`.
 
 ## Test wiring
 
