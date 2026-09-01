@@ -80,10 +80,11 @@ function Run-Check([string]$label, [string]$mainClass, [string[]]$extraJvmArgs) 
     Write-Host "=== $label exit code: $LASTEXITCODE ==="
 }
 
-Run-Check "FG-LOCK"  "cz.loplex.jembetter.win32check.ForegroundLockCheck"       $awtOpens
-Run-Check "FOCUS"    "cz.loplex.jembetter.win32check.FocusFallbackCheck"        $awtOpens
-Run-Check "REPARENT" "cz.loplex.jembetter.win32check.ReparentWatcherCheck"      $awtOpens
-Run-Check "CLICK"    "cz.loplex.jembetter.win32check.ClickWatcherCaveatsCheck"  @()
+Run-Check "FG-LOCK"    "cz.loplex.jembetter.win32check.ForegroundLockCheck"       $awtOpens
+Run-Check "FOCUS"      "cz.loplex.jembetter.win32check.FocusFallbackCheck"        $awtOpens
+Run-Check "FOCUSWATCH" "cz.loplex.jembetter.win32check.FocusWatcherCheck"         @()
+Run-Check "REPARENT"   "cz.loplex.jembetter.win32check.ReparentWatcherCheck"      $awtOpens
+Run-Check "CLICK"      "cz.loplex.jembetter.win32check.ClickWatcherCaveatsCheck"  @()
 
 Write-Host ""
 Write-Host "=== Summary ==="
@@ -94,7 +95,8 @@ foreach ($key in $results.Keys | Sort-Object) {
 Write-Host "FG-LOCK has no automatic verdict - read its printed lines above (or the log file) yourself."
 Write-Host "CLICK's latency and UIPI lines are observational too - only hook-survival gates CLICK's exit code."
 
-$anyHardFailure = ($results["FOCUS"] -ne 0) -or ($results["REPARENT"] -ne 0) -or ($results["CLICK"] -ne 0)
+$anyHardFailure = ($results["FOCUS"] -ne 0) -or ($results["FOCUSWATCH"] -ne 0) `
+    -or ($results["REPARENT"] -ne 0) -or ($results["CLICK"] -ne 0)
 if ($anyHardFailure) {
     exit 1
 }

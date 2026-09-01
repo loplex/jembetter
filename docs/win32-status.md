@@ -41,11 +41,15 @@ direction can't be exercised), `explorer.exe`/`dwm.exe` quirks specific to a
 Windows version beyond what the spikes above covered, and real
 `EVENT_OBJECT_FOCUS` delivery to `Win32FocusWatcher` — Wine's
 `SetWinEventHook` emulation never delivers one (see
-[Mechanism notes](#mechanism-notes)), so this is reasoned by analogy with
-the already-confirmed click-to-focus hook rather than spiked on a real
+[Mechanism notes](#mechanism-notes)), so this is still reasoned by analogy
+with the already-confirmed click-to-focus hook rather than spiked on a real
 machine yet; `Win32FocusWatcherTest`'s and `EmbedPlugWin32Test`'s event-
 delivery cases are `@Tag("wine-incompatible")` and will get their first real
-run on `windows-latest` CI.
+run on `windows-latest` CI. `build-tools/win32-real-machine-checks`' new
+`FocusWatcherCheck` (same-process + cross-process gain/loss, mirroring
+`ReparentWatcherCheck`'s separate-JVM client window) is written and wired
+into `run.ps1`, but hasn't executed on a real machine yet either — this
+line stays "unconfirmed" until a `windows-latest` run reports its verdict.
 
 ## Not yet implemented (no OS-level blocker)
 
