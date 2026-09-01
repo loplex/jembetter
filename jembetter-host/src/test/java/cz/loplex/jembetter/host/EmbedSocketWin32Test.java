@@ -1,6 +1,7 @@
 package cz.loplex.jembetter.host;
 
 import cz.loplex.jembetter.common.CanvasNativeHandle;
+import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.win32.Win32Reparent;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
@@ -10,12 +11,17 @@ import javax.swing.JFrame;
 import java.awt.Canvas;
 import java.awt.Dimension;
 import java.io.IOException;
+import java.nio.channels.SocketChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Exercises {@link EmbedSocketWin32}'s advanced-API surface over {@link
@@ -102,6 +108,47 @@ class EmbedSocketWin32Test {
                 "embed() after detachClient() did not reparent the second client under the host canvas HWND");
         assertNotEquals(canvasHwnd, Win32Reparent.parentOf(firstHwnd),
                 "the first, already-detached client should not have been re-adopted");
+    }
+
+    @Test
+    void listenReEmbedsANewClientAfterThePreviousOneDetaches() throws Exception {
+        Canvas canvas = newVisibleHostCanvas();
+        socket = new EmbedSocketWin32(canvas);
+        long canvasHwnd = CanvasNativeHandle.extract(canvas);
+
+        Path socketPath = Files.createTempFile("jembetter-host-win32-socket-test-", ".sock");
+        Files.delete(socketPath);
+
+        CountDownLatch firstEmbed = new CountDownLatch(1);
+        socket.onClientEmbedded(firstEmbed::countDown);
+        socket.listen(socketPath);
+
+        Process firstClient = Win32TestClients.startFakeClientProcess();
+        long firstPid = firstClient.pid();
+        long firstHwnd = Win32TestClients.waitForOwnWindow(firstPid);
+        try (SocketChannel channel = Win32TestClients.connectWhenReady(socketPath, new AtomicReference<>())) {
+            PidHandshake.send(channel, firstPid);
+        }
+        assertTrue(firstEmbed.await(5, TimeUnit.SECONDS), "first client was never embedded via listen()");
+        assertEquals(canvasHwnd, Win32Reparent.parentOf(firstHwnd),
+                "listen() did not reparent the first client under the host canvas HWND");
+
+        socket.detachClient();
+        firstClient.destroy();
+        firstClient.waitFor(5, TimeUnit.SECONDS);
+
+        CountDownLatch secondEmbed = new CountDownLatch(1);
+        socket.onClientEmbedded(secondEmbed::countDown);
+        clientProcess = Win32TestClients.startFakeClientProcess();
+        long secondPid = clientProcess.pid();
+        long secondHwnd = Win32TestClients.waitForOwnWindow(secondPid);
+        try (SocketChannel channel = Win32TestClients.connectWhenReady(socketPath, new AtomicReference<>())) {
+            PidHandshake.send(channel, secondPid);
+        }
+        assertTrue(secondEmbed.await(5, TimeUnit.SECONDS),
+                "a second client was never (re-)embedded on the same socket after the first detached");
+        assertEquals(canvasHwnd, Win32Reparent.parentOf(secondHwnd),
+                "listen() did not reparent the second client under the host canvas HWND after re-embedding");
     }
 
     private Canvas newVisibleHostCanvas() throws InterruptedException {

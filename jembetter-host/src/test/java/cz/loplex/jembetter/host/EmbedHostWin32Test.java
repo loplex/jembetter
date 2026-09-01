@@ -20,8 +20,6 @@ import java.awt.Point;
 import java.awt.Robot;
 import java.awt.event.InputEvent;
 import java.io.IOException;
-import java.net.StandardProtocolFamily;
-import java.net.UnixDomainSocketAddress;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -176,7 +174,7 @@ class EmbedHostWin32Test {
         long clientPid = clientProcess.pid();
         long clientHwnd = Win32TestClients.waitForOwnWindow(clientPid);
 
-        try (SocketChannel channel = connectWhenReady(socketPath, embedderFailure)) {
+        try (SocketChannel channel = Win32TestClients.connectWhenReady(socketPath, embedderFailure)) {
             PidHandshake.send(channel, clientPid);
         }
 
@@ -197,38 +195,6 @@ class EmbedHostWin32Test {
         owner.setVisible(true);
         Thread.sleep(200);
         return canvas;
-    }
-
-    /**
-     * Connects to the rendezvous socket once {@code EmbedHost.embed(Path)}'s
-     * background thread has bound it, retrying until then. Polling the
-     * connect rather than {@link Files#exists} on the socket path is
-     * deliberate: the Wine-hosted JDK this test runs under implements Windows
-     * {@code AF_UNIX} without ever materialising a filesystem socket node, so
-     * {@code Files.exists} on the bound path stays {@code false} forever even
-     * though the socket is fully connectable.
-     */
-    private static SocketChannel connectWhenReady(Path socketPath,
-            AtomicReference<Throwable> embedderFailure) throws InterruptedException, IOException {
-        UnixDomainSocketAddress address = UnixDomainSocketAddress.of(socketPath);
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (true) {
-            Throwable failure = embedderFailure.get();
-            if (failure != null) {
-                throw new IllegalStateException("EmbedHost.embed(Path) threw before binding the rendezvous socket", failure);
-            }
-            SocketChannel channel = SocketChannel.open(StandardProtocolFamily.UNIX);
-            try {
-                channel.connect(address);
-                return channel;
-            } catch (IOException notReadyYet) {
-                channel.close();
-                if (System.nanoTime() > deadline) {
-                    throw new IllegalStateException("EmbedHost.embed(Path) never bound the rendezvous socket", notReadyYet);
-                }
-                Thread.sleep(20);
-            }
-        }
     }
 
     /** Polls {@code IsWindow} until {@code hwnd} no longer refers to a live window. */

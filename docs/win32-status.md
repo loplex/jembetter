@@ -27,6 +27,7 @@ JDK, forked by the `windows-tests-on-linux` Surefire execution — see
 | Click-to-focus survives an injected-click burst; latency a few µs/event | Real `windows-latest`, 2026-08-28 follow-up |
 | Destroying-close (`WM_CLOSE` instead of cross-process `DestroyWindow`) | `EmbedHostWin32Test` under Wine only |
 | Voluntary host-initiated detach (`Win32Reparent#release`, `EmbedSocketWin32#detachClient`) | `EmbedSocketWin32Test` under Wine only |
+| Multi-client reuse of one socket (`EmbedSocketWin32#listen`, accept-loop re-embed after a detach) | `EmbedSocketWin32Test` under Wine only |
 
 `embed`/`embedOpaque` need no distinction on this backend — both collapse
 into the same operation, since there's no `_XEMBED_INFO` to make them
@@ -45,10 +46,6 @@ new `EmbedSocketWin32` (`jembetter-host`) has started growing toward one —
 see its Javadoc for exactly what it covers so far. None of the remaining
 gaps are blocked by a Windows API restriction:
 
-- **Multi-client reuse of one socket** — `EmbedSocket#listen` keeps
-  accepting a new client after a detach. `EmbedSocketWin32` has voluntary
-  detach (see below) but no accept-loop equivalent yet; a caller drives
-  re-embedding itself, one `embed` call at a time.
 - **Focus-next/prev tab-cycling** between multiple embedded clients.
 - **Modality signaling** — X11 does this over `_XEMBED_INFO`/XEmbed
   `ClientMessage`s, which Win32 has nothing like. The `AF_UNIX` channel
