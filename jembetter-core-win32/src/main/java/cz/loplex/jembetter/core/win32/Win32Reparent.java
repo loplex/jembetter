@@ -9,7 +9,7 @@ import com.sun.jna.platform.win32.WinUser;
  * Thin wrapper around {@code SetParent} plus the style-flip that makes the
  * new parent/child relationship stick, operating on raw HWND values, so
  * callers outside {@code jembetter-core-win32} never need a compile-time
- * dependency on JNA's Win32 types. Mirrors {@code jembetter-core}'s {@code
+ * dependency on JNA's Win32 types. Mirrors {@code jembetter-core-x11}'s {@code
  * Reparenting} — see this module's package-info for the "unverified against a real
  * Windows machine" caveat that still applies to this flow.
  */

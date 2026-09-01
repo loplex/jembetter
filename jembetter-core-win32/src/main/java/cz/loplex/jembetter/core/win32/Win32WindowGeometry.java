@@ -7,7 +7,7 @@ import com.sun.jna.platform.win32.WinUser;
 
 /**
  * Thin wrapper around {@code MoveWindow}/{@code ShowWindow} operating on a
- * raw HWND value. Mirrors {@code jembetter-core}'s {@code WindowGeometry}.
+ * raw HWND value. Mirrors {@code jembetter-core-x11}'s {@code WindowGeometry}.
  */
 public final class Win32WindowGeometry {
 

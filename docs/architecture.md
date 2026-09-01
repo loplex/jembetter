@@ -5,10 +5,10 @@
 - **`jembetter-core-common`** — platform-independent, JNA-free code shared by
   both sides (the rendezvous handshake, AWT `Canvas`-to-native-handle
   extraction, `os.name` dispatch). Not meant to be depended on directly.
-- **`jembetter-core`** — X11 native bindings (via JNA) and the XEmbed protocol
+- **`jembetter-core-x11`** — X11 native bindings (via JNA) and the XEmbed protocol
   implementation shared by both sides. Not meant to be depended on directly.
 - **`jembetter-core-win32`** — Win32 native bindings (via JNA) mirroring
-  `jembetter-core`'s X11 primitives 1:1. Backs `jembetter-host`/`jembetter-client`'s
+  `jembetter-core-x11`'s primitives 1:1. Backs `jembetter-host`/`jembetter-client`'s
   Win32 implementations — see [Win32 backend status](win32-status.md).
 - **`jembetter-host`** — embedder-side API: `EmbedHost` (quick start, a 1:1
   facade for embedding a single self-spawned client) and `EmbedSocket`
@@ -30,7 +30,7 @@ on both.
 ```mermaid
 graph BT
     common["jembetter-core-common"]
-    core["jembetter-core (X11)"]
+    core["jembetter-core-x11"]
     win32["jembetter-core-win32"]
     host["jembetter-host"]
     client["jembetter-client"]
@@ -46,7 +46,7 @@ graph BT
     demo --> client
 ```
 
-`jembetter-core`/`jembetter-core-win32` sit side by side rather than behind a
+`jembetter-core-x11`/`jembetter-core-win32` sit side by side rather than behind a
 shared abstraction: they mirror each other's primitives 1:1
 (`WindowFinder`↔`Win32WindowFinder`, `Reparenting`↔`Win32Reparent`, …), and
 `EmbedHost`/`EmbedPlug` pick between `EmbedHostX11`/`EmbedHostWin32` (resp.

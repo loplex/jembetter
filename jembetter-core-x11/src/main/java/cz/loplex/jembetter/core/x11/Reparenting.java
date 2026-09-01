@@ -5,7 +5,7 @@ import com.sun.jna.platform.unix.X11.Window;
 
 /**
  * Thin wrapper around {@code XReparentWindow} operating on raw X11 window
- * ids, so callers outside {@code jembetter-core} never need a compile-time
+ * ids, so callers outside {@code jembetter-core-x11} never need a compile-time
  * dependency on JNA's X11 types.
  */
 public final class Reparenting {

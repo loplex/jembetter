@@ -7,7 +7,7 @@ import com.sun.jna.ptr.IntByReference;
 
 /**
  * Thin wrapper around {@code XMoveResizeWindow} operating on a raw window
- * id, so callers outside {@code jembetter-core} never need a compile-time
+ * id, so callers outside {@code jembetter-core-x11} never need a compile-time
  * dependency on JNA's X11 types.
  */
 public final class WindowGeometry {

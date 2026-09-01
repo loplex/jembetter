@@ -14,7 +14,7 @@ import java.util.List;
 /**
  * Finds a process's own top-level window(s) by {@code EnumWindows} +
  * {@code GetWindowThreadProcessId}, filtered by pid. Mirrors {@code
- * jembetter-core}'s {@code WindowFinder}, without an X11 {@code WM_CLASS}
+ * jembetter-core-x11}'s {@code WindowFinder}, without an X11 {@code WM_CLASS}
  * equivalent — {@code EnumWindows} only visits top-level windows in the
  * first place, so no separate "narrow to top-level" step is needed.
  */
@@ -43,7 +43,7 @@ public final class Win32WindowFinder {
     /**
      * Narrows {@link #findTopLevelWindowsByPid} to the process's genuine
      * application windows — the Win32 analogue of X11's {@code
-     * _NET_CLIENT_LIST}, which {@code jembetter-core}'s {@code WindowFinder}
+     * _NET_CLIENT_LIST}, which {@code jembetter-core-x11}'s {@code WindowFinder}
      * relies on to skip toolkit-internal windows. {@code EnumWindows} has no such filter of its
      * own, so a Swing process shows up here as both its real frame <em>and</em>
      * the invisible {@code SunAwtToolkit} helper window (the latter is

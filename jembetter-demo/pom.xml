@@ -27,7 +27,7 @@
       <artifactId>jembetter-client</artifactId>
       <version>${project.version}</version>
     </dependency>
-    <!-- jembetter-core's X11ErrorHandler only logs (no println); the
+    <!-- jembetter-core-x11's X11ErrorHandler only logs (no println); the
          library itself ships no binding so embedding apps can pick their
          own. This demo IS the "normal run" a person actually launches, so
          it supplies one - see resources/simplelogger.properties for the

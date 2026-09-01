@@ -11,7 +11,7 @@ import java.util.function.LongConsumer;
 /**
  * Watches a window's {@code GetParent()} for changes and invokes a callback
  * with the new parent (0 if the window was destroyed) each time it changes —
- * the Win32 stand-in for {@code jembetter-core}'s X11 {@code
+ * the Win32 stand-in for {@code jembetter-core-x11}'s {@code
  * WindowReparentWatcher}, which relies on a real {@code ReparentNotify}
  * event. Win32 has no equivalent event a caller outside the window's own
  * thread can subscribe to ({@code WM_PARENTNOTIFY} only reaches the

@@ -19,7 +19,7 @@
   <dependencies>
     <dependency>
       <groupId>cz.loplex</groupId>
-      <artifactId>jembetter-core</artifactId>
+      <artifactId>jembetter-core-x11</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>

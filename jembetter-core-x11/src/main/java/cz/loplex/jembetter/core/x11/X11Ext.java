@@ -64,7 +64,7 @@ public interface X11Ext extends X11 {
      * Must be the very first Xlib call made in the process to have any
      * effect; makes it safe for multiple threads to use Xlib afterward
      * (including sharing a single {@code Display} connection across
-     * threads), which the {@code jembetter-core.xembed.XEmbedInboundWatcher}
+     * threads), which the {@code cz.loplex.jembetter.core.xembed.XEmbedInboundWatcher}
      * background thread relies on. {@link X11Display#open} calls this once,
      * unconditionally, before its first {@code XOpenDisplay}.
      */

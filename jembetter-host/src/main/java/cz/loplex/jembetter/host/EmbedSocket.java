@@ -54,7 +54,7 @@ import java.util.function.Supplier;
  * ClientMessages sent <em>to</em> an AWT-backed socket window (e.g.
  * XEMBED_REQUEST_FOCUS, or PropertyNotify on a client's _XEMBED_INFO) landed
  * on AWT's connection, not this library's — unreadable without reflecting
- * into JDK-internal AWT classes. Owning the window via {@code jembetter-core}'s
+ * into JDK-internal AWT classes. Owning the window via {@code jembetter-core-x11}'s
  * own {@link X11Display} instead means those events can be read directly.
  * The tradeoff: this window is not part of AWT's own window tree, so with
  * {@link #open(int, int, int, int)} the host is responsible for keeping it

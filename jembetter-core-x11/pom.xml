@@ -10,10 +10,10 @@
     <version>0.0.1-SNAPSHOT</version>
   </parent>
 
-  <artifactId>jembetter-core</artifactId>
+  <artifactId>jembetter-core-x11</artifactId>
   <packaging>jar</packaging>
 
-  <name>jembetter-core</name>
+  <name>jembetter-core-x11</name>
   <description>X11 native bindings and the XEmbed protocol implementation shared by the host and client sides.</description>
 
   <dependencies>

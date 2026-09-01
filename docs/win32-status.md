@@ -1,6 +1,6 @@
 # Win32 backend status
 
-`jembetter-core-win32` mirrors `jembetter-core`'s X11 primitives 1:1 via
+`jembetter-core-win32` mirrors `jembetter-core-x11`'s primitives 1:1 via
 JNA's bundled `user32`/`kernel32` declarations (`Win32Reparent`,
 `Win32WindowGeometry`, `Win32Focus`, `Win32WindowFinder`). Two more,
 `Win32ReparentWatcher` and `Win32ClickWatcher`, have no 1:1 X11 primitive to

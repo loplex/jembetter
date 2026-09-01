@@ -22,7 +22,7 @@
 
   <modules>
     <module>jembetter-core-common</module>
-    <module>jembetter-core</module>
+    <module>jembetter-core-x11</module>
     <module>jembetter-core-win32</module>
     <module>jembetter-host</module>
     <module>jembetter-client</module>

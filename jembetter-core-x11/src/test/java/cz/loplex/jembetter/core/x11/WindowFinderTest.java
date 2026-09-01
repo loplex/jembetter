@@ -41,7 +41,7 @@ class WindowFinderTest {
 
     @Test
     void findsOwnTopLevelWindowByPid() throws InterruptedException {
-        frame = new Frame("jembetter-core WindowFinderTest");
+        frame = new Frame("jembetter-core-x11 WindowFinderTest");
         frame.setSize(50, 50);
         frame.setVisible(true);
 
@@ -53,7 +53,7 @@ class WindowFinderTest {
 
     @Test
     void findsWindowByPidAndWmClass() throws InterruptedException {
-        frame = new Frame("jembetter-core WindowFinderTest");
+        frame = new Frame("jembetter-core-x11 WindowFinderTest");
         frame.setSize(50, 50);
         frame.setVisible(true);
 
