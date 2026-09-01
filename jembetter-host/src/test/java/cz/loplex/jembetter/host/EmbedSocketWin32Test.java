@@ -11,6 +11,7 @@ import javax.swing.JFrame;
 import java.awt.Canvas;
 import java.awt.Dimension;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +19,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -149,6 +151,78 @@ class EmbedSocketWin32Test {
                 "a second client was never (re-)embedded on the same socket after the first detached");
         assertEquals(canvasHwnd, Win32Reparent.parentOf(secondHwnd),
                 "listen() did not reparent the second client under the host canvas HWND after re-embedding");
+    }
+
+    @Test
+    void setModalWritesAnOpcodeByteIntoTheListenControlChannel() throws Exception {
+        Canvas canvas = newVisibleHostCanvas();
+        socket = new EmbedSocketWin32(canvas);
+
+        Path socketPath = Files.createTempFile("jembetter-host-win32-modal-test-", ".sock");
+        Files.delete(socketPath);
+
+        CountDownLatch embedded = new CountDownLatch(1);
+        socket.onClientEmbedded(embedded::countDown);
+        socket.listen(socketPath);
+
+        clientProcess = Win32TestClients.startFakeClientProcess();
+        long clientPid = clientProcess.pid();
+        Win32TestClients.waitForOwnWindow(clientPid);
+
+        // Kept open (not try-with-resources) to stand in for a control
+        // channel a real client would keep reading from - EmbedSocketWin32
+        // itself doesn't require a live peer (see setModal's own Javadoc),
+        // but this test wants to prove the byte is actually written on the
+        // wire, not just that the call doesn't throw.
+        SocketChannel channel = Win32TestClients.connectWhenReady(socketPath, new AtomicReference<>());
+        try {
+            PidHandshake.send(channel, clientPid);
+            assertTrue(embedded.await(5, TimeUnit.SECONDS), "client was never embedded via listen()");
+
+            socket.setModal(true);
+            assertEquals((byte) 1, readOneByte(channel), "setModal(true) did not write opcode 1 into the control channel");
+
+            socket.setModal(false);
+            assertEquals((byte) 0, readOneByte(channel), "setModal(false) did not write opcode 0 into the control channel");
+        } finally {
+            channel.close();
+        }
+    }
+
+    @Test
+    void setModalIsANoOpWithNothingEmbedded() {
+        Canvas canvas = newVisibleHostCanvasQuiet();
+        socket = new EmbedSocketWin32(canvas);
+
+        assertDoesNotThrow(() -> socket.setModal(true), "setModal() must be a no-op when nothing is embedded");
+    }
+
+    private static byte readOneByte(SocketChannel channel) throws IOException, InterruptedException {
+        ByteBuffer buffer = ByteBuffer.allocate(1);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (buffer.hasRemaining()) {
+            if (channel.read(buffer) < 0) {
+                throw new IllegalStateException("Control channel closed before a byte arrived");
+            }
+            if (!buffer.hasRemaining()) {
+                break;
+            }
+            if (System.nanoTime() > deadline) {
+                throw new IllegalStateException("Timed out waiting for a byte on the control channel");
+            }
+            Thread.sleep(20);
+        }
+        buffer.flip();
+        return buffer.get();
+    }
+
+    private Canvas newVisibleHostCanvasQuiet() {
+        try {
+            return newVisibleHostCanvas();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        }
     }
 
     private Canvas newVisibleHostCanvas() throws InterruptedException {

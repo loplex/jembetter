@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
+import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
@@ -38,13 +39,37 @@ import java.nio.file.Path;
  * without needing to restart, and can keep swapping clients in
  * indefinitely.
  *
+ * <p><strong>{@link #setModal(boolean)}</strong> mirrors {@code
+ * EmbedSocket#setModal}: a one-way, best-effort send with no receiver on
+ * this backend either (X11's own version has none too — it relies on
+ * {@code XSetInputFocus} to actually do the work and only sends the
+ * {@code ClientMessage} as a courtesy for an app that wants to grey itself
+ * out). Written as a single opcode byte to the client's own control
+ * channel, the same {@link SocketChannel} {@link #listen} accepted the
+ * pid handshake on — kept open for the life of the embed instead of closed
+ * right after, unlike {@link #embed(Path)}'s one-shot handshake. That means
+ * this only has anywhere to send <em>to</em> for a client embedded via
+ * {@link #listen}; a no-op for one embedded via {@link #embed(long)}/{@link
+ * #embed(Path)}/{@link #embedOpaque(long)}, which never open a channel that
+ * outlives the handshake. <b>Not yet received by anything even when a
+ * channel exists</b> — {@code EmbedPlugWin32} (the only Win32 client-side
+ * class today) closes its own end of the handshake channel immediately
+ * after sending its pid (see its {@code announce(Path, String)}), so this
+ * write fails silently against an already-closed peer in every case this
+ * codebase can currently produce. Real end-to-end delivery needs a new
+ * {@code EmbedClientWin32} (there is no Win32 counterpart to {@code
+ * jembetter-client}'s X11-only {@code EmbedClient} at all yet) that keeps
+ * its side of the same channel open and reads this opcode on a background
+ * thread — deliberately not built now; see {@code docs/win32-status.md}.
+ *
  * <p><strong>What this still lacks</strong> (see {@code
- * docs/win32-status.md}): no focus-next/focus-prev tab-cycling, and no
- * modality signaling. {@code EmbedSocket}'s {@code
- * expectClientWindowClass}/{@code onFocusNext}/{@code onFocusPrev}/{@code
- * setModal} have no counterpart here yet — {@code Win32WindowFinder} has no
- * {@code WM_CLASS} equivalent to disambiguate multiple client windows with
- * in the first place (see {@code Win32EmbedCore}'s own {@code
+ * docs/win32-status.md}): no focus-next/focus-prev tab-cycling (X11's own
+ * version has no working sender either — deliberately not chased for the
+ * same reason), and no real receiver for {@link #setModal(boolean)} (see
+ * above). {@code EmbedSocket}'s {@code expectClientWindowClass} has no
+ * counterpart here yet either — {@code Win32WindowFinder} has no {@code
+ * WM_CLASS} equivalent to disambiguate multiple client windows with in the
+ * first place (see {@code Win32EmbedCore}'s own {@code
  * IllegalStateException} for that case).
  */
 public final class EmbedSocketWin32 implements AutoCloseable {
@@ -55,6 +80,7 @@ public final class EmbedSocketWin32 implements AutoCloseable {
     private Thread acceptThread;
     private volatile Runnable onClientEmbedded = () -> {
     };
+    private volatile SocketChannel controlChannel;
 
     public EmbedSocketWin32(Canvas hostCanvas) {
         this.core = new Win32EmbedCore(hostCanvas);
@@ -116,18 +142,24 @@ public final class EmbedSocketWin32 implements AutoCloseable {
                     throw new UncheckedIOException(e);
                 }
                 try {
-                    try (accepted) {
-                        core.embed(PidHandshake.receive(accepted));
-                    }
-                } catch (RuntimeException | IOException e) {
+                    core.embed(PidHandshake.receive(accepted));
+                } catch (RuntimeException e) {
                     // A failed/aborted handshake must not take the accept
                     // loop down; the socket keeps listening for the next
                     // client.
+                    closeQuietly(accepted);
                     e.printStackTrace();
                     continue;
                 }
+                // Kept open, unlike embed(Path)'s one-shot handshake: this is
+                // this client's control channel for the rest of its embed,
+                // e.g. for setModal(boolean) to write into. Closed once this
+                // client detaches, below.
+                controlChannel = accepted;
                 onClientEmbedded.run();
                 awaitDetach();
+                closeQuietly(controlChannel);
+                controlChannel = null;
             }
         } finally {
             try {
@@ -135,6 +167,14 @@ public final class EmbedSocketWin32 implements AutoCloseable {
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
+        }
+    }
+
+    private static void closeQuietly(SocketChannel channel) {
+        try {
+            channel.close();
+        } catch (IOException e) {
+            // Best-effort cleanup of a channel already headed nowhere useful.
         }
     }
 
@@ -186,6 +226,29 @@ public final class EmbedSocketWin32 implements AutoCloseable {
         core.detachClient();
     }
 
+    /**
+     * Tells the embedded client it's shadowed by (or no longer shadowed by)
+     * a modal dialog — see this class's own Javadoc for exactly what this
+     * does and doesn't guarantee on this backend today. No-op if nothing is
+     * currently embedded, or if it wasn't embedded via {@link #listen}.
+     */
+    public void setModal(boolean modal) {
+        SocketChannel channel = controlChannel;
+        if (channel == null || !core.isEmbedded()) {
+            return;
+        }
+        try {
+            ByteBuffer opcode = ByteBuffer.wrap(new byte[] { (byte) (modal ? 1 : 0) });
+            while (opcode.hasRemaining()) {
+                channel.write(opcode);
+            }
+        } catch (IOException e) {
+            // Best-effort, no-receiver-required send - see this class's own
+            // Javadoc on setModal(boolean) for why a failure here (e.g. the
+            // peer already closed its end) is expected, not exceptional.
+        }
+    }
+
     @Override
     public void close() {
         stopListening();
@@ -206,6 +269,10 @@ public final class EmbedSocketWin32 implements AutoCloseable {
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
+        }
+        SocketChannel channel = controlChannel;
+        if (channel != null) {
+            closeQuietly(channel);
         }
         if (acceptThread != null) {
             try {
