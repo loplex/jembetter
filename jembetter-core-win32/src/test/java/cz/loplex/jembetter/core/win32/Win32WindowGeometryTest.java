@@ -55,6 +55,19 @@ class Win32WindowGeometryTest {
     }
 
     @Test
+    void screenPositionReflectsTheWindowRectsTopLeftCorner() {
+        Win32Reparent.reparent(hwnd, parentHwnd, 0, 0);
+        Win32WindowGeometry.moveResize(hwnd, 20, 30, 100, 80);
+
+        RECT rect = new RECT();
+        User32.INSTANCE.GetWindowRect(toHwnd(hwnd), rect);
+
+        int[] position = Win32WindowGeometry.screenPosition(hwnd);
+        assertEquals(rect.left, position[0]);
+        assertEquals(rect.top, position[1]);
+    }
+
+    @Test
     void setMappedTogglesVisibility() {
         Win32WindowGeometry.setMapped(hwnd, true);
         assertTrue(User32.INSTANCE.IsWindowVisible(toHwnd(hwnd)));
