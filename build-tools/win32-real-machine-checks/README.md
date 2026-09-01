@@ -23,13 +23,15 @@ repo.
 | Class | Checks | Verdict |
 | --- | --- | --- |
 | `FocusFallbackCheck` | From a non-foreground process, does the production `Win32Focus.set` move the foreground? Runs a strategy matrix and names what works if it doesn't. | **Gated** PASS/FAIL (PASS only if `Win32Focus.set` works unaided) |
+| `FocusWatcherCheck` | Does `Win32FocusWatcher` actually receive `EVENT_OBJECT_FOCUS`, same-process and for a separate-JVM client window (the `EmbedPlugWin32` shape)? | **Gated** PASS/FAIL (same-process gain + cross-process gain/loss) |
 | `ReparentWatcherCheck` | `Win32ReparentWatcher` across embed / host-detach / parent-destroy, with a separate-JVM client window. | **Gated** PASS/FAIL (three transitions) |
 | `ClickWatcherCaveatsCheck` | `Win32ClickWatcher`: hook survival under a click burst (gated); added mouse latency + UIPI (observational). | hook-survival **gated**; latency + UIPI observational |
 | `ForegroundLockCheck` | Prints the raw foreground-lock behaviour (what `SetForegroundWindow` returns vs. does, `AllowSetForegroundWindow`, …). | **Observational** — no verdict |
 
 Helper processes: `ForegroundStealerMain` (grabs the foreground so the checks
 have a non-foreground state to test against), `ChildWindowMain` (a
-separate-JVM client window), `CheckWindows` (STATIC-class windows + SendInput
+separate-JVM client window, used by `ReparentWatcherCheck` and
+`FocusWatcherCheck`), `CheckWindows` (STATIC-class windows + SendInput
 synthesis, copied from `jembetter-core-win32`'s `Win32TestWindows`).
 
 ## Running it
@@ -42,7 +44,7 @@ mvn install   # at least once, so jna/jna-platform are in ~/.m2
 .\build-tools\win32-real-machine-checks\run.ps1
 ```
 
-The script's exit code is gated on `FocusFallbackCheck`,
+The script's exit code is gated on `FocusFallbackCheck`, `FocusWatcherCheck`,
 `ReparentWatcherCheck` and `ClickWatcherCaveatsCheck`'s hook-survival part.
 `ForegroundLockCheck` and the latency/UIPI lines are observational — read
 them yourself.
