@@ -1,8 +1,8 @@
 name: Linux (X11) CI
 
 # Runs the full reactor's test suite against a real, disposable Xvfb + openbox
-# pair - see README.md's "Running tests" section and
-# build-tools/test-jvm-wrapper/bin/java for how that's wired up. The
+# pair - see docs/testing.md and build-tools/test-jvm-wrapper/bin/java for
+# how that's wired up. The
 # @Tag("windows") suite also runs here, forked into a Windows JDK under Wine
 # (the win32-tests-under-wine Maven profile, activated by wine being
 # installed below); real Windows exercises the same suite in windows-ci.yml.
