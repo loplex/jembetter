@@ -169,7 +169,7 @@ the facade actually targets) and embeds it via the known-handle path, with
 no second terminal needed:
 
 ```sh
-mvn -pl jembetter-demo exec:java@host-facade
+mvn -pl jembetter-demo exec:exec@host-facade
 # ...or:
 java -cp "jembetter-demo/target/classes:$(< jembetter-demo/target/cp.txt)" cz.loplex.jembetter.demo.HostFacadeDemo
 ```
