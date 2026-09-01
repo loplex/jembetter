@@ -10,8 +10,12 @@ name: Win32 real-machine checks
 
 on:
   workflow_dispatch: {}
+  # This file isn't on the default branch, so workflow_dispatch alone isn't
+  # runnable yet - spike_win32 is temporarily in the push branch list too,
+  # the same way win32-real-machine-spike.yml (this workflow's predecessor)
+  # briefly was. Remove spike_win32 again once that branch is merged.
   push:
-    branches: [main, develop]
+    branches: [main, develop, spike_win32]
     paths:
       - 'build-tools/win32-real-machine-checks/**'
       - 'jembetter-core-win32/src/main/**'
