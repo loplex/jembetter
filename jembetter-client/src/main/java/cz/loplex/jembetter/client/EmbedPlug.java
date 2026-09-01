@@ -1,7 +1,7 @@
 package cz.loplex.jembetter.client;
 
+import cz.loplex.jembetter.common.FocusListener;
 import cz.loplex.jembetter.common.Platform;
-import cz.loplex.jembetter.core.x11.FocusListener;
 
 import java.nio.file.Path;
 import java.util.function.LongConsumer;

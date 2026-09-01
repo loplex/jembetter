@@ -1,9 +1,9 @@
 package cz.loplex.jembetter.client;
 
+import cz.loplex.jembetter.common.FocusListener;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.win32.Win32ReparentWatcher;
 import cz.loplex.jembetter.core.win32.Win32WindowFinder;
-import cz.loplex.jembetter.core.x11.FocusListener;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
