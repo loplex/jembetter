@@ -28,13 +28,23 @@ jobs:
       - name: Install Xvfb + openbox + xdotool + wine
         run: sudo apt-get update && sudo apt-get install -y xvfb openbox xdotool wine
 
+      # download-windows-java.sh resolves "latest 21 GA" itself, so pin the cache
+      # key to the release it would actually fetch - a lightweight metadata query
+      # against the same Adoptium feed, not the ~190 MB binary - so a new GA
+      # release invalidates the cache instead of silently keeping the old JDK.
+      - name: Resolve Windows JDK release
+        id: windows-jdk
+        run: |
+          release=$(curl -fsSL "https://api.adoptium.net/v3/assets/feature_releases/21/ga?image_type=jdk&os=windows&architecture=x64&heap_size=normal&vendor=eclipse" | jq -r '.[0].release_name')
+          echo "release=${release}" >> "$GITHUB_OUTPUT"
+
       # The Wine test fork needs a real Windows JDK; provide-platform-java.sh
       # downloads it to this dir on first use (~190 MB). Cache it across runs.
       - name: Cache Windows JDK
         uses: actions/cache@v4
         with:
           path: build-tools/test-jvm-wrapper/.cache
-          key: windows-jdk-21-ga
+          key: windows-jdk-21-ga-${{ steps.windows-jdk.outputs.release }}
 
       - name: mvn test
         run: mvn -B test
