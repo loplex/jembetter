@@ -27,6 +27,7 @@ import java.awt.event.ComponentEvent;
 import java.awt.event.HierarchyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.awt.event.WindowFocusListener;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
@@ -91,19 +92,21 @@ public final class EmbedSocket implements AutoCloseable {
     private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
     private volatile boolean closed = false;
 
+    private final WindowFocusListener ownerFocusListener = new WindowAdapter() {
+        @Override
+        public void windowGainedFocus(WindowEvent event) {
+            sendActivated(true);
+        }
+
+        @Override
+        public void windowLostFocus(WindowEvent event) {
+            sendActivated(false);
+        }
+    };
+
     public EmbedSocket(Frame owner) {
         this.owner = owner;
-        owner.addWindowFocusListener(new WindowAdapter() {
-            @Override
-            public void windowGainedFocus(WindowEvent event) {
-                sendActivated(true);
-            }
-
-            @Override
-            public void windowLostFocus(WindowEvent event) {
-                sendActivated(false);
-            }
-        });
+        owner.addWindowFocusListener(ownerFocusListener);
     }
 
     /** Creates the underlying X11 window at the given screen bounds and starts watching it for inbound XEmbed messages. */
@@ -735,6 +738,13 @@ public final class EmbedSocket implements AutoCloseable {
             return;
         }
         closed = true;
+        // owner.dispose() posts window (de)activation events onto the AWT
+        // EventQueue asynchronously, and in a reuseForks Surefire run that
+        // queue's thread outlives any one test method - a stale listener
+        // callback firing after display is closed below would call into a
+        // freed native Display*, crashing the JVM instead of throwing.
+        // Removing it here, before anything else, closes that window.
+        owner.removeWindowFocusListener(ownerFocusListener);
         listening = false;
         if (server != null) {
             try {
