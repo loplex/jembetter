@@ -42,11 +42,74 @@ if ! [[ -s "${windows_jdk_java_exe}" ]]; then
   exit 1
 fi
 
+# Isolates this harness's Wine state from the user's own default WINEPREFIX
+# (~/.wine) - sharing it would mean e.g. cleanup_wineserver below killing
+# any unrelated Wine program the user had running outside the test run, and
+# this workload (a plain java.exe) has no business touching the user's own
+# Wine install anyway. Cached (gitignored, like the JDK download above) so
+# it's only created once.
+wine_prefix_cache=${WINE_PREFIX_CACHE:-${wrapper_dir}/.cache/wineprefix}
+export WINEPREFIX=${wine_prefix_cache}
+
+# A *new* WINEPREFIX's wineboot otherwise hangs indefinitely trying to
+# install Wine Mono/Gecko (a GUI installer prompt that needs network access
+# and user interaction, fatal in a headless/CI run) - neither is needed to
+# run a plain java.exe, so disable both up front.
+export WINEDLLOVERRIDES=${WINEDLLOVERRIDES:-"mscoree=;mshtml="}
+
 
 function run_debug() {
   echo 'provide-windows-java-using-wine.sh: +' "${@@Q}" >&2
   "$@"
 }
+
+# Chains a new EXIT-trap handler onto whatever handler is already
+# registered, rather than clobbering it the way a plain `trap ... EXIT`
+# would - replay-wine-fork.sh sets its own EXIT trap (cleaning up its
+# socat/tail bridge processes and temp property files) before sourcing this
+# script, and a naive `trap ... EXIT` here would silently drop it.
+function add_exit_trap() {
+  local new_handler=$1
+
+  # `trap -p EXIT` prints `trap -- '<handler>' EXIT` (empty if none is
+  # registered yet) - strip that wrapping to get the bare handler back out.
+  local existing; existing=$( trap -p EXIT )
+  existing=${existing#"trap -- '"}
+  existing=${existing%"' EXIT"}
+
+  trap "${existing:+${existing}; }${new_handler}" EXIT
+}
+
+function ensure_wineprefix() {
+  if [[ -s "${wine_prefix_cache}/system.reg" ]]; then
+    return
+  fi
+  echo "provide-windows-java-using-wine.sh: initializing isolated WINEPREFIX at ${wine_prefix_cache}..." >&2
+  mkdir -p "${wine_prefix_cache}"
+  WINEDEBUG=-all run_debug wineboot --init >&2
+}
+
+# Tears down the wineserver instance (and the guest-OS processes under it -
+# services.exe, explorer.exe, plugplay.exe, ... - Wine rewrites their argv[0]
+# to the literal Windows path, so they don't show up in a plain `pgrep wine`)
+# that `wine java.exe` implicitly started against WINEPREFIX above, so a
+# finished test run doesn't leave them running afterward. `wineserver -k`
+# only tears down the instance for the *currently exported* WINEPREFIX (each
+# prefix gets its own, addressed via a prefix-derived socket) - so this only
+# ever affects this harness's own isolated prefix, never the user's shared
+# default one (see the WINEPREFIX comment above for why that distinction
+# matters).
+function cleanup_wineserver() {
+  run_debug wineserver -k || true
+}
+
+# Runs cleanup_wineserver on every exit from this script - normal
+# completion, a `set -e` failure, or this fork being killed by a signal
+# (e.g. Surefire's forkedProcessTimeoutInSeconds, or `mvn` interrupted)
+# while `wine java.exe` is still running. A plain call at the end of
+# run_java, after that command returns, would miss exactly that last case -
+# nothing past the point of being killed would ever run.
+add_exit_trap cleanup_wineserver
 
 # Undoes a properties file's escaping of a value (the only special character
 # in a properties file *value* is the backslash - see encode_properties_value
@@ -220,6 +283,11 @@ function run_java() {
   exit $?
 }
 
+
+# Needed before any winepath/wine call below - both the autorun (run_java)
+# and no-autorun (replay-wine-fork.sh, using the winification helpers above
+# directly) paths use them.
+ensure_wineprefix
 
 # Setting PROVIDE_WINDOWS_JAVA_NO_AUTORUN=1 before sourcing this script (as
 # replay-wine-fork.sh does) reuses its winification helpers above without
