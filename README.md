@@ -139,6 +139,13 @@ signaling, and toolkit-opaque (e.g. JavaFX) embedding — are covered in
 
 ## Try the demo
 
+`jembetter-demo` ships two demo pairs. `HostDemo`/`ClientDemo` are built on
+`EmbedSocket`/`EmbedClient` (the advanced, multi-client API — see
+[Advanced usage](docs/advanced-usage.md)), which has no Win32 backend yet, so
+this pair is X11-only. `HostFacadeDemo`/`ClientFacadeDemo` are built on
+`EmbedHost`/`EmbedPlug` (the simplified 1:1 facade), which dispatches by
+`os.name` to either backend, so this pair runs on both Linux and Windows.
+
 ```sh
 mvn -pl jembetter-demo -am install
 
