@@ -9,6 +9,7 @@ import cz.loplex.jembetter.core.x11.Reparenting;
 import cz.loplex.jembetter.core.x11.WindowDeathWatcher;
 import cz.loplex.jembetter.core.x11.WindowFinder;
 import cz.loplex.jembetter.core.x11.WindowGeometry;
+import cz.loplex.jembetter.core.x11.WindowConfigureWatcher;
 import cz.loplex.jembetter.core.x11.WindowRelease;
 import cz.loplex.jembetter.core.x11.WindowTree;
 import cz.loplex.jembetter.core.x11.X11Display;
@@ -69,6 +70,7 @@ public final class EmbedSocket implements AutoCloseable {
     private final Frame owner;
     private final X11Display display = X11Display.open(null);
     private final WindowDeathWatcher deathWatcher = new WindowDeathWatcher();
+    private final WindowConfigureWatcher configureWatcher = new WindowConfigureWatcher();
     private XEmbedInboundWatcher inbound;
     private long windowId = -1;
     private volatile int width = -1;
@@ -227,17 +229,54 @@ public final class EmbedSocket implements AutoCloseable {
     }
 
     /**
-     * Reissues the just-applied initial resize once more after a short
-     * delay. Confirmed by direct observation against a live X server: a
+     * Starts watching the embedded client window for {@code ConfigureNotify}
+     * and reissuing our own desired size whenever one reports something
+     * else. Confirmed by direct observation against a live X server: a
      * plain, XEmbed-unaware AWT client (like {@code ClientDemo}) reacts to
      * being reparented by reasserting its own previous size from its own
-     * connection — a one-shot correction that beats our first resize's
-     * XGetWindowAttributes readback every time, but never fires a second
-     * time. A resize issued after that has already happened sticks. A
-     * fully XEmbed-aware client shouldn't contest embedder-driven geometry
-     * at all, so this only matters for AWT-unaware embeddees like the demo.
+     * connection, once, right after the reparent — a fully XEmbed-aware
+     * client shouldn't contest embedder-driven geometry at all, so this only
+     * matters for AWT-unaware embeddees like the demo. Reacting to the
+     * actual {@code ConfigureNotify} this produces, rather than a fixed
+     * delay guessed to outlast it, also corrects any later self-resize the
+     * same way, not just the reparent-time one.
+     *
+     * <p>{@link WindowGeometry#moveResize} raised in response also
+     * generates its own {@code ConfigureNotify}, so this watcher sees every
+     * resize it issues too — harmless, since {@link #reassertSizeIfChanged}
+     * only re-issues on a mismatch and a self-issued resize always already
+     * matches {@link #width}/{@link #height} by the time it's reported back.
      */
-    private void settleInitialSize() {
+    private void watchForSizeContest(long clientWindowId) {
+        configureWatcher.watch(clientWindowId, this::reassertSizeIfChanged);
+    }
+
+    private void reassertSizeIfChanged(int reportedWidth, int reportedHeight) {
+        if (reportedWidth != width || reportedHeight != height) {
+            followSizeIntoEmbeddedWindow();
+        }
+    }
+
+    /**
+     * Gives a freshly reparented client a brief pause before this socket
+     * starts treating it as fully embedded ({@code EMBEDDED_NOTIFY}, taking
+     * input focus, installing the click-to-focus {@link
+     * cz.loplex.jembetter.core.x11.ButtonGrab}) — confirmed by repeated runs
+     * against a live X server: skipping straight from the reparent to those
+     * calls makes the click-to-focus grab intermittently fail to intercept a
+     * real click arriving shortly afterward (roughly one run in three, in
+     * {@code EmbedSocketTest.aRealClickOnTheEmbeddedAreaReturnsInputFocusToTheClient}),
+     * even though {@link #watchForSizeContest} is already active by that
+     * point. Restoring this pause (plus a second {@link
+     * #followSizeIntoEmbeddedWindow} afterward, in case a self-resize landed
+     * during it) removed the failures across dozens of repeated runs.
+     * {@code watchForSizeContest} keeps running independently of this for
+     * the client's whole embedded lifetime, since it also has to catch a
+     * self-resize arriving after this pause is long over — this only covers
+     * the narrower window right around the reparent that the button-grab
+     * install races with.
+     */
+    private void settleAfterReparent() {
         try {
             Thread.sleep(150);
         } catch (InterruptedException e) {
@@ -331,7 +370,8 @@ public final class EmbedSocket implements AutoCloseable {
         Reparenting.reparent(display, clientWindowId, windowId, 0, 0);
         embeddedWindowId = clientWindowId;
         followSizeIntoEmbeddedWindow();
-        settleInitialSize();
+        watchForSizeContest(clientWindowId);
+        settleAfterReparent();
         synchronized (X11Display.GLOBAL_LOCK) {
             XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
                     XEmbedInfo.PROTOCOL_VERSION);
@@ -370,8 +410,9 @@ public final class EmbedSocket implements AutoCloseable {
         Reparenting.reparent(display, clientWindowId, windowId, 0, 0);
         embeddedWindowId = clientWindowId;
         followSizeIntoEmbeddedWindow();
-        settleInitialSize();
+        watchForSizeContest(clientWindowId);
         waitForReparentConfirmed(clientWindowId, pollInterval, maxAttempts);
+        settleAfterReparent();
         synchronized (X11Display.GLOBAL_LOCK) {
             XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
                     XEmbedInfo.PROTOCOL_VERSION);
@@ -446,6 +487,7 @@ public final class EmbedSocket implements AutoCloseable {
         }
         int[] rootPosition = WindowGeometry.rootPosition(display, id);
         deathWatcher.unwatch(id);
+        configureWatcher.unwatch(id);
         inbound.stopWatchingEmbeddedInfo();
         inbound.stopWatchingButtonPress();
         Reparenting.release(display, id, display.defaultRootWindow().longValue(), rootPosition[0], rootPosition[1]);
@@ -475,6 +517,7 @@ public final class EmbedSocket implements AutoCloseable {
             return;
         }
         deathWatcher.unwatch(id);
+        configureWatcher.unwatch(id);
         inbound.stopWatchingEmbeddedInfo();
         inbound.stopWatchingButtonPress();
         RawWindow.destroy(display, id);
@@ -571,6 +614,7 @@ public final class EmbedSocket implements AutoCloseable {
 
     private void handleClientDetached(long detachedWindowId) {
         embeddedWindowId = -1;
+        configureWatcher.unwatch(detachedWindowId);
         inbound.stopWatchingEmbeddedInfo();
         inbound.stopWatchingButtonPress();
         onClientDetached.run();
@@ -726,6 +770,7 @@ public final class EmbedSocket implements AutoCloseable {
             inbound.close();
         }
         deathWatcher.close();
+        configureWatcher.close();
         if (windowId >= 0) {
             RawWindow.destroy(display, windowId);
         }
