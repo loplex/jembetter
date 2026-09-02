@@ -210,7 +210,7 @@
                 <execution>
                   <id>default-test</id>
                   <configuration>
-                    <excludedGroups>windows</excludedGroups>
+                    <excludedGroups>windows,${test.excludedGroups}</excludedGroups>
                   </configuration>
                 </execution>
               </executions>
