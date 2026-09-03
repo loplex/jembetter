@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.condition.OS;
 
 import javax.swing.JFrame;
+import java.awt.EventQueue;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
@@ -53,8 +54,24 @@ class EmbedPlugWin32Test {
         }
     }
 
+    /**
+     * Calling {@link Win32Reparent#reparent} on a live AWT {@code JFrame}'s
+     * own HWND from this test thread — not the AWT toolkit thread that
+     * actually owns the window's message queue — was found to hang the
+     * process under Wine roughly 2 times out of 3, right after {@code
+     * SetParent} returns and before any further AWT/Swing activity; not a
+     * plain-Windows issue ({@code windows-ci.yml} runs this test on real
+     * {@code windows-latest} with no such hang). The {@link
+     * EventQueue#invokeAndWait} call below, round-tripping the AWT event
+     * queue once right before the reparent call, brought that down to 0
+     * hangs across 10 repeated runs (one unrelated, non-hanging assertion
+     * failure on window-handle contamination between rapid Wine-hosted
+     * forks) — a test-only mitigation of the race, not a root-caused fix:
+     * *why* the round trip closes the window wasn't pinned down. Worth
+     * revisiting with real Wine-internals tracing if this flakes again.
+     */
     @Test
-    void announcesAndDetectsBeingReparentedByAHost() throws InterruptedException {
+    void announcesAndDetectsBeingReparentedByAHost() throws Exception {
         frame = new JFrame("EmbedPlugWin32Test");
         frame.setBounds(0, 0, 50, 50);
         frame.setVisible(true);
@@ -70,6 +87,8 @@ class EmbedPlugWin32Test {
 
         long ownHwnd = waitForOwnWindow(ProcessHandle.current().pid());
         fakeHostHwnd = Win32TestWindow.create("EmbedPlugWin32Test fake host");
+        EventQueue.invokeAndWait(() -> {
+        });
         Win32Reparent.reparent(ownHwnd, fakeHostHwnd, 0, 0);
 
         assertTrue(embedded.await(5, TimeUnit.SECONDS), "onEmbedded was never invoked after announce(wmClass)");
