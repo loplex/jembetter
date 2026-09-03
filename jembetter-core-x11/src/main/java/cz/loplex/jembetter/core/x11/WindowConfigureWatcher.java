@@ -4,6 +4,7 @@ import com.sun.jna.NativeLong;
 import com.sun.jna.platform.unix.X11.Window;
 import com.sun.jna.platform.unix.X11.XConfigureEvent;
 import com.sun.jna.platform.unix.X11.XEvent;
+import cz.loplex.jembetter.common.SizeListener;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
