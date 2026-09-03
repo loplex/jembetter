@@ -1,6 +1,6 @@
 package cz.loplex.jembetter.client;
 
-import cz.loplex.jembetter.common.ipc.FocusRequestOpcode;
+import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.win32.Win32Focus;
 import cz.loplex.jembetter.core.win32.Win32Reparent;
@@ -15,7 +15,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
-import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
@@ -35,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Exercises {@link EmbedClientWin32} against a hand-rolled fake host — a raw
  * {@link ServerSocketChannel} playing exactly the part {@code
  * EmbedSocketWin32#listen} plays (accept, read the pid handshake, keep the
- * channel open, write a {@code ModalityOpcode}-encoded byte) — rather than
+ * channel open, write a {@code ControlMessage} frame) — rather than
  * pulling in {@code jembetter-host} itself, which this module doesn't depend
  * on. Tagged {@code windows} like the rest of this module's Win32-backend
  * tests, even though the mechanism under test (a plain {@code AF_UNIX}
@@ -88,9 +87,9 @@ class EmbedClientWin32Test {
                 PidHandshake.receive(accepted);
                 pidReceived.countDown();
 
-                writeByte(accepted, (byte) 1);
-                Thread.sleep(200); // give the reader a chance to dispatch before the next byte
-                writeByte(accepted, (byte) 0);
+                ControlMessage.of(ControlMessage.Type.MODALITY, true).writeTo(accepted);
+                Thread.sleep(200); // give the reader a chance to dispatch before the next frame
+                ControlMessage.of(ControlMessage.Type.MODALITY, false).writeTo(accepted);
                 Thread.sleep(500); // keep the channel open past the last assertion
             } catch (Exception e) {
                 throw new RuntimeException(e);
@@ -240,7 +239,7 @@ class EmbedClientWin32Test {
     }
 
     @Test
-    void requestFocusWritesTheFocusRequestMarkerByteToTheControlChannel() throws Exception {
+    void requestFocusWritesAFocusRequestFrameToTheControlChannel() throws Exception {
         frame = new JFrame("EmbedClientWin32Test request-focus");
         frame.setBounds(0, 0, 50, 50);
         frame.setVisible(true);
@@ -250,16 +249,14 @@ class EmbedClientWin32Test {
         server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
         server.bind(UnixDomainSocketAddress.of(socketPath));
 
-        CompletableFuture<Byte> received = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<ControlMessage.Type> received = CompletableFuture.supplyAsync(() -> {
             try (SocketChannel accepted = server.accept()) {
                 PidHandshake.receive(accepted);
-                ByteBuffer buffer = ByteBuffer.allocate(1);
-                while (buffer.hasRemaining()) {
-                    if (accepted.read(buffer) < 0) {
-                        throw new IllegalStateException("Peer closed before writing the focus-request marker");
-                    }
+                ControlMessage message = ControlMessage.readFrom(accepted);
+                if (message == null) {
+                    throw new IllegalStateException("Peer closed before writing the focus-request frame");
                 }
-                return buffer.get(0);
+                return message.type();
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
@@ -270,8 +267,8 @@ class EmbedClientWin32Test {
         client.connect(socketPath);
         client.requestFocus();
 
-        assertEquals(FocusRequestOpcode.MARKER, received.get(5, TimeUnit.SECONDS),
-                "requestFocus() did not write the FocusRequestOpcode marker byte");
+        assertEquals(ControlMessage.Type.FOCUS_REQUEST, received.get(5, TimeUnit.SECONDS),
+                "requestFocus() did not write a FOCUS_REQUEST control frame");
     }
 
     private static long waitForOwnWindow(long pid) throws InterruptedException {
@@ -285,12 +282,5 @@ class EmbedClientWin32Test {
             Thread.sleep(50);
         } while (System.nanoTime() < deadline);
         throw new IllegalStateException("Client process " + pid + " never published a top-level window");
-    }
-
-    private static void writeByte(SocketChannel channel, byte value) throws IOException {
-        ByteBuffer buffer = ByteBuffer.wrap(new byte[] { value });
-        while (buffer.hasRemaining()) {
-            channel.write(buffer);
-        }
     }
 }

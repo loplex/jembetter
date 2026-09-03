@@ -3,8 +3,7 @@ package cz.loplex.jembetter.client;
 import cz.loplex.jembetter.common.FocusListener;
 import cz.loplex.jembetter.common.ModalityListener;
 import cz.loplex.jembetter.common.SizeListener;
-import cz.loplex.jembetter.common.ipc.FocusRequestOpcode;
-import cz.loplex.jembetter.common.ipc.ModalityOpcode;
+import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.win32.Win32ConfigureWatcher;
 import cz.loplex.jembetter.core.win32.Win32FocusWatcher;
@@ -15,7 +14,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
-import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -34,11 +32,12 @@ import java.util.function.LongConsumer;
  * it always has: dial the host's rendezvous socket exactly like {@code
  * EmbedPlugWin32#announce(Path, String)} does (same {@link PidHandshake}),
  * but keep the channel open afterward instead of closing it. A background
- * thread reads {@link ModalityOpcode}-encoded bytes off that channel for the
- * life of the embed and dispatches them to {@link #onModalityChanged}; {@link
- * #requestFocus()} writes the other direction on the same channel (see
- * {@code FocusRequestOpcode}), read back by {@code EmbedSocketWin32}'s own
- * per-client control-channel reader.
+ * thread reads {@link ControlMessage} frames off that channel for the life of
+ * the embed and dispatches {@link ControlMessage.Type#MODALITY} ones to
+ * {@link #onModalityChanged}; {@link #requestFocus()} writes a {@link
+ * ControlMessage.Type#FOCUS_REQUEST} frame the other direction on the same
+ * channel, read back by {@code EmbedSocketWin32}'s own per-client
+ * control-channel reader.
  *
  * <p>Does not (yet) plug into {@code EmbedPlug}'s narrow facade — {@code
  * EmbedPlugWin32#announce(Path, String)} still closes its handshake channel
@@ -156,13 +155,14 @@ public final class EmbedClientWin32 implements AutoCloseable {
     }
 
     /**
-     * Asks the host to give this window input focus, by writing {@link
-     * FocusRequestOpcode#MARKER} to the control channel {@link #connect}
-     * opened — read back by {@code EmbedSocketWin32}'s own per-client
-     * reader, the client-to-host counterpart of {@link #onModalityChanged}'s
-     * host-to-client direction on the same channel. No-op if not currently
-     * connected, or best-effort if the host has already closed its end (same
-     * "no receiver required" framing as {@code EmbedSocketWin32#setModal}).
+     * Asks the host to give this window input focus, by writing a {@link
+     * ControlMessage.Type#FOCUS_REQUEST} frame to the control channel {@link
+     * #connect} opened — read back by {@code EmbedSocketWin32}'s own
+     * per-client reader, the client-to-host counterpart of {@link
+     * #onModalityChanged}'s host-to-client direction on the same channel.
+     * No-op if not currently connected, or best-effort if the host has
+     * already closed its end (same "no receiver required" framing as {@code
+     * EmbedSocketWin32#setModal}).
      */
     public void requestFocus() {
         SocketChannel channel = controlChannel;
@@ -170,10 +170,7 @@ public final class EmbedClientWin32 implements AutoCloseable {
             return;
         }
         try {
-            ByteBuffer marker = ByteBuffer.wrap(new byte[] { FocusRequestOpcode.MARKER });
-            while (marker.hasRemaining()) {
-                channel.write(marker);
-            }
+            ControlMessage.focusRequest().writeTo(channel);
         } catch (IOException e) {
             // Best-effort, no-receiver-required send - see this method's own Javadoc.
         }
@@ -224,8 +221,9 @@ public final class EmbedClientWin32 implements AutoCloseable {
      * sends this process's own pid — the same handshake {@code
      * EmbedPlugWin32#announce(Path, String)} performs — but keeps the
      * channel open afterward and starts a background thread reading {@link
-     * ModalityOpcode}-encoded bytes off it, dispatching each to {@link
-     * #onModalityChanged}. Only meaningful against a host that keeps its own
+     * ControlMessage} frames off it, dispatching {@link
+     * ControlMessage.Type#MODALITY} ones to {@link #onModalityChanged}. Only
+     * meaningful against a host that keeps its own
      * end open too, i.e. one embedding this client via {@code
      * EmbedSocketWin32#listen(Path)} — a plain {@code embed(long)}/{@code
      * embed(Path)}/{@code embedOpaque(long)} host closes its side of the
@@ -263,16 +261,13 @@ public final class EmbedClientWin32 implements AutoCloseable {
 
     private void readLoop() {
         SocketChannel channel = controlChannel;
-        ByteBuffer buffer = ByteBuffer.allocate(1);
         try {
-            while (true) {
-                buffer.clear();
-                if (channel.read(buffer) < 0) {
-                    return; // Host closed its end — nothing more to read.
+            ControlMessage message;
+            while ((message = ControlMessage.readFrom(channel)) != null) {
+                if (message.type() == ControlMessage.Type.MODALITY) {
+                    onModalityChanged.modalityChanged(message.flag());
                 }
-                if (!buffer.hasRemaining()) {
-                    onModalityChanged.modalityChanged(ModalityOpcode.decode(buffer.get(0)));
-                }
+                // No other frame type flows host->client on this backend today.
             }
         } catch (IOException e) {
             // close() closes the channel to unblock this read() as its

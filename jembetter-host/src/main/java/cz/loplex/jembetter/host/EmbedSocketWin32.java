@@ -1,6 +1,6 @@
 package cz.loplex.jembetter.host;
 
-import cz.loplex.jembetter.common.ipc.ModalityOpcode;
+import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 
 import java.awt.Canvas;
@@ -8,7 +8,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
-import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
@@ -44,7 +43,7 @@ import java.nio.file.Path;
  * EmbedSocket#setModal}: a one-way, best-effort send (X11's own version is
  * best-effort in a different sense — it relies on {@code XSetInputFocus} to
  * actually do the work and only sends the {@code ClientMessage} as a
- * courtesy). Written as a single {@link ModalityOpcode}-encoded byte to the
+ * courtesy). Written as a {@link ControlMessage.Type#MODALITY} frame to the
  * client's own control channel, the same {@link SocketChannel} {@link
  * #listen} accepted the pid handshake on — kept open for the life of the
  * embed instead of closed right after, unlike {@link #embed(Path)}'s
@@ -175,21 +174,18 @@ public final class EmbedSocketWin32 implements AutoCloseable {
     /**
      * Reads the client's control channel for the life of its embed, the
      * client-to-host counterpart of {@link #setModal}'s host-to-client
-     * writes on the same channel: every byte read (see {@code
-     * FocusRequestOpcode} — no payload, any byte means "please focus me",
-     * written by {@code jembetter-client.EmbedClientWin32#requestFocus()})
-     * gives the currently embedded client input focus, the same as {@link
-     * #focusClient()}.
+     * writes on the same channel: a {@link ControlMessage.Type#FOCUS_REQUEST}
+     * frame (written by {@code
+     * jembetter-client.EmbedClientWin32#requestFocus()}) gives the currently
+     * embedded client input focus, the same as {@link #focusClient()}. Any
+     * other frame type is ignored — nothing else flows in this direction on
+     * this backend today.
      */
     private void readControlChannel(SocketChannel channel) {
-        ByteBuffer buffer = ByteBuffer.allocate(1);
         try {
-            while (true) {
-                buffer.clear();
-                if (channel.read(buffer) < 0) {
-                    return; // Client closed its end - nothing more to read.
-                }
-                if (!buffer.hasRemaining()) {
+            ControlMessage message;
+            while ((message = ControlMessage.readFrom(channel)) != null) {
+                if (message.type() == ControlMessage.Type.FOCUS_REQUEST) {
                     core.requestFocus();
                 }
             }
@@ -281,10 +277,7 @@ public final class EmbedSocketWin32 implements AutoCloseable {
             return;
         }
         try {
-            ByteBuffer opcode = ByteBuffer.wrap(new byte[] { ModalityOpcode.encode(modal) });
-            while (opcode.hasRemaining()) {
-                channel.write(opcode);
-            }
+            ControlMessage.of(ControlMessage.Type.MODALITY, modal).writeTo(channel);
         } catch (IOException e) {
             // Best-effort, no-receiver-required send - see this class's own
             // Javadoc on setModal(boolean) for why a failure here (e.g. the

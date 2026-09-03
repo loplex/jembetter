@@ -1,7 +1,7 @@
 package cz.loplex.jembetter.host;
 
 import cz.loplex.jembetter.common.CanvasNativeHandle;
-import cz.loplex.jembetter.common.ipc.FocusRequestOpcode;
+import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.win32.Win32Focus;
 import cz.loplex.jembetter.core.win32.Win32FocusWatcher;
@@ -157,7 +157,7 @@ class EmbedSocketWin32Test {
     }
 
     @Test
-    void setModalWritesAnOpcodeByteIntoTheListenControlChannel() throws Exception {
+    void setModalWritesAModalityFrameIntoTheListenControlChannel() throws Exception {
         Canvas canvas = newVisibleHostCanvas();
         socket = new EmbedSocketWin32(canvas);
 
@@ -183,10 +183,12 @@ class EmbedSocketWin32Test {
             assertTrue(embedded.await(5, TimeUnit.SECONDS), "client was never embedded via listen()");
 
             socket.setModal(true);
-            assertEquals((byte) 1, readOneByte(channel), "setModal(true) did not write opcode 1 into the control channel");
+            assertControlFrame(readFrame(channel), ControlMessage.Type.MODALITY, true,
+                    "setModal(true) did not write a MODALITY=true frame into the control channel");
 
             socket.setModal(false);
-            assertEquals((byte) 0, readOneByte(channel), "setModal(false) did not write opcode 0 into the control channel");
+            assertControlFrame(readFrame(channel), ControlMessage.Type.MODALITY, false,
+                    "setModal(false) did not write a MODALITY=false frame into the control channel");
         } finally {
             channel.close();
         }
@@ -226,13 +228,10 @@ class EmbedSocketWin32Test {
                 PidHandshake.send(channel, clientPid);
                 assertTrue(embedded.await(5, TimeUnit.SECONDS), "client was never embedded via listen()");
 
-                ByteBuffer marker = ByteBuffer.wrap(new byte[] { FocusRequestOpcode.MARKER });
-                while (marker.hasRemaining()) {
-                    channel.write(marker);
-                }
+                ControlMessage.focusRequest().writeTo(channel);
 
                 assertTrue(focused.await(5, TimeUnit.SECONDS),
-                        "the embedded window was never focused after the client wrote the focus-request marker byte");
+                        "the embedded window was never focused after the client wrote a FOCUS_REQUEST frame");
             } finally {
                 channel.close();
             }
@@ -249,23 +248,27 @@ class EmbedSocketWin32Test {
         assertDoesNotThrow(() -> socket.setModal(true), "setModal() must be a no-op when nothing is embedded");
     }
 
-    private static byte readOneByte(SocketChannel channel) throws IOException, InterruptedException {
-        ByteBuffer buffer = ByteBuffer.allocate(1);
+    private static byte[] readFrame(SocketChannel channel) throws IOException, InterruptedException {
+        ByteBuffer buffer = ByteBuffer.allocate(2);
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (buffer.hasRemaining()) {
             if (channel.read(buffer) < 0) {
-                throw new IllegalStateException("Control channel closed before a byte arrived");
+                throw new IllegalStateException("Control channel closed before a full frame arrived");
             }
             if (!buffer.hasRemaining()) {
                 break;
             }
             if (System.nanoTime() > deadline) {
-                throw new IllegalStateException("Timed out waiting for a byte on the control channel");
+                throw new IllegalStateException("Timed out waiting for a control frame");
             }
             Thread.sleep(20);
         }
-        buffer.flip();
-        return buffer.get();
+        return buffer.array();
+    }
+
+    private static void assertControlFrame(byte[] frame, ControlMessage.Type type, boolean flag, String message) {
+        assertEquals(type.code(), frame[0], message + " (type byte)");
+        assertEquals((byte) (flag ? 1 : 0), frame[1], message + " (flag byte)");
     }
 
     private Canvas newVisibleHostCanvasQuiet() {
