@@ -1,7 +1,10 @@
 package cz.loplex.jembetter.host;
 
 import cz.loplex.jembetter.common.CanvasNativeHandle;
+import cz.loplex.jembetter.common.ipc.FocusRequestOpcode;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
+import cz.loplex.jembetter.core.win32.Win32Focus;
+import cz.loplex.jembetter.core.win32.Win32FocusWatcher;
 import cz.loplex.jembetter.core.win32.Win32Reparent;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
@@ -186,6 +189,55 @@ class EmbedSocketWin32Test {
             assertEquals((byte) 0, readOneByte(channel), "setModal(false) did not write opcode 0 into the control channel");
         } finally {
             channel.close();
+        }
+    }
+
+    @Test
+    void aFocusRequestMarkerByteFromTheClientFocusesTheEmbeddedWindow() throws Exception {
+        Canvas canvas = newVisibleHostCanvas();
+        socket = new EmbedSocketWin32(canvas);
+
+        Path socketPath = Files.createTempFile("jembetter-host-win32-focus-test-", ".sock");
+        Files.delete(socketPath);
+
+        CountDownLatch embedded = new CountDownLatch(1);
+        socket.onClientEmbedded(embedded::countDown);
+        socket.listen(socketPath);
+
+        clientProcess = Win32TestClients.startFakeClientProcess();
+        long clientPid = clientProcess.pid();
+        long clientHwnd = Win32TestClients.waitForOwnWindow(clientPid);
+
+        // Move focus elsewhere first, so the assertion below actually proves
+        // the marker byte moved it, rather than it already having been there.
+        Win32Focus.set(CanvasNativeHandle.extract(canvas));
+
+        Win32FocusWatcher focusWatcher = new Win32FocusWatcher();
+        try {
+            CountDownLatch focused = new CountDownLatch(1);
+            focusWatcher.watch(clientHwnd, gained -> {
+                if (gained) {
+                    focused.countDown();
+                }
+            });
+
+            SocketChannel channel = Win32TestClients.connectWhenReady(socketPath, new AtomicReference<>());
+            try {
+                PidHandshake.send(channel, clientPid);
+                assertTrue(embedded.await(5, TimeUnit.SECONDS), "client was never embedded via listen()");
+
+                ByteBuffer marker = ByteBuffer.wrap(new byte[] { FocusRequestOpcode.MARKER });
+                while (marker.hasRemaining()) {
+                    channel.write(marker);
+                }
+
+                assertTrue(focused.await(5, TimeUnit.SECONDS),
+                        "the embedded window was never focused after the client wrote the focus-request marker byte");
+            } finally {
+                channel.close();
+            }
+        } finally {
+            focusWatcher.close();
         }
     }
 

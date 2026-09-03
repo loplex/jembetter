@@ -1,10 +1,16 @@
 package cz.loplex.jembetter.client;
 
+import cz.loplex.jembetter.common.ipc.FocusRequestOpcode;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
+import cz.loplex.jembetter.core.win32.Win32Focus;
+import cz.loplex.jembetter.core.win32.Win32Reparent;
+import cz.loplex.jembetter.core.win32.Win32WindowFinder;
+import cz.loplex.jembetter.core.win32.Win32WindowGeometry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import javax.swing.JFrame;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
@@ -14,10 +20,13 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -39,6 +48,8 @@ class EmbedClientWin32Test {
     private ServerSocketChannel server;
     private Path socketPath;
     private EmbedClientWin32 client;
+    private JFrame frame;
+    private long fakeHostHwnd = -1;
 
     @AfterEach
     void cleanup() throws IOException {
@@ -50,6 +61,12 @@ class EmbedClientWin32Test {
         }
         if (socketPath != null) {
             Files.deleteIfExists(socketPath);
+        }
+        if (frame != null) {
+            frame.dispose();
+        }
+        if (fakeHostHwnd >= 0 && Win32TestWindow.exists(fakeHostHwnd)) {
+            Win32TestWindow.destroy(fakeHostHwnd);
         }
     }
 
@@ -121,6 +138,153 @@ class EmbedClientWin32Test {
         client.connect(socketPath);
 
         assertEquals(expectedPid, received.get(5, TimeUnit.SECONDS), "connect() did not send this process's own pid");
+    }
+
+    @Test
+    void announceResolvesAndDetectsBeingReparentedByAHost() throws InterruptedException {
+        frame = new JFrame("EmbedClientWin32Test announce");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+
+        CountDownLatch embedded = new CountDownLatch(1);
+        AtomicLong reportedEmbedderWindow = new AtomicLong(-1);
+        client = new EmbedClientWin32();
+        client.onEmbedded(id -> {
+            reportedEmbedderWindow.set(id);
+            embedded.countDown();
+        });
+        client.announce();
+
+        long ownHwnd = waitForOwnWindow(ProcessHandle.current().pid());
+        fakeHostHwnd = Win32TestWindow.create("EmbedClientWin32Test fake host");
+        Win32Reparent.reparent(ownHwnd, fakeHostHwnd, 0, 0);
+
+        assertTrue(embedded.await(5, TimeUnit.SECONDS), "onEmbedded was never invoked after announce()");
+        assertEquals(fakeHostHwnd, reportedEmbedderWindow.get());
+    }
+
+    @Test
+    void onHostDetachedFiresWhenReleasedBackToTheDesktop() throws InterruptedException {
+        frame = new JFrame("EmbedClientWin32Test detach");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+
+        CountDownLatch embedded = new CountDownLatch(1);
+        CountDownLatch detached = new CountDownLatch(1);
+        client = new EmbedClientWin32();
+        client.onEmbedded(id -> embedded.countDown());
+        client.onHostDetached(detached::countDown);
+        client.announce();
+
+        long ownHwnd = waitForOwnWindow(ProcessHandle.current().pid());
+        fakeHostHwnd = Win32TestWindow.create("EmbedClientWin32Test fake host (detach)");
+        Win32Reparent.reparent(ownHwnd, fakeHostHwnd, 0, 0);
+        assertTrue(embedded.await(5, TimeUnit.SECONDS), "onEmbedded was never invoked before the release");
+
+        Win32Reparent.release(ownHwnd, 0, 0);
+
+        assertTrue(detached.await(5, TimeUnit.SECONDS), "onHostDetached was never invoked after the release");
+    }
+
+    @Test
+    void onFocusChangedIsInvokedWhenFocusMovesToTheWatchedWindow() throws InterruptedException {
+        frame = new JFrame("EmbedClientWin32Test focus");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+
+        CountDownLatch gained = new CountDownLatch(1);
+        client = new EmbedClientWin32();
+        client.onFocusChanged(focused -> {
+            if (focused) {
+                gained.countDown();
+            }
+        });
+        client.announce();
+
+        long ownHwnd = waitForOwnWindow(ProcessHandle.current().pid());
+        Win32Focus.set(ownHwnd);
+
+        assertTrue(gained.await(5, TimeUnit.SECONDS), "onFocusChanged(true) was never invoked after SetFocus");
+    }
+
+    @Test
+    void onResizedIsInvokedAfterAResize() throws InterruptedException {
+        frame = new JFrame("EmbedClientWin32Test resize");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+
+        CountDownLatch resized = new CountDownLatch(1);
+        AtomicInteger reportedWidth = new AtomicInteger(-1);
+        AtomicInteger reportedHeight = new AtomicInteger(-1);
+        client = new EmbedClientWin32();
+        client.onResized((width, height) -> {
+            reportedWidth.set(width);
+            reportedHeight.set(height);
+            resized.countDown();
+        });
+        client.announce();
+
+        // Reparent first, like a real embed would (Win32Reparent.reparent
+        // strips the caption/border style bits) - otherwise GetClientRect
+        // (what Win32ConfigureWatcher polls) reports less than the window
+        // rect moveResize sets, short by the still-decorated JFrame's own
+        // title bar/border.
+        long ownHwnd = waitForOwnWindow(ProcessHandle.current().pid());
+        fakeHostHwnd = Win32TestWindow.create("EmbedClientWin32Test fake host (resize)");
+        Win32Reparent.reparent(ownHwnd, fakeHostHwnd, 0, 0);
+        Win32WindowGeometry.moveResize(ownHwnd, 0, 0, 200, 150);
+
+        assertTrue(resized.await(5, TimeUnit.SECONDS), "onResized was never invoked after the resize");
+        assertEquals(200, reportedWidth.get());
+        assertEquals(150, reportedHeight.get());
+    }
+
+    @Test
+    void requestFocusWritesTheFocusRequestMarkerByteToTheControlChannel() throws Exception {
+        frame = new JFrame("EmbedClientWin32Test request-focus");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+
+        socketPath = Files.createTempFile("jembetter-client-win32-focus-test-", ".sock");
+        Files.delete(socketPath);
+        server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
+        server.bind(UnixDomainSocketAddress.of(socketPath));
+
+        CompletableFuture<Byte> received = CompletableFuture.supplyAsync(() -> {
+            try (SocketChannel accepted = server.accept()) {
+                PidHandshake.receive(accepted);
+                ByteBuffer buffer = ByteBuffer.allocate(1);
+                while (buffer.hasRemaining()) {
+                    if (accepted.read(buffer) < 0) {
+                        throw new IllegalStateException("Peer closed before writing the focus-request marker");
+                    }
+                }
+                return buffer.get(0);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
+
+        client = new EmbedClientWin32();
+        client.announce();
+        client.connect(socketPath);
+        client.requestFocus();
+
+        assertEquals(FocusRequestOpcode.MARKER, received.get(5, TimeUnit.SECONDS),
+                "requestFocus() did not write the FocusRequestOpcode marker byte");
+    }
+
+    private static long waitForOwnWindow(long pid) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        List<Long> found;
+        do {
+            found = Win32WindowFinder.findApplicationWindowsByPid(pid);
+            if (!found.isEmpty()) {
+                return found.get(0);
+            }
+            Thread.sleep(50);
+        } while (System.nanoTime() < deadline);
+        throw new IllegalStateException("Client process " + pid + " never published a top-level window");
     }
 
     private static void writeByte(SocketChannel channel, byte value) throws IOException {
