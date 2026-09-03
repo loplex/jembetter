@@ -20,6 +20,8 @@ on:
       - 'build-tools/win32-real-machine-checks/**'
       - 'jembetter-core-win32/src/main/**'
       - 'jembetter-core-common/src/main/**'
+      - 'jembetter-host/src/main/**'
+      - 'jembetter-client/src/main/**'
       - '.github/workflows/win32-real-machine-checks.yml'
   schedule:
     # Mondays 06:00 UTC - catch drift in the Windows runner image / JDK.
@@ -51,7 +53,7 @@ jobs:
       - name: Report outcome
         run: |
           if ("${{ steps.checks.outcome }}" -ne "success") {
-            Write-Host "::warning::A gated check (FOCUS / REPARENT / CLICK hook-survival) failed - see the 'Run the Win32 real-machine checks' step's log above. FG-LOCK and CLICK's latency/UIPI lines are observational and always need a human to read them."
+            Write-Host "::warning::A gated check (FOCUS / FOCUSWATCH / REPARENT / CLICK hook-survival / SOCKETCLIENT / CLICKFOCUS) failed - see the 'Run the Win32 real-machine checks' step's log above. FG-LOCK and CLICK's latency/UIPI lines are observational and always need a human to read them."
             exit 1
           }
         shell: pwsh
