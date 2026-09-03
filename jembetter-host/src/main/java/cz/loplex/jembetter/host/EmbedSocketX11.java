@@ -261,6 +261,23 @@ public final class EmbedSocketX11 implements EmbedSocket {
      * delay guessed to outlast it, also corrects any later self-resize the
      * same way, not just the reparent-time one.
      *
+     * <p><strong>Must be called before {@link Reparenting#reparent}, not
+     * after.</strong> {@code XSelectInput} is not retroactive: a {@code
+     * ConfigureNotify} generated before this connection has selected {@code
+     * StructureNotifyMask} on {@code clientWindowId} is gone, not queued —
+     * calling this after the reparent used to race the client's own
+     * reflexive self-resize above, and losing that race (confirmed by
+     * instrumenting a failing run: the client window really was left at its
+     * own 30x30 pre-embed size, not the embedder's desired size) is what
+     * made {@code EmbedSocketTest.aRealClickOnTheEmbeddedAreaReturnsInputFocusToTheClient}
+     * flaky — a real click could land past the edge of the still-shrunk
+     * client window and never reach the click-to-focus {@link
+     * cz.loplex.jembetter.core.x11.ButtonGrab} at all. Calling this first
+     * closes the race structurally rather than outrunning it with a timer:
+     * 40/40 repeated runs passed once this was reordered, versus a
+     * reproducible failure with a fixed post-reparent delay in place of a
+     * genuine subscribe-before-reparent ordering.
+     *
      * <p>{@link WindowGeometry#moveResize} raised in response also
      * generates its own {@code ConfigureNotify}, so this watcher sees every
      * resize it issues too — harmless, since {@link #reassertSizeIfChanged}
@@ -275,34 +292,6 @@ public final class EmbedSocketX11 implements EmbedSocket {
         if (reportedWidth != width || reportedHeight != height) {
             followSizeIntoEmbeddedWindow();
         }
-    }
-
-    /**
-     * Gives a freshly reparented client a brief pause before this socket
-     * starts treating it as fully embedded ({@code EMBEDDED_NOTIFY}, taking
-     * input focus, installing the click-to-focus {@link
-     * cz.loplex.jembetter.core.x11.ButtonGrab}) — confirmed by repeated runs
-     * against a live X server: skipping straight from the reparent to those
-     * calls makes the click-to-focus grab intermittently fail to intercept a
-     * real click arriving shortly afterward (roughly one run in three, in
-     * {@code EmbedSocketTest.aRealClickOnTheEmbeddedAreaReturnsInputFocusToTheClient}),
-     * even though {@link #watchForSizeContest} is already active by that
-     * point. Restoring this pause (plus a second {@link
-     * #followSizeIntoEmbeddedWindow} afterward, in case a self-resize landed
-     * during it) removed the failures across dozens of repeated runs.
-     * {@code watchForSizeContest} keeps running independently of this for
-     * the client's whole embedded lifetime, since it also has to catch a
-     * self-resize arriving after this pause is long over — this only covers
-     * the narrower window right around the reparent that the button-grab
-     * install races with.
-     */
-    private void settleAfterReparent() {
-        try {
-            Thread.sleep(150);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        followSizeIntoEmbeddedWindow();
     }
 
     /**
@@ -402,12 +391,13 @@ public final class EmbedSocketX11 implements EmbedSocket {
     public void embed(long clientPid) {
         requireOpen();
         long clientWindowId = resolveClientWindow(clientPid);
+        // watchForSizeContest before the reparent, not after - see its
+        // Javadoc for why the ordering itself is the fix.
+        watchForSizeContest(clientWindowId);
         WindowRelease.release(display, clientWindowId);
         Reparenting.reparent(display, clientWindowId, windowId, 0, 0);
         embeddedWindowId = clientWindowId;
         followSizeIntoEmbeddedWindow();
-        watchForSizeContest(clientWindowId);
-        settleAfterReparent();
         synchronized (X11Display.GLOBAL_LOCK) {
             XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
                     XEmbedInfo.PROTOCOL_VERSION);
@@ -478,13 +468,14 @@ public final class EmbedSocketX11 implements EmbedSocket {
             XEmbedInfoProperty.write(display.raw(), clientWindowId,
                     new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
         }
+        // watchForSizeContest before the reparent, not after - see its
+        // Javadoc for why the ordering itself is the fix.
+        watchForSizeContest(clientWindowId);
         WindowRelease.release(display, clientWindowId);
         Reparenting.reparent(display, clientWindowId, windowId, 0, 0);
         embeddedWindowId = clientWindowId;
         followSizeIntoEmbeddedWindow();
-        watchForSizeContest(clientWindowId);
         waitForReparentConfirmed(clientWindowId, pollInterval, maxAttempts);
-        settleAfterReparent();
         synchronized (X11Display.GLOBAL_LOCK) {
             XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
                     XEmbedInfo.PROTOCOL_VERSION);
