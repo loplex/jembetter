@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * confirms its two {@code announce} paths
  * (known-handle and socket-rendezvous) and its callbacks actually delegate
  * to a working {@code EmbedClient}, rather than re-testing behavior already
- * covered by {@link EmbedClientTest}.
+ * covered by {@link EmbedClientX11Test}.
  */
 @EnabledIfEnvironmentVariable(named = "DISPLAY", matches = ".+")
 class EmbedPlugTest {
@@ -111,7 +111,7 @@ class EmbedPlugTest {
      * Confirms {@link EmbedPlug#onFocusChanged} delegates to a working
      * {@link EmbedClient} — the delivery mechanism itself (real {@code
      * FocusIn}/{@code FocusOut}, grab-artefact filtering, transition
-     * dedup) is covered by {@link EmbedClientTest} and {@code
+     * dedup) is covered by {@link EmbedClientX11Test} and {@code
      * WindowFocusWatcherTest}.
      */
     @Test

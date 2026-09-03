@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -67,6 +68,12 @@ class EmbedClientWin32Test {
         if (fakeHostHwnd >= 0 && Win32TestWindow.exists(fakeHostHwnd)) {
             Win32TestWindow.destroy(fakeHostHwnd);
         }
+    }
+
+    /** {@link EmbedClient#create} dispatches to the Win32 implementation on Windows. */
+    @Test
+    void factoryReturnsTheWin32ImplementationOnThisPlatform() {
+        client = assertInstanceOf(EmbedClientWin32.class, EmbedClient.create());
     }
 
     @Test

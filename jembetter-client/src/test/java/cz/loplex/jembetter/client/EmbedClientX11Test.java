@@ -32,20 +32,21 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Exercises {@link EmbedClient} end to end against a real window manager and
+ * Exercises {@link EmbedClientX11} end to end against a real window manager and
  * a hand-rolled "host": accepts the PID handshake, reparents the client's
  * window under one of its own with the save-set the real
  * {@code jembetter-host.EmbedSocket} relies on, then simulates the host process
  * dying by closing its own connection.
  */
 @EnabledIfEnvironmentVariable(named = "DISPLAY", matches = ".+")
-class EmbedClientTest {
+class EmbedClientX11Test {
 
     private JFrame frame;
-    private EmbedClient client;
+    private EmbedClientX11 client;
 
     @AfterEach
     void cleanup() {
@@ -57,9 +58,15 @@ class EmbedClientTest {
         }
     }
 
+    /** {@link EmbedClient#create} dispatches to the X11 implementation off Windows. */
+    @Test
+    void factoryReturnsTheX11ImplementationOnThisPlatform() {
+        client = assertInstanceOf(EmbedClientX11.class, EmbedClient.create());
+    }
+
     @Test
     void detectsHostDeathAfterBeingEmbedded() throws IOException, InterruptedException {
-        frame = new JFrame("jembetter-client EmbedClientTest");
+        frame = new JFrame("jembetter-client EmbedClientX11Test");
         frame.setBounds(0, 0, 50, 50);
         frame.setVisible(true);
 
@@ -76,7 +83,7 @@ class EmbedClientTest {
             assertTrue(hostReady.await(5, TimeUnit.SECONDS), "fake host never started listening");
 
             CountDownLatch detached = new CountDownLatch(1);
-            client = new EmbedClient();
+            client = new EmbedClientX11();
             client.onHostDetached(detached::countDown);
             client.offer(socketPath);
 
@@ -89,7 +96,7 @@ class EmbedClientTest {
 
     @Test
     void learnsEmbedderWindowIdAndCanRequestFocus() throws IOException, InterruptedException {
-        frame = new JFrame("jembetter-client EmbedClientTest");
+        frame = new JFrame("jembetter-client EmbedClientX11Test");
         frame.setBounds(0, 0, 50, 50);
         frame.setVisible(true);
 
@@ -109,7 +116,7 @@ class EmbedClientTest {
 
             CountDownLatch embedded = new CountDownLatch(1);
             AtomicLong clientReportedEmbedderWindow = new AtomicLong(-1);
-            client = new EmbedClient();
+            client = new EmbedClientX11();
             client.onEmbedded(id -> {
                 clientReportedEmbedderWindow.set(id);
                 embedded.countDown();
@@ -127,21 +134,21 @@ class EmbedClientTest {
     }
 
     /**
-     * Regression coverage for splitting {@link EmbedClient#announce(String)}
-     * out of {@link EmbedClient#offer(Path, String)}: a host that already
+     * Regression coverage for splitting {@link EmbedClientX11#announce(String)}
+     * out of {@link EmbedClientX11#offer(Path, String)}: a host that already
      * knows this process's pid directly (e.g. because it spawned this
      * process itself) can embed it after only {@code announce()} — no Unix
      * domain socket rendezvous at all.
      */
     @Test
     void announceSetsUpXEmbedInfoAndWatchersWithoutDialingAHostSocket() throws IOException, InterruptedException {
-        frame = new JFrame("jembetter-client EmbedClientTest");
+        frame = new JFrame("jembetter-client EmbedClientX11Test");
         frame.setBounds(0, 0, 50, 50);
         frame.setVisible(true);
 
         CountDownLatch embedded = new CountDownLatch(1);
         AtomicLong reportedEmbedderWindow = new AtomicLong(-1);
-        client = new EmbedClient();
+        client = new EmbedClientX11();
         client.onEmbedded(id -> {
             reportedEmbedderWindow.set(id);
             embedded.countDown();
@@ -160,9 +167,9 @@ class EmbedClientTest {
     }
 
     /**
-     * Regression coverage for {@link EmbedClient#watchOwnWindow}/{@link
-     * EmbedClient#onResized}: a toolkit-opaque client embedded via {@code
-     * EmbedSocket#embedOpaque} never calls {@link EmbedClient#announce}, so
+     * Regression coverage for {@link EmbedClientX11#watchOwnWindow}/{@link
+     * EmbedClientX11#onResized}: a toolkit-opaque client embedded via {@code
+     * EmbedSocket#embedOpaque} never calls {@link EmbedClientX11#announce}, so
      * this is the only path that wires {@link
      * cz.loplex.jembetter.core.x11.WindowConfigureWatcher} up for it.
      */
@@ -174,7 +181,7 @@ class EmbedClientTest {
                 CountDownLatch resized = new CountDownLatch(1);
                 AtomicLong reportedWidth = new AtomicLong(-1);
                 AtomicLong reportedHeight = new AtomicLong(-1);
-                client = new EmbedClient();
+                client = new EmbedClientX11();
                 client.onResized((width, height) -> {
                     reportedWidth.set(width);
                     reportedHeight.set(height);
@@ -199,13 +206,13 @@ class EmbedClientTest {
         }
     }
 
-    /** Covers {@link EmbedClient#onResized}'s rewatch branch: registering the callback after {@link EmbedClient#watchOwnWindow} must still wire it up. */
+    /** Covers {@link EmbedClientX11#onResized}'s rewatch branch: registering the callback after {@link EmbedClientX11#watchOwnWindow} must still wire it up. */
     @Test
     void onResizedRegisteredAfterWatchOwnWindowStillReceivesCallbacks() throws InterruptedException {
         try (X11Display rawDisplay = X11Display.open(null)) {
             long windowId = RawWindow.createOverrideRedirect(rawDisplay, 0, 0, 10, 10);
             try {
-                client = new EmbedClient();
+                client = new EmbedClientX11();
                 client.watchOwnWindow(windowId);
 
                 CountDownLatch resized = new CountDownLatch(1);
@@ -224,7 +231,7 @@ class EmbedClientTest {
     }
 
     /**
-     * Regression coverage for {@link EmbedClient#onFocusChanged}: a host
+     * Regression coverage for {@link EmbedClientX11#onFocusChanged}: a host
      * granting the embedded client focus does so with {@code XSetInputFocus}
      * ({@link cz.loplex.jembetter.core.x11.InputFocus#set}), which the
      * XEmbed {@code FOCUS_IN}/{@code FOCUS_OUT} ClientMessages can't reach a
@@ -238,7 +245,7 @@ class EmbedClientTest {
             long elsewhere = RawWindow.createOverrideRedirect(rawDisplay, 20, 20, 10, 10);
             try {
                 BlockingQueue<Boolean> reported = new ArrayBlockingQueue<>(8);
-                client = new EmbedClient();
+                client = new EmbedClientX11();
                 client.onFocusChanged(reported::add);
                 client.watchOwnWindow(windowId);
                 waitUntilMapped(rawDisplay, windowId);
@@ -259,13 +266,13 @@ class EmbedClientTest {
         }
     }
 
-    /** Covers {@link EmbedClient#onFocusChanged}'s rewatch branch: registering the callback after {@link EmbedClient#watchOwnWindow} must still wire it up. */
+    /** Covers {@link EmbedClientX11#onFocusChanged}'s rewatch branch: registering the callback after {@link EmbedClientX11#watchOwnWindow} must still wire it up. */
     @Test
     void onFocusChangedRegisteredAfterWatchOwnWindowStillReceivesCallbacks() throws InterruptedException {
         try (X11Display rawDisplay = X11Display.open(null)) {
             long windowId = RawWindow.createOverrideRedirect(rawDisplay, 0, 0, 10, 10);
             try {
-                client = new EmbedClient();
+                client = new EmbedClientX11();
                 client.watchOwnWindow(windowId);
                 waitUntilMapped(rawDisplay, windowId);
 
@@ -289,8 +296,8 @@ class EmbedClientTest {
     }
 
     /**
-     * Regression coverage for {@link EmbedClient#onModalityChanged}/{@link
-     * EmbedClient#onActivationChanged}: {@code WINDOW_ACTIVATE}/{@code
+     * Regression coverage for {@link EmbedClientX11#onModalityChanged}/{@link
+     * EmbedClientX11#onActivationChanged}: {@code WINDOW_ACTIVATE}/{@code
      * DEACTIVATE} and {@code MODALITY_ON}/{@code OFF} have no real X11 event
      * to carry them (unlike {@code FocusIn}/{@code ReparentNotify}/{@code
      * ConfigureNotify} the other client callbacks read), so {@code
@@ -300,7 +307,7 @@ class EmbedClientTest {
      */
     @Test
     void receivesModalityAndActivationFramesTheHostWritesOnTheControlChannel() throws IOException, InterruptedException {
-        frame = new JFrame("jembetter-client EmbedClientTest");
+        frame = new JFrame("jembetter-client EmbedClientX11Test");
         frame.setBounds(0, 0, 50, 50);
         frame.setVisible(true);
 
@@ -331,7 +338,7 @@ class EmbedClientTest {
 
             BlockingQueue<Boolean> modality = new ArrayBlockingQueue<>(4);
             BlockingQueue<Boolean> activation = new ArrayBlockingQueue<>(4);
-            client = new EmbedClient();
+            client = new EmbedClientX11();
             client.onModalityChanged(modality::add);
             client.onActivationChanged(activation::add);
             client.offer(socketPath);

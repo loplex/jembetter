@@ -6,13 +6,13 @@ import java.nio.file.Path;
 import java.util.function.LongConsumer;
 
 /**
- * {@link EmbedPlug}'s X11 implementation, via {@link EmbedClient} — see
+ * {@link EmbedPlug}'s X11 implementation, via {@link EmbedClientX11} — see
  * {@link EmbedPlugWin32} for the Win32 counterpart {@link EmbedPlug#create}
  * dispatches to instead on Windows.
  */
 final class EmbedPlugX11 implements EmbedPlug {
 
-    private final EmbedClient client = new EmbedClient();
+    private final EmbedClientX11 client = new EmbedClientX11();
 
     @Override
     public void announce(String wmClass) {

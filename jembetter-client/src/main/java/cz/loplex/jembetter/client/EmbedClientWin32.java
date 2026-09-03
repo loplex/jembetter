@@ -21,8 +21,10 @@ import java.util.List;
 import java.util.function.LongConsumer;
 
 /**
- * The fuller, Win32 counterpart to {@code jembetter-core-x11}'s {@code
- * EmbedClient}: resolves and watches this process's own top-level window
+ * {@link EmbedClient}'s Win32 implementation — the advanced-API counterpart
+ * to {@link EmbedClientX11}, matching the {@link EmbedPlug}/{@link
+ * EmbedPlugWin32} split on the same side. Resolves and watches this
+ * process's own top-level window
  * ({@link #announce}/{@link #offer}, mirroring {@code
  * EmbedPlugWin32#announce} — {@link EmbedPlugWin32} stays usable
  * independently, this class does not delegate to it), exposes {@link
@@ -43,10 +45,11 @@ import java.util.function.LongConsumer;
  * EmbedPlugWin32#announce(Path, String)} still closes its handshake channel
  * immediately after sending the pid, unaffected by this class's existence.
  */
-public final class EmbedClientWin32 implements AutoCloseable {
+public final class EmbedClientWin32 implements EmbedClient {
 
-    private static final Duration WINDOW_LOOKUP_TIMEOUT = Duration.ofSeconds(5);
     private static final long POLL_SLEEP_MILLIS = 50;
+
+    private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
 
     private final Win32ReparentWatcher reparentWatcher = new Win32ReparentWatcher();
     private final Win32FocusWatcher focusWatcher = new Win32FocusWatcher();
@@ -72,17 +75,20 @@ public final class EmbedClientWin32 implements AutoCloseable {
      * single top-level window (Win32 has no {@code WM_CLASS} equivalent —
      * see {@link #announce(String)}).
      */
+    @Override
     public void offer(Path hostSocketPath) {
         offer(hostSocketPath, null);
     }
 
     /** Same as {@link #offer(Path)}: {@code wmClass} must be {@code null} — see {@link #announce(String)}. */
+    @Override
     public void offer(Path hostSocketPath, String wmClass) {
         announce(wmClass);
         connect(hostSocketPath);
     }
 
     /** Same as {@link #announce(String)}, for a process with a single top-level window. */
+    @Override
     public void announce() {
         announce(null);
     }
@@ -98,6 +104,7 @@ public final class EmbedClientWin32 implements AutoCloseable {
      * disambiguate multiple top-level windows with, so this process must own
      * exactly one.
      */
+    @Override
     public void announce(String wmClass) {
         if (wmClass != null) {
             throw new UnsupportedOperationException(
@@ -116,6 +123,7 @@ public final class EmbedClientWin32 implements AutoCloseable {
      * an embedder, with the embedder's window handle. Runs on {@link
      * Win32ReparentWatcher}'s own background thread.
      */
+    @Override
     public void onEmbedded(LongConsumer callback) {
         onEmbedded = callback;
     }
@@ -127,6 +135,7 @@ public final class EmbedClientWin32 implements AutoCloseable {
      * see {@code Win32ReparentWatcher}'s Javadoc). Runs on {@link
      * Win32ReparentWatcher}'s own background thread.
      */
+    @Override
     public void onHostDetached(Runnable callback) {
         onHostDetached = callback;
     }
@@ -136,6 +145,7 @@ public final class EmbedClientWin32 implements AutoCloseable {
      * input focus — see {@link Win32FocusWatcher}'s Javadoc for the
      * mechanism. Runs on {@link Win32FocusWatcher}'s own background thread.
      */
+    @Override
     public void onFocusChanged(FocusListener callback) {
         onFocusChanged = callback;
     }
@@ -145,13 +155,21 @@ public final class EmbedClientWin32 implements AutoCloseable {
      * see {@link Win32ConfigureWatcher}'s Javadoc for the mechanism. Runs on
      * {@link Win32ConfigureWatcher}'s own background thread.
      */
+    @Override
     public void onResized(SizeListener callback) {
         onResized = callback;
     }
 
     /** The embedder's window handle last reported to {@link #onEmbedded}, or -1 if not currently embedded. */
+    @Override
     public long embedderWindowId() {
         return embedderHwnd;
+    }
+
+    /** Parity shim — see {@link EmbedClient#setWindowLookupTimeout}. */
+    @Override
+    public void setWindowLookupTimeout(Duration timeout) {
+        windowLookupTimeout = timeout;
     }
 
     /**
@@ -164,6 +182,7 @@ public final class EmbedClientWin32 implements AutoCloseable {
      * already closed its end (same "no receiver required" framing as {@code
      * EmbedSocketWin32#setModal}).
      */
+    @Override
     public void requestFocus() {
         SocketChannel channel = controlChannel;
         if (channel == null) {
@@ -190,8 +209,8 @@ public final class EmbedClientWin32 implements AutoCloseable {
         }
     }
 
-    private static long waitForOwnWindow(long pid) {
-        long deadline = System.nanoTime() + WINDOW_LOOKUP_TIMEOUT.toNanos();
+    private long waitForOwnWindow(long pid) {
+        long deadline = System.nanoTime() + windowLookupTimeout.toNanos();
         List<Long> ownWindows;
         do {
             ownWindows = Win32WindowFinder.findApplicationWindowsByPid(pid);
@@ -255,6 +274,7 @@ public final class EmbedClientWin32 implements AutoCloseable {
      * EmbedSocketWin32#setModal(boolean)}. Runs on this class's own
      * background reader thread.
      */
+    @Override
     public void onModalityChanged(ModalityListener callback) {
         onModalityChanged = callback;
     }

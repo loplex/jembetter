@@ -38,7 +38,7 @@ public final class ClientDemo {
         System.out.println("Client PID: " + ProcessHandle.current().pid());
         System.out.println("Offering this window to the host...");
 
-        EmbedClient client = new EmbedClient();
+        EmbedClient client = EmbedClient.create();
         client.onHostDetached(() -> System.out.println("Host detached (process exited or crashed)."));
         client.onEmbedded(embedderWindowId -> System.out
                 .println("Embedded; embedder window id is 0x" + Long.toHexString(embedderWindowId)));
