@@ -49,7 +49,7 @@ import java.util.function.Supplier;
  * The {@link #announce}-only and {@link #watchOwnWindow} paths open no such
  * channel, so those two callbacks never fire on them.
  */
-public final class EmbedClient implements AutoCloseable {
+public final class EmbedClientX11 implements EmbedClient {
 
     private final X11Display display = X11Display.open(null);
     private final WindowReparentWatcher reparentWatcher = new WindowReparentWatcher();
@@ -82,6 +82,7 @@ public final class EmbedClient implements AutoCloseable {
      * cz.loplex.jembetter.core.x11.Reparenting#reparent} relies on). Runs on
      * {@link WindowReparentWatcher}'s own background thread.
      */
+    @Override
     public void onHostDetached(Runnable callback) {
         onHostDetached = callback;
     }
@@ -115,11 +116,13 @@ public final class EmbedClient implements AutoCloseable {
      * filter, that second, unrelated reparent would be mistaken for a new
      * embed. Runs on {@link WindowReparentWatcher}'s own background thread.
      */
+    @Override
     public void onEmbedded(LongConsumer callback) {
         onEmbedded = callback;
     }
 
     /** The embedder's window id last reported to {@link #onEmbedded}, or -1 if not currently embedded. */
+    @Override
     public long embedderWindowId() {
         return embedderWindowId;
     }
@@ -149,6 +152,7 @@ public final class EmbedClient implements AutoCloseable {
      * updates itself. Runs on {@link WindowFocusWatcher}'s own background
      * thread.
      */
+    @Override
     public void onFocusChanged(FocusListener callback) {
         onFocusChanged = callback;
         if (windowId >= 0) {
@@ -172,6 +176,7 @@ public final class EmbedClient implements AutoCloseable {
      * geometry by hand. Runs on {@link WindowConfigureWatcher}'s own
      * background thread.
      */
+    @Override
     public void onResized(SizeListener callback) {
         onResized = callback;
         if (windowId >= 0) {
@@ -204,6 +209,7 @@ public final class EmbedClient implements AutoCloseable {
      * Sends {@code XEMBED_REQUEST_FOCUS} to the embedder, asking it to give
      * this window input focus. No-op if not currently embedded.
      */
+    @Override
     public void requestFocus() {
         long id = embedderWindowId;
         if (id >= 0) {
@@ -218,6 +224,7 @@ public final class EmbedClient implements AutoCloseable {
      * top-level window to become visible to the window manager before
      * giving up. Defaults to 5 seconds.
      */
+    @Override
     public void setWindowLookupTimeout(Duration timeout) {
         windowLookupTimeout = timeout;
     }
@@ -231,6 +238,7 @@ public final class EmbedClient implements AutoCloseable {
      * close the race against the host reparenting this window before the
      * watch is in place.
      */
+    @Override
     public void offer(Path hostSocketPath) {
         offer(hostSocketPath, null);
     }
@@ -241,6 +249,7 @@ public final class EmbedClient implements AutoCloseable {
      * offered, by matching {@code WM_CLASS}'s class component (the same
      * string {@code xprop WM_CLASS} prints as the second, quoted value).
      */
+    @Override
     public void offer(Path hostSocketPath, String wmClass) {
         announce(wmClass);
         SocketChannel channel;
@@ -273,6 +282,7 @@ public final class EmbedClient implements AutoCloseable {
      * {@code EmbedSocket#listen} socket (see this class's Javadoc). Runs on
      * this class's own background control-channel reader thread.
      */
+    @Override
     public void onModalityChanged(ModalityListener callback) {
         onModalityChanged = callback;
     }
@@ -316,6 +326,7 @@ public final class EmbedClient implements AutoCloseable {
      * Same as {@link #announce(String)}, for a process with a single
      * top-level window.
      */
+    @Override
     public void announce() {
         announce(null);
     }
@@ -332,6 +343,7 @@ public final class EmbedClient implements AutoCloseable {
      * way {@link #offer(Path, String)}'s does; pass {@code null} for a
      * single-window process.
      */
+    @Override
     public void announce(String wmClass) {
         long pid = ProcessHandle.current().pid();
         windowId = waitForOwnWindow(pid, wmClass);
