@@ -40,20 +40,21 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Exercises {@link EmbedSocket#listen}'s accept loop against a real window
+ * Exercises {@link EmbedSocketX11#listen}'s accept loop against a real window
  * manager: embeds a fake client, "crashes" it (disposing an AWT peer really
  * does destroy its X11 window, generating the same DestroyNotify a killed
  * process would), and confirms a second fake client can embed on the same
  * socket afterward without restarting the host.
  */
 @EnabledIfEnvironmentVariable(named = "DISPLAY", matches = ".+")
-class EmbedSocketTest {
+class EmbedSocketX11Test {
 
     private Frame owner;
-    private EmbedSocket socket;
+    private EmbedSocketX11 socket;
     private JFrame client1;
     private JFrame client2;
     private Frame focusAway;
@@ -77,10 +78,23 @@ class EmbedSocketTest {
         }
     }
 
+    /** {@link EmbedSocket#create} dispatches to the X11 implementation off Windows. */
+    @Test
+    void factoryReturnsTheX11ImplementationOnThisPlatform() {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(50, 50));
+        owner = new Frame("EmbedSocketX11Test owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+
+        socket = assertInstanceOf(EmbedSocketX11.class, EmbedSocket.create(canvas));
+    }
+
     @Test
     void reEmbedsANewClientAfterThePreviousOneDetaches() throws IOException, InterruptedException {
-        owner = new Frame("EmbedSocketTest owner");
-        socket = new EmbedSocket(owner);
+        owner = new Frame("EmbedSocketX11Test owner");
+        socket = new EmbedSocketX11(owner);
         socket.open(0, 0, 100, 100);
 
         Path socketPath = Files.createTempFile("jembetter-host-test-", ".sock");
@@ -116,9 +130,9 @@ class EmbedSocketTest {
     }
 
     /**
-     * The rendezvous {@link SocketChannel} {@link EmbedSocket#listen} accepts
+     * The rendezvous {@link SocketChannel} {@link EmbedSocketX11#listen} accepts
      * the pid handshake on is kept open for the life of the embed as a
-     * host&rarr;client control channel: {@link EmbedSocket#setModal} and the
+     * host&rarr;client control channel: {@link EmbedSocketX11#setModal} and the
      * host owner {@link Frame}'s activation state are relayed on it as {@link
      * ControlMessage} frames — the path a jembetter client actually reads,
      * since the equivalent XEmbed {@code MODALITY_ON}/{@code OFF} and {@code
@@ -130,8 +144,8 @@ class EmbedSocketTest {
      */
     @Test
     void listenRelaysModalityAndActivationOnTheControlChannel() throws IOException, InterruptedException {
-        owner = new Frame("EmbedSocketTest owner");
-        socket = new EmbedSocket(owner);
+        owner = new Frame("EmbedSocketX11Test owner");
+        socket = new EmbedSocketX11(owner);
         socket.open(0, 0, 100, 100);
 
         Path socketPath = Files.createTempFile("jembetter-host-test-", ".sock");
@@ -142,7 +156,7 @@ class EmbedSocketTest {
         socket.listen(socketPath);
 
         long pid = ProcessHandle.current().pid();
-        client1 = new JFrame("EmbedSocketTest fake client");
+        client1 = new JFrame("EmbedSocketX11Test fake client");
         client1.setUndecorated(true);
         client1.setBounds(0, 0, 30, 30);
         client1.setVisible(true);
@@ -179,8 +193,8 @@ class EmbedSocketTest {
 
     @Test
     void detachClientReleasesTheWindowWithoutFiringOnClientDetached() throws IOException, InterruptedException {
-        owner = new Frame("EmbedSocketTest owner");
-        socket = new EmbedSocket(owner);
+        owner = new Frame("EmbedSocketX11Test owner");
+        socket = new EmbedSocketX11(owner);
         socket.open(0, 0, 100, 100);
 
         Path socketPath = Files.createTempFile("jembetter-host-test-", ".sock");
@@ -224,7 +238,7 @@ class EmbedSocketTest {
      * override-redirect-based socket window: a heavyweight host popup could
      * end up underneath the embedded client because the socket was a
      * root-level sibling of the host's own window, not a descendant of it.
-     * {@link EmbedSocket#open(Canvas)} fixes this by reparenting the client
+     * {@link EmbedSocketX11#open(Canvas)} fixes this by reparenting the client
      * as a genuine X11 child of the host's placeholder canvas — asserted
      * here structurally via {@code XQueryTree}, since that parent/child
      * relationship (not any particular pixel-level rendering outcome) is
@@ -242,13 +256,13 @@ class EmbedSocketTest {
     void embedsIntoACanvasAsARealX11ChildOfIt() throws IOException, InterruptedException {
         Canvas canvas = new Canvas();
         canvas.setPreferredSize(new Dimension(100, 100));
-        owner = new Frame("EmbedSocketTest owner");
+        owner = new Frame("EmbedSocketX11Test owner");
         owner.add(canvas);
         owner.pack();
         owner.setVisible(true);
         Thread.sleep(200);
 
-        socket = new EmbedSocket(owner);
+        socket = new EmbedSocketX11(owner);
         socket.open(canvas);
 
         Path socketPath = Files.createTempFile("jembetter-host-test-", ".sock");
@@ -289,9 +303,9 @@ class EmbedSocketTest {
 
     /**
      * Regression coverage for the known-handle path added alongside {@link
-     * EmbedSocket#embedOpaque}: a host that already knows a client's pid
+     * EmbedSocketX11#embedOpaque}: a host that already knows a client's pid
      * directly (e.g. one it spawned itself) can embed it via {@link
-     * EmbedSocket#embed(long)} with no {@code listen()}/socket rendezvous at
+     * EmbedSocketX11#embed(long)} with no {@code listen()}/socket rendezvous at
      * all, as long as the client has published {@code _XEMBED_INFO} itself —
      * the same precondition a socket-handshaking client meets via {@code
      * jembetter-client.EmbedClient#announce}.
@@ -300,13 +314,13 @@ class EmbedSocketTest {
     void embedsAKnownClientPidWithoutASocketHandshake() throws IOException, InterruptedException {
         Canvas canvas = new Canvas();
         canvas.setPreferredSize(new Dimension(100, 100));
-        owner = new Frame("EmbedSocketTest owner");
+        owner = new Frame("EmbedSocketX11Test owner");
         owner.add(canvas);
         owner.pack();
         owner.setVisible(true);
         Thread.sleep(200);
 
-        socket = new EmbedSocket(owner);
+        socket = new EmbedSocketX11(owner);
         socket.open(canvas);
 
         Process clientProcess = startFakeClientProcess();
@@ -333,7 +347,7 @@ class EmbedSocketTest {
     }
 
     /**
-     * Regression coverage for {@link EmbedSocket#embedOpaque}: a client that
+     * Regression coverage for {@link EmbedSocketX11#embedOpaque}: a client that
      * never writes {@code _XEMBED_INFO} itself (standing in for a toolkit-
      * opaque client whose native connection this process can't read events
      * on, e.g. JavaFX Glass) still ends up genuinely reparented under the
@@ -345,13 +359,13 @@ class EmbedSocketTest {
     void embedsAToolkitOpaqueClientThatNeverPublishesXEmbedInfoItself() throws IOException, InterruptedException {
         Canvas canvas = new Canvas();
         canvas.setPreferredSize(new Dimension(100, 100));
-        owner = new Frame("EmbedSocketTest owner");
+        owner = new Frame("EmbedSocketX11Test owner");
         owner.add(canvas);
         owner.pack();
         owner.setVisible(true);
         Thread.sleep(200);
 
-        socket = new EmbedSocket(owner);
+        socket = new EmbedSocketX11(owner);
         socket.open(canvas);
 
         Process clientProcess = startFakeClientProcess();
@@ -378,13 +392,13 @@ class EmbedSocketTest {
     /**
      * Regression coverage for a real bug hit embedding a real JavaFX/Glass
      * child into a host whose placeholder {@code Canvas} was still at its
-     * default {@code 0x0} size when {@link EmbedSocket#open(Canvas)} ran
+     * default {@code 0x0} size when {@link EmbedSocketX11#open(Canvas)} ran
      * (e.g. because it lives in a not-yet-active {@code CardLayout} card):
      * {@link cz.loplex.jembetter.core.x11.RawWindow#createChild} used to
      * pass that size straight through to {@code XCreateWindow}, which X11
      * rejects with {@code BadValue} for a zero width or height — Xlib still
      * hands back a client-side-allocated window id regardless, so the
-     * socket window {@code EmbedSocket} believed it owned never actually
+     * socket window {@code EmbedSocketX11} believed it owned never actually
      * existed on the server. Every later operation against it silently
      * failed, including reparenting a client into it, so {@code
      * embedOpaque} would poll until it gave up and threw, and — because
@@ -397,7 +411,7 @@ class EmbedSocketTest {
     void embedsAToolkitOpaqueClientIntoAHostCanvasThatWasNotYetLaidOut() throws IOException, InterruptedException {
         Canvas canvas = new Canvas();
         canvas.setPreferredSize(new Dimension(100, 100));
-        owner = new Frame("EmbedSocketTest owner");
+        owner = new Frame("EmbedSocketX11Test owner");
         owner.add(canvas);
         owner.pack();
         owner.setVisible(true);
@@ -407,7 +421,7 @@ class EmbedSocketTest {
         // its default 0x0 size, as if its container hadn't laid it out yet.
         canvas.setSize(0, 0);
 
-        socket = new EmbedSocket(owner);
+        socket = new EmbedSocketX11(owner);
         socket.open(canvas);
 
         Process clientProcess = startFakeClientProcess();
@@ -433,14 +447,14 @@ class EmbedSocketTest {
 
     /**
      * Regression coverage for a real bug found while building the
-     * auto-cleanup wiring below: {@link EmbedSocket#close()} used to destroy
+     * auto-cleanup wiring below: {@link EmbedSocketX11#close()} used to destroy
      * a still-embedded client's window outright instead of releasing it,
      * because {@code XDestroyWindow} on this socket's own window destroys
      * its whole subtree immediately — X11's save-set only rescues a
      * reparented-in window from that by reparenting it back to root when the
      * *owning connection itself* closes, not when that connection merely
      * issues an explicit destroy on one of its own windows while staying
-     * open. {@code close()} now calls {@link EmbedSocket#detachClient()}
+     * open. {@code close()} now calls {@link EmbedSocketX11#detachClient()}
      * first for exactly this reason, so a client still embedded when
      * {@code close()} runs ends up released (as {@code detachClient()} — an
      * ordinary top-level window again) instead of destroyed.
@@ -449,13 +463,13 @@ class EmbedSocketTest {
     void closeReleasesAStillEmbeddedClientInsteadOfDestroyingIt() throws IOException, InterruptedException {
         Canvas canvas = new Canvas();
         canvas.setPreferredSize(new Dimension(100, 100));
-        owner = new Frame("EmbedSocketTest owner");
+        owner = new Frame("EmbedSocketX11Test owner");
         owner.add(canvas);
         owner.pack();
         owner.setVisible(true);
         Thread.sleep(200);
 
-        socket = new EmbedSocket(owner);
+        socket = new EmbedSocketX11(owner);
         socket.open(canvas);
 
         Process clientProcess = startFakeClientProcess();
@@ -491,9 +505,9 @@ class EmbedSocketTest {
 
     /**
      * Regression coverage for the opt-in destroying close: {@link
-     * EmbedSocket#tryDestroy()} destroys a still-embedded client's window
-     * outright via {@link EmbedSocket#destroyClient()} instead of releasing
-     * it back to root the way plain {@link EmbedSocket#close()} does —
+     * EmbedSocketX11#tryDestroy()} destroys a still-embedded client's window
+     * outright via {@link EmbedSocketX11#destroyClient()} instead of releasing
+     * it back to root the way plain {@link EmbedSocketX11#close()} does —
      * contrasted directly against {@link
      * #closeReleasesAStillEmbeddedClientInsteadOfDestroyingIt} above, which
      * asserts the opposite outcome for the default, non-destroying path.
@@ -503,13 +517,13 @@ class EmbedSocketTest {
             throws IOException, InterruptedException {
         Canvas canvas = new Canvas();
         canvas.setPreferredSize(new Dimension(100, 100));
-        owner = new Frame("EmbedSocketTest owner");
+        owner = new Frame("EmbedSocketX11Test owner");
         owner.add(canvas);
         owner.pack();
         owner.setVisible(true);
         Thread.sleep(200);
 
-        socket = new EmbedSocket(owner);
+        socket = new EmbedSocketX11(owner);
         socket.open(canvas);
 
         Process clientProcess = startFakeClientProcess();
@@ -537,8 +551,8 @@ class EmbedSocketTest {
 
     /**
      * Regression coverage for the auto-cleanup wiring added to {@link
-     * EmbedSocket#open(Canvas)}: disposing {@code hostCanvas}'s containing
-     * {@link Frame} without ever calling {@link EmbedSocket#close()}
+     * EmbedSocketX11#open(Canvas)}: disposing {@code hostCanvas}'s containing
+     * {@link Frame} without ever calling {@link EmbedSocketX11#close()}
      * previously left this socket's own X11 connection — and the two
      * background threads it drives ({@link cz.loplex.jembetter.core.x11.WindowDeathWatcher},
      * {@link cz.loplex.jembetter.core.xembed.XEmbedInboundWatcher}) — running
@@ -551,11 +565,11 @@ class EmbedSocketTest {
      * {@link java.awt.event.HierarchyListener} fires as a notification, not
      * a hook that can run ahead of that. What only this fix reclaims is the
      * connection/thread pair on the JVM side.) Asserted here via the
-     * watcher's own well-known thread name, since {@code EmbedSocket} has no
-     * public "am I closed" query — {@link EmbedSocket#close()} stops it (see
+     * watcher's own well-known thread name, since {@code EmbedSocketX11} has no
+     * public "am I closed" query — {@link EmbedSocketX11#close()} stops it (see
      * {@code WindowDeathWatcher#close()}), and nothing else in this test
      * creates a same-named thread to confuse the count. {@link
-     * EmbedSocket#close()} itself stays idempotent, so the {@code
+     * EmbedSocketX11#close()} itself stays idempotent, so the {@code
      * @AfterEach} cleanup's own {@code socket.close()} call afterward
      * doubles as double-close coverage.
      */
@@ -563,13 +577,13 @@ class EmbedSocketTest {
     void disposingTheHostFrameWithoutClosingAutoClosesTheSocket() throws IOException, InterruptedException {
         Canvas canvas = new Canvas();
         canvas.setPreferredSize(new Dimension(100, 100));
-        owner = new Frame("EmbedSocketTest owner");
+        owner = new Frame("EmbedSocketX11Test owner");
         owner.add(canvas);
         owner.pack();
         owner.setVisible(true);
         Thread.sleep(200);
 
-        socket = new EmbedSocket(owner);
+        socket = new EmbedSocketX11(owner);
         socket.open(canvas);
 
         Process clientProcess = startFakeClientProcess();
@@ -583,16 +597,16 @@ class EmbedSocketTest {
             socket.embed(clientPid);
 
             assertTrue(countThreadsNamed("xembed-window-death-watcher") >= 1,
-                    "test setup: expected EmbedSocket's own death-watcher thread to be running before disposal");
+                    "test setup: expected EmbedSocketX11's own death-watcher thread to be running before disposal");
 
             assertDoesNotThrow(() -> owner.dispose(),
                     "disposing the host frame must not throw even though close() was never called explicitly");
 
             assertTrue(waitUntilNoThreadNamed("xembed-window-death-watcher"),
-                    "EmbedSocket's own death-watcher thread was still running after disposing the host frame - "
+                    "EmbedSocketX11's own death-watcher thread was still running after disposing the host frame - "
                             + "the socket's own X11 connection was never closed");
             assertTrue(waitUntilNoThreadNamed("xembed-inbound-watcher"),
-                    "EmbedSocket's own inbound-watcher thread was still running after disposing the host frame - "
+                    "EmbedSocketX11's own inbound-watcher thread was still running after disposing the host frame - "
                             + "the socket's own X11 connection was never closed");
         } finally {
             clientProcess.destroy();
@@ -603,7 +617,7 @@ class EmbedSocketTest {
     /**
      * Regression coverage for real click-to-focus: clicking away from the
      * embedded area and then back onto it must return X input focus to the
-     * embedded client on its own — {@link EmbedSocket#focusClient()} is
+     * embedded client on its own — {@link EmbedSocketX11#focusClient()} is
      * never called directly by this test. A synthetic, in-process click
      * would pass here even with the underlying grab/replay wiring
      * completely broken — that's exactly how a previous {@code
@@ -623,13 +637,13 @@ class EmbedSocketTest {
             throws IOException, InterruptedException, ReflectiveOperationException {
         Canvas canvas = new Canvas();
         canvas.setPreferredSize(new Dimension(100, 100));
-        owner = new Frame("EmbedSocketTest owner");
+        owner = new Frame("EmbedSocketX11Test owner");
         owner.add(canvas);
         owner.pack();
         owner.setVisible(true);
         Thread.sleep(200);
 
-        socket = new EmbedSocket(owner);
+        socket = new EmbedSocketX11(owner);
         socket.open(canvas);
 
         Process clientProcess = startFakeClientProcess();
@@ -650,7 +664,7 @@ class EmbedSocketTest {
             // a real window manager doesn't track it as a focus target and
             // was observed reclaiming focus for its own internal window
             // shortly after - a second ordinary Frame does.
-            focusAway = new Frame("EmbedSocketTest focus-away target");
+            focusAway = new Frame("EmbedSocketX11Test focus-away target");
             focusAway.setBounds(200, 200, 50, 50);
             focusAway.setVisible(true);
             Thread.sleep(200);
@@ -796,7 +810,7 @@ class EmbedSocketTest {
     }
 
     private static FakeClient offerFakeClient(Path socketPath, long pid) throws IOException, InterruptedException {
-        JFrame frame = new JFrame("EmbedSocketTest fake client");
+        JFrame frame = new JFrame("EmbedSocketX11Test fake client");
         frame.setUndecorated(true);
         frame.setBounds(0, 0, 30, 30);
         frame.setVisible(true);

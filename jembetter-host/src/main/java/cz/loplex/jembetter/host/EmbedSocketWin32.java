@@ -12,15 +12,19 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 
 /**
- * The advanced, Win32 counterpart to {@code jembetter-core-x11}'s {@link
- * EmbedSocket} — not yet at parity with it (see {@code
- * docs/win32-status.md}'s "Not yet implemented" list), but no longer just
- * {@link EmbedHost}'s narrow single-client facade either. Built on {@link
- * Win32EmbedCore}, the same embed/watch mechanics {@link EmbedHostWin32}
- * uses, so the two stay behaviorally identical wherever their feature sets
- * overlap.
+ * {@link EmbedSocket}'s Win32 implementation — the advanced-API counterpart
+ * to {@link EmbedSocketX11}, matching the {@link EmbedHost}/{@link
+ * EmbedHostWin32} split on the same side. Built on {@link Win32EmbedCore},
+ * the same embed/watch mechanics {@link EmbedHostWin32} uses, so the two
+ * stay behaviorally identical wherever their feature sets overlap.
+ *
+ * <p>Implements the full shared {@link EmbedSocket} surface; the X11-only
+ * extras ({@code open(int,int,int,int)}, focus-next/prev, {@code
+ * destroyClient()}, {@code expectClientWindowClass}) stay on {@link
+ * EmbedSocketX11} — see {@code docs/win32-status.md}.
  *
  * <p><strong>What this adds over {@link EmbedHost}:</strong> {@link
  * #detachClient()}, a voluntary host-initiated release — the host can swap
@@ -61,13 +65,13 @@ import java.nio.file.Path;
  * <p><strong>What this still lacks</strong> (see {@code
  * docs/win32-status.md}): no focus-next/focus-prev tab-cycling (X11's own
  * version has no working sender either — deliberately not chased for the
- * same reason). {@code EmbedSocket}'s {@code expectClientWindowClass} has no
+ * same reason). {@code EmbedSocketX11}'s {@code expectClientWindowClass} has no
  * counterpart here yet either — {@code Win32WindowFinder} has no {@code
  * WM_CLASS} equivalent to disambiguate multiple client windows with in the
  * first place (see {@code Win32EmbedCore}'s own {@code
  * IllegalStateException} for that case).
  */
-public final class EmbedSocketWin32 implements AutoCloseable {
+public final class EmbedSocketWin32 implements EmbedSocket {
 
     private final Win32EmbedCore core;
     private volatile boolean listening = false;
@@ -83,18 +87,27 @@ public final class EmbedSocketWin32 implements AutoCloseable {
     }
 
     /** Embeds a client process whose pid is already known — see {@link EmbedHost#embed(long)}. */
+    @Override
     public void embed(long clientPid) {
         core.embed(clientPid);
     }
 
     /** Starts a rendezvous socket, accepts exactly one client connection, embeds it, and returns — see {@link EmbedHost#embed(Path)}. */
+    @Override
     public void embed(Path rendezvousSocket) {
         core.embed(rendezvousSocket);
     }
 
     /** Embeds a client window whose id is already known — see {@link EmbedHost#embedOpaque(long)}. */
+    @Override
     public void embedOpaque(long clientWindowId) {
         core.embedOpaque(clientWindowId);
+    }
+
+    /** Parity shim — see {@link EmbedSocket#setWindowLookupTimeout}. */
+    @Override
+    public void setWindowLookupTimeout(Duration timeout) {
+        core.setWindowLookupTimeout(timeout);
     }
 
     /**
@@ -105,6 +118,7 @@ public final class EmbedSocketWin32 implements AutoCloseable {
      * detaches, the socket goes back to accepting the next one instead of
      * being good for exactly one embed the way {@link #embed(Path)} is.
      */
+    @Override
     public void listen(Path socketPath) {
         if (listening) {
             throw new IllegalStateException("Already listening");
@@ -239,16 +253,19 @@ public final class EmbedSocketWin32 implements AutoCloseable {
      * later re-embed following a previous detach. Runs on the accept loop's
      * own background thread.
      */
+    @Override
     public void onClientEmbedded(Runnable callback) {
         onClientEmbedded = callback;
     }
 
     /** Registers a callback invoked when the embedded client's process exits or crashes — does not fire for {@link #detachClient()}. */
+    @Override
     public void onClientDetached(Runnable callback) {
         core.onDetached(callback);
     }
 
     /** Gives the embedded client input focus on this host's own initiative — see {@link EmbedHost#requestFocus()}. */
+    @Override
     public void focusClient() {
         core.requestFocus();
     }
@@ -261,6 +278,7 @@ public final class EmbedSocketWin32 implements AutoCloseable {
      * currently embedded. See {@link Win32EmbedCore#detachClient()} for the
      * mechanism.
      */
+    @Override
     public void detachClient() {
         core.detachClient();
     }
@@ -271,6 +289,7 @@ public final class EmbedSocketWin32 implements AutoCloseable {
      * does and doesn't guarantee on this backend today. No-op if nothing is
      * currently embedded, or if it wasn't embedded via {@link #listen}.
      */
+    @Override
     public void setModal(boolean modal) {
         SocketChannel channel = controlChannel;
         if (channel == null || !core.isEmbedded()) {
@@ -292,6 +311,7 @@ public final class EmbedSocketWin32 implements AutoCloseable {
     }
 
     /** Same as {@link #close()}, but a still-embedded client's window is asked to close too — see {@link EmbedHost#tryDestroy()}. */
+    @Override
     public void tryDestroy() {
         stopListening();
         core.tryDestroy();

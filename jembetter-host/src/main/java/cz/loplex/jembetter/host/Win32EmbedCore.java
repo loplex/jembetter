@@ -38,7 +38,6 @@ import java.util.List;
  */
 final class Win32EmbedCore {
 
-    private static final Duration WINDOW_LOOKUP_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration REPARENT_POLL_INTERVAL = Duration.ofMillis(20);
     private static final int REPARENT_MAX_ATTEMPTS = 100;
     private static final long POLL_SLEEP_MILLIS = 50;
@@ -47,6 +46,7 @@ final class Win32EmbedCore {
     private final long hostCanvasHwnd;
     private final Win32ClickWatcher clickWatcher = new Win32ClickWatcher();
     private volatile long embeddedHwnd = -1;
+    private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
     private volatile Runnable onDetached = () -> {
     };
 
@@ -200,8 +200,13 @@ final class Win32EmbedCore {
                 "Client window " + clientHwnd + " was never confirmed reparented into the host Canvas");
     }
 
+    /** Parity shim for {@code EmbedSocketX11#setWindowLookupTimeout} — see {@link EmbedSocket#setWindowLookupTimeout}. */
+    void setWindowLookupTimeout(Duration timeout) {
+        windowLookupTimeout = timeout;
+    }
+
     private long resolveClientWindow(long clientPid) {
-        long deadline = System.nanoTime() + WINDOW_LOOKUP_TIMEOUT.toNanos();
+        long deadline = System.nanoTime() + windowLookupTimeout.toNanos();
         List<Long> candidates;
         do {
             candidates = Win32WindowFinder.findApplicationWindowsByPid(clientPid);

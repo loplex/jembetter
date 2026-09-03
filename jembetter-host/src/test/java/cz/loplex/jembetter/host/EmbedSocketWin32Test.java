@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -55,6 +56,13 @@ class EmbedSocketWin32Test {
             clientProcess.destroy();
             clientProcess.waitFor(5, TimeUnit.SECONDS);
         }
+    }
+
+    /** {@link EmbedSocket#create} dispatches to the Win32 implementation on Windows. */
+    @Test
+    void factoryReturnsTheWin32ImplementationOnThisPlatform() throws InterruptedException {
+        Canvas canvas = newVisibleHostCanvas();
+        socket = assertInstanceOf(EmbedSocketWin32.class, EmbedSocket.create(canvas));
     }
 
     @Test
