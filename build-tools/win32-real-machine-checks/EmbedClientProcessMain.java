@@ -43,6 +43,13 @@ final class EmbedClientProcessMain {
         frame.setBounds(0, 0, 200, 150);
         frame.setVisible(true);
 
+        // Resolve our own window handle *before* offer(): once the host
+        // embeds us, the window is a reparented WS_CHILD and no longer shows
+        // up in findApplicationWindowsByPid. The handle itself is stable
+        // across the reparent, so capturing it here stays valid afterward.
+        long pid = ProcessHandle.current().pid();
+        long ownHwnd = firstOwnWindow(pid);
+
         EmbedClientWin32 client = new EmbedClientWin32();
         client.onEmbedded(id -> emit("EMBEDDED parent=0x" + Long.toHexString(id)));
         client.onHostDetached(() -> emit("DETACHED"));
@@ -52,8 +59,6 @@ final class EmbedClientProcessMain {
 
         client.offer(hostSocket);
 
-        long pid = ProcessHandle.current().pid();
-        long ownHwnd = firstOwnWindow(pid);
         emit("READY pid=" + pid + " hwnd=0x" + Long.toHexString(ownHwnd));
 
         try (BufferedReader in = new BufferedReader(new InputStreamReader(System.in))) {
