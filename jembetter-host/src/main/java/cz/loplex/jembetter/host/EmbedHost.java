@@ -19,8 +19,8 @@ import java.nio.file.Path;
  * after a detach), no voluntary host-initiated {@link
  * EmbedSocket#detachClient() detach}, no focus-next/focus-prev tab-cycling
  * callbacks, and no modality signaling. Reach for {@link EmbedSocket}
- * directly when any of those are needed — {@code EmbedSocket} has no Win32
- * equivalent yet.
+ * directly (also a backend-portable interface, {@link EmbedSocketX11}/{@link
+ * EmbedSocketWin32}) when any of those are needed.
  *
  * <p><b>{@link #embedOpaque} and {@link #embed(long)} are the same operation
  * on the Win32 backend.</b> X11 has a real distinction: {@link #embed(long)}
@@ -37,7 +37,7 @@ public interface EmbedHost extends AutoCloseable {
     /**
      * Creates a host bound to {@code hostCanvas}, the placeholder the
      * embedded client's window will become a genuine child of — a real X11
-     * child (see {@link EmbedSocket#open(Canvas)}) or a Win32 {@code
+     * child (see {@link EmbedSocketX11#open(Canvas)}) or a Win32 {@code
      * SetParent} child, depending on {@code os.name}. {@code hostCanvas}
      * must already be part of a {@link java.awt.Frame}/{@link
      * javax.swing.JFrame}'s component tree (it doesn't need to be visible
@@ -69,7 +69,7 @@ public interface EmbedHost extends AutoCloseable {
      * Embeds a client window whose id is already known, without relying on
      * the client's own cooperation — see {@link EmbedSocket#embedOpaque}.
      * Uses a fixed, generous poll budget internally; call {@link
-     * EmbedSocket#embedOpaque(long, java.time.Duration, int)} directly if
+     * EmbedSocketX11#embedOpaque(long, java.time.Duration, int)} directly if
      * that needs tuning.
      */
     void embedOpaque(long clientWindowId);
@@ -97,7 +97,7 @@ public interface EmbedHost extends AutoCloseable {
     /**
      * Same as {@link #close()}, but a still-embedded client's window is
      * destroyed instead of gracefully released — see {@link
-     * EmbedSocket#destroyClient()}. For a caller that knows the embedded
+     * EmbedSocketX11#destroyClient()}. For a caller that knows the embedded
      * client is a private renderer process never meant to survive
      * independently (e.g. one it spawned purely to embed) and wants that
      * guaranteed regardless of call order.

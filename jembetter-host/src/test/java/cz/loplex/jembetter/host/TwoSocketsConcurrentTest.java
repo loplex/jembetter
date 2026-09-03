@@ -30,10 +30,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Exercises several {@link EmbedSocket}s live in one host process at the same
+ * Exercises several {@link EmbedSocketX11}s live in one host process at the same
  * time — each with its own {@link X11Display} connection, its own background
  * watcher threads, and its own embedded client — which nothing structurally
- * prevents but no other test covers ({@code EmbedSocket#listen}'s accept loop
+ * prevents but no other test covers ({@code EmbedSocketX11#listen}'s accept loop
  * is deliberately one-client-at-a-time <em>per socket</em>; simultaneous
  * embedding means several sockets, not several clients on one).
  *
@@ -45,8 +45,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TwoSocketsConcurrentTest {
 
     private Frame owner;
-    private EmbedSocket socketA;
-    private EmbedSocket socketB;
+    private EmbedSocketX11 socketA;
+    private EmbedSocketX11 socketB;
     private Process clientA;
     private Process clientB;
 
@@ -84,8 +84,8 @@ class TwoSocketsConcurrentTest {
         owner.setVisible(true);
         Thread.sleep(200);
 
-        socketA = new EmbedSocket(owner);
-        socketB = new EmbedSocket(owner);
+        socketA = new EmbedSocketX11(owner);
+        socketB = new EmbedSocketX11(owner);
         socketA.open(canvasA);
         socketB.open(canvasB);
 
@@ -115,7 +115,7 @@ class TwoSocketsConcurrentTest {
         }
 
         assertTrue(countThreadsNamed("xembed-inbound-watcher") >= 2,
-                "expected each EmbedSocket to be driving its own inbound-watcher thread");
+                "expected each EmbedSocketX11 to be driving its own inbound-watcher thread");
     }
 
     @Test
@@ -132,8 +132,8 @@ class TwoSocketsConcurrentTest {
         owner.setVisible(true);
         Thread.sleep(200);
 
-        socketA = new EmbedSocket(owner);
-        socketB = new EmbedSocket(owner);
+        socketA = new EmbedSocketX11(owner);
+        socketB = new EmbedSocketX11(owner);
         socketA.open(canvasA);
         socketB.open(canvasB);
 

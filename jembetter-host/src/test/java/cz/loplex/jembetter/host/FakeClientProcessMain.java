@@ -9,7 +9,7 @@ import javax.swing.JFrame;
 import java.awt.Color;
 
 /**
- * Test-only helper launched by {@link EmbedSocketTest} (and {@link
+ * Test-only helper launched by {@link EmbedSocketX11Test} (and {@link
  * EmbedHostWin32Test}) as a genuinely separate JVM process, so its window
  * isn't sharing the test JVM's own AWT toolkit state (leader/focus-proxy
  * windows etc.) with the host under test.

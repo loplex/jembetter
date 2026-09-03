@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Not a correctness test — {@link EmbedHostTest} and {@link EmbedSocketTest}
+ * Not a correctness test — {@link EmbedHostTest} and {@link EmbedSocketX11Test}
  * already cover the same mechanics with 10-100px throwaway windows that
  * blink by unattended in well under a second. This one exists purely to be
  * watched: a human-sized host/client pair with narrated {@code Thread.sleep}

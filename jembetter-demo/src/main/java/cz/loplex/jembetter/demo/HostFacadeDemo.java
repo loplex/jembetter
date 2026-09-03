@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
  * child's pid because it spawned the process itself.
  *
  * <p>Demonstrates the same automatic resize forwarding {@code
- * EmbedSocket#open(Canvas)} always provides (unchanged under {@link
+ * EmbedSocketX11#open(Canvas)} always provides (unchanged under {@link
  * EmbedHost#create}) and the same crash detection {@link
  * EmbedHost#onDetached} exposes — kill the child process (including
  * {@code kill -9}) to see it fire. Unlike {@link HostDemo}, there is no

@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * confirms it actually reparents a
  * client under the host canvas via each of its embed paths, rather than
  * re-testing behavior ({@code EmbedSocket} internals, death detection
- * mechanics, ...) already covered by {@link EmbedSocketTest}.
+ * mechanics, ...) already covered by {@link EmbedSocketX11Test}.
  */
 @EnabledIfEnvironmentVariable(named = "DISPLAY", matches = ".+")
 class EmbedHostTest {

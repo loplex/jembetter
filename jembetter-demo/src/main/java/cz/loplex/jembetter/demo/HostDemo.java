@@ -1,6 +1,7 @@
 package cz.loplex.jembetter.demo;
 
 import cz.loplex.jembetter.host.EmbedSocket;
+import cz.loplex.jembetter.host.EmbedSocketX11;
 
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -16,7 +17,7 @@ import java.util.concurrent.CountDownLatch;
  * the same X display. The client's window should visually jump into the
  * canvas placeholder area and resize to fill it once the handshake
  * completes, then follow the host frame down to a smaller size a couple of
- * seconds later — via {@link EmbedSocket#open(Canvas)}'s own resize
+ * seconds later — via {@link EmbedSocketX11#open(Canvas)}'s own resize
  * tracking, not any resize code in this demo — then get voluntarily
  * released back to being a normal top-level window a couple of seconds
  * after that — run {@link ClientDemo} again afterward (or a fresh one) to
@@ -28,7 +29,7 @@ import java.util.concurrent.CountDownLatch;
  * socket goes back to listening the same way.
  *
  * <p>The placeholder below is a real {@code Canvas} laid out with the rest
- * of this frame's UI; {@link EmbedSocket#open(Canvas)} reparents the
+ * of this frame's UI; {@link EmbedSocketX11#open(Canvas)} reparents the
  * embedded window as a genuine X11 child of it, so — unlike an
  * override-redirect socket window — a heavyweight Swing popup/dialog from
  * this host now correctly renders above the embedded window instead of
@@ -60,8 +61,7 @@ public final class HostDemo {
         frame.setLocation(100, 100);
         frame.setVisible(true);
 
-        EmbedSocket socket = new EmbedSocket(frame);
-        socket.open(placeholder);
+        EmbedSocket socket = EmbedSocket.create(placeholder);
         socket.onClientDetached(() -> System.out.println(
                 "Client detached (process exited or crashed). Waiting for a client to (re-)connect..."));
 
