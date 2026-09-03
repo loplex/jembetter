@@ -77,6 +77,7 @@ public final class EmbedSocketWin32 implements AutoCloseable {
     private volatile Runnable onClientEmbedded = () -> {
     };
     private volatile SocketChannel controlChannel;
+    private volatile Thread controlChannelReaderThread;
 
     public EmbedSocketWin32(Canvas hostCanvas) {
         this.core = new Win32EmbedCore(hostCanvas);
@@ -152,16 +153,62 @@ public final class EmbedSocketWin32 implements AutoCloseable {
                 // e.g. for setModal(boolean) to write into. Closed once this
                 // client detaches, below.
                 controlChannel = accepted;
+                controlChannelReaderThread = new Thread(() -> readControlChannel(accepted),
+                        "jembetter-win32-embed-socket-control-reader");
+                controlChannelReaderThread.setDaemon(true);
+                controlChannelReaderThread.start();
                 onClientEmbedded.run();
                 awaitDetach();
                 closeQuietly(controlChannel);
                 controlChannel = null;
+                joinControlChannelReader();
             }
         } finally {
             try {
                 Files.deleteIfExists(socketPath);
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
+            }
+        }
+    }
+
+    /**
+     * Reads the client's control channel for the life of its embed, the
+     * client-to-host counterpart of {@link #setModal}'s host-to-client
+     * writes on the same channel: every byte read (see {@code
+     * FocusRequestOpcode} — no payload, any byte means "please focus me",
+     * written by {@code jembetter-client.EmbedClientWin32#requestFocus()})
+     * gives the currently embedded client input focus, the same as {@link
+     * #focusClient()}.
+     */
+    private void readControlChannel(SocketChannel channel) {
+        ByteBuffer buffer = ByteBuffer.allocate(1);
+        try {
+            while (true) {
+                buffer.clear();
+                if (channel.read(buffer) < 0) {
+                    return; // Client closed its end - nothing more to read.
+                }
+                if (!buffer.hasRemaining()) {
+                    core.requestFocus();
+                }
+            }
+        } catch (IOException e) {
+            // closeQuietly(controlChannel) closes the channel to unblock
+            // this read() as its shutdown signal once the client detaches;
+            // anything else means the client's end is simply gone - either
+            // way, nothing left to read.
+        }
+    }
+
+    private void joinControlChannelReader() {
+        Thread thread = controlChannelReaderThread;
+        controlChannelReaderThread = null;
+        if (thread != null) {
+            try {
+                thread.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
         }
     }

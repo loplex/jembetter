@@ -30,6 +30,7 @@ JDK, forked by the `windows-tests-on-linux` Surefire execution — see
 | Multi-client reuse of one socket (`EmbedSocketWin32#listen`, accept-loop re-embed after a detach) | `EmbedSocketWin32Test` under Wine only |
 | `EmbedSocketWin32#setModal` opcode delivery, end-to-end (`EmbedSocketWin32#listen`'s control channel → `EmbedClientWin32#onModalityChanged`) | `EmbedSocketWin32Test` (send side) + `EmbedClientWin32Test` (receive side) under Wine only |
 | `EmbedPlugWin32#onFocusChanged` via `Win32FocusWatcher`'s `GetGUIThreadInfo` poll loop, same-process and cross-process | `Win32FocusWatcherTest`/`EmbedPlugWin32Test` under Wine + real `windows-latest`, 2026-09-02 follow-up |
+| `EmbedClientWin32`'s own reparent/focus/resize watching (`announce`/`offer`, `onEmbedded`/`onHostDetached`/`onFocusChanged`/`onResized`) and `requestFocus()` (a new `FocusRequestOpcode` marker byte on the same control channel `setModal` already uses, the other direction — read by a new `EmbedSocketWin32` control-channel reader) | `EmbedClientWin32Test`/`EmbedSocketWin32Test`/`Win32ConfigureWatcherTest` under Wine only |
 
 `embed`/`embedOpaque` need no distinction on this backend — both collapse
 into the same operation, since there's no `_XEMBED_INFO` to make them
@@ -60,17 +61,6 @@ gaps are blocked by a Windows API restriction:
   only a genuinely XEmbed-aware external toolkit (e.g. GTK) would — so
   there's no working X11 shape to mirror in the first place, and building a
   Win32-only version nothing calls either would be new dead code, not parity.
-- **`EmbedClientWin32` is deliberately narrower than X11's `EmbedClient`.**
-  It exists solely to receive `EmbedSocketWin32#setModal`'s opcode (see
-  "Confirmed working" above) — connect, keep the control channel open,
-  read opcodes on a background thread, dispatch `onModalityChanged`. It does
-  nothing to resolve or watch this process's own window: reparenting, focus,
-  and host-detach detection stay on `EmbedPlugWin32`, which a Win32 client
-  can use independently of (and alongside) `EmbedClientWin32`. A fuller
-  mirror of X11's `EmbedClient` — its own reparent/focus/resize watching,
-  `requestFocus`, all folded into one class the way `EmbedSocketWin32`
-  already folds together everything `EmbedSocket` does — was deliberately
-  scoped down, not overlooked.
 - **`onModalityChanged` is not reachable from the narrow `EmbedPlug` facade.**
   `EmbedPlugWin32#announce(Path, String)` still closes its handshake channel
   immediately after sending the pid, unaffected by `EmbedClientWin32`'s
