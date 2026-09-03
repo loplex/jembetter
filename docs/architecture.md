@@ -13,10 +13,13 @@
 - **`jembetter-host`** — embedder-side API: `EmbedHost` (quick start, a 1:1
   facade for embedding a single self-spawned client) and `EmbedSocket`
   (advanced — multi-client, socket rendezvous) both host another process's
-  window inside your own Swing UI.
+  window inside your own Swing UI. Both are interfaces, dispatched by
+  `os.name` to `EmbedHostX11`/`EmbedHostWin32` (resp. `EmbedSocketX11`/
+  `EmbedSocketWin32`).
 - **`jembetter-client`** — client-side API: `EmbedPlug` (quick start) and
   `EmbedClient` (advanced) both make your own process's top-level window
-  embeddable by a host.
+  embeddable by a host — interfaces, dispatched to `EmbedPlugX11`/
+  `EmbedPlugWin32` (resp. `EmbedClientX11`/`EmbedClientWin32`).
 - **`jembetter-demo`** — runnable demo pairs demonstrating the whole pipeline
   end to end, one per API layer; see [Try the demo](../README.md#try-the-demo)
   in the main README.
@@ -46,11 +49,16 @@ graph BT
     demo --> client
 ```
 
-`jembetter-core-x11`/`jembetter-core-win32` sit side by side rather than behind a
-shared abstraction: they mirror each other's primitives 1:1
-(`WindowFinder`↔`Win32WindowFinder`, `Reparenting`↔`Win32Reparent`, …), and
-`EmbedHost`/`EmbedPlug` pick between `EmbedHostX11`/`EmbedHostWin32` (resp.
-`EmbedPlugX11`/`EmbedPlugWin32`) by `os.name` at runtime rather than through a
-common interface — see [Win32 backend status](win32-status.md) for why (some
-primitives, like `Win32ClickWatcher`, have no X11 equivalent to mirror at
-all).
+Both public API layers are backend-portable interfaces: the narrow facades
+`EmbedHost`/`EmbedPlug` and the advanced `EmbedSocket`/`EmbedClient` each
+dispatch by `os.name` at runtime (via `Platform.isWindows()`) to an
+`*X11`/`*Win32` implementation. A caller needing an X11-only capability
+(override-redirect `open`, focus-cycling, `destroyClient`, …) downcasts to
+`EmbedSocketX11`/`EmbedClientX11` explicitly.
+
+Only the `jembetter-core-x11`/`jembetter-core-win32` primitive layer stays
+un-abstracted: the two sit side by side rather than behind a shared type,
+mirroring each other's primitives 1:1 (`WindowFinder`↔`Win32WindowFinder`,
+`Reparenting`↔`Win32Reparent`, …) — see [Win32 backend
+status](win32-status.md) for why (some primitives, like `Win32ClickWatcher`,
+have no X11 equivalent to mirror at all).

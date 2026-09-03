@@ -62,14 +62,17 @@ caught never actually delivering — full story in Mechanism notes below.
 
 ## Not yet implemented (no OS-level blocker)
 
-`EmbedSocket`/`EmbedClient` (the advanced, multi-client X11 API — see
-[Advanced usage](advanced-usage.md)) have no full Win32 counterpart yet. A
-new `EmbedSocketWin32` (`jembetter-host`) has started growing toward one —
-see its Javadoc for exactly what it covers so far. None of the remaining
-gaps are blocked by a Windows API restriction:
+`EmbedSocket`/`EmbedClient` (the advanced API — see
+[Advanced usage](advanced-usage.md)) are backend-portable interfaces now,
+with `EmbedSocketWin32`/`EmbedClientWin32` implementing the full shared
+surface (dispatched via `EmbedSocket.create`/`EmbedClient.create`, the same
+`Platform.isWindows()` split as `EmbedHost`/`EmbedPlug`). The X11-only
+extras stay on `EmbedSocketX11`/`EmbedClientX11` — see [Advanced
+usage](advanced-usage.md#x11-only-extras). The two items below are
+deliberate scope decisions, not unfinished gaps:
 
 - **Focus-next/prev tab-cycling** between multiple embedded clients.
-  Deliberately not chased on Win32 either: X11's own `EmbedSocket#onFocusNext`/
+  Deliberately not chased on Win32 either: X11's own `EmbedSocketX11#onFocusNext`/
   `onFocusPrev` are receiver-only code with no sender anywhere in this
   codebase — `EmbedClient`/`EmbedPlug` never send `XEMBED_FOCUS_NEXT`/`PREV`,
   only a genuinely XEmbed-aware external toolkit (e.g. GTK) would — so
@@ -103,7 +106,7 @@ destroy it, and a `WS_CHILD` window dies unconditionally with its parent.
   a direct cross-process call silently returns `FALSE` and leaves the window
   intact. `Win32Window#destroy` posts `WM_CLOSE` instead, which only closes
   the window if its own handler doesn't override that default.
-  `EmbedHost#tryDestroy()`/`EmbedSocket#destroyClient()`'s unconditional X11
+  `EmbedHost#tryDestroy()`/`EmbedSocketX11#destroyClient()`'s unconditional X11
   guarantee has no Win32 equivalent — structurally can't become one.
 - **The embedded window never survives a host crash.** X11 has a save-set: a
   released child is reparented back to root and stays alive. Win32 has
@@ -115,10 +118,10 @@ destroy it, and a `WS_CHILD` window dies unconditionally with its parent.
 
 ## Mechanism notes
 
-**Click-to-focus.** X11's `EmbedSocket` returns focus to the embedded
+**Click-to-focus.** X11's `EmbedSocketX11` returns focus to the embedded
 client on a real click back into the embedded area — a passive `XGrabButton`
 intercepts the press before the client's own toolkit sees it, then replays
-it (see `EmbedSocket#open(Canvas)`'s Javadoc).
+it (see `EmbedSocketX11#open(Canvas)`'s Javadoc).
 
 Win32 can't do the same trick: ordinary subclassing (`SetWindowSubclass`)
 can't reach into a genuinely separate process's HWND, since its callback
@@ -142,7 +145,7 @@ non-foreground process. See `Win32Focus`'s Javadoc.
 event-driven; `Win32ReparentWatcher` isn't, because Win32 has no
 externally-observable reparent event to wait on instead.
 
-**Client-side focus notification.** X11's `EmbedClient` reads real,
+**Client-side focus notification.** X11's `EmbedClientX11` reads real,
 server-generated `FocusIn`/`FocusOut` off its own X11 connection — any
 connection selecting for them on a window receives them, regardless of
 which connection actually changed the focus (see `WindowFocusWatcher`'s

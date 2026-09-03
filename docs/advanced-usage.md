@@ -7,6 +7,12 @@ once (one `EmbedSocket` each), a voluntary host-initiated detach/re-embed,
 focus-next/prev tab-cycling, or modality / host-activation signaling to the
 client.
 
+Like the facades, both are backend-portable interfaces — `EmbedSocket.create(canvas)`
+/ `EmbedClient.create()` dispatch by `os.name` to an `*X11`/`*Win32`
+implementation. A handful of X11-only capabilities live on the concrete
+`EmbedSocketX11` / `EmbedClientX11` (see [X11-only extras](#x11-only-extras)
+below); a caller that needs one downcasts to it explicitly.
+
 ## Host side
 
 ```java
@@ -15,16 +21,17 @@ Canvas placeholder = new Canvas();
 frame.add(placeholder, BorderLayout.CENTER); // wherever the embedded window should appear
 // ... lay out the rest of your UI, then make the frame visible ...
 
-EmbedSocket socket = new EmbedSocket(frame);
-socket.open(placeholder);
+EmbedSocket socket = EmbedSocket.create(placeholder);
 socket.onClientEmbedded(() -> System.out.println("Client embedded"));
 socket.onClientDetached(() -> System.out.println("Client exited or crashed"));
 socket.listen(Path.of("/run/user/1000/my-app.sock"));
 ```
 
-`open(Canvas)` reparents the embedded window as a genuine X11 child of
-`placeholder`'s own native window, same as `EmbedHost.create(Canvas)` (see
-the main README) — see its Javadoc for the z-order rationale and the
+`EmbedSocket.create(placeholder)` reparents the embedded window as a genuine
+child of `placeholder`'s own native window (a real X11 child on the X11
+backend, a Win32 `SetParent` child on Windows), same as
+`EmbedHost.create(Canvas)` (see the main README) — see
+`EmbedSocketX11#open(Canvas)`'s Javadoc for the z-order rationale and the
 `--add-opens` JVM flags this needs.
 
 `EmbedSocket` keeps accepting clients on the same socket for as long as it's
@@ -32,16 +39,16 @@ open — a client crashing or being voluntarily released via
 `socket.detachClient()` doesn't require restarting the host. Call
 `socket.close()` to shut it down.
 
-`socket.destroyClient()` is `detachClient()`'s destroying counterpart: it
-destroys a still-embedded client's window outright (`XDestroyWindow`)
-instead of reparenting it back to root as a live top-level window. Use it
-when the embedded client is a private renderer process never meant to
-survive independently and that guarantee must hold regardless of call order
-— e.g. a caller that can't rely on always killing the client process before
-releasing the host. `socket.tryDestroy()` applies the same distinction to
-shutdown: a still-embedded client is destroyed via `destroyClient()` rather
-than released via `detachClient()`, which is what plain `socket.close()`
-still does.
+`socket.tryDestroy()` is `close()`'s destroying counterpart: a still-embedded
+client's window is destroyed rather than released back as a live top-level
+window. Use it when the embedded client is a private renderer process never
+meant to survive independently and that guarantee must hold regardless of
+call order — e.g. a caller that can't rely on always killing the client
+process before releasing the host. The guarantee's strength differs by
+backend (unconditional `XDestroyWindow` on X11, a best-effort `WM_CLOSE` on
+Win32 — the name is a reminder, not a promise); `EmbedSocketX11#destroyClient()`
+is the same distinction applied to a live client rather than to shutdown,
+and is X11-only.
 
 Each `EmbedSocket` holds **one** client at a time by design (its accept loop
 blocks until the current client detaches before taking the next). To embed
@@ -50,11 +57,12 @@ several clients at once — e.g. one per `Canvas` in a grid — create several
 independently (each on its own X11 connection and background threads), and
 closing one releases only its own client.
 
-**No AWT tree to embed into:** `open(x, y, width, height)`/`setBounds(x, y,
-width, height)` create the socket as a root-level, override-redirect window
-instead, which you're then responsible for keeping positioned yourself (e.g.
-a placeholder component's `getLocationOnScreen()` plus a resize/move
-listener calling `setBounds`).
+**No AWT tree to embed into (X11 only):** downcast to `EmbedSocketX11` and
+use `open(x, y, width, height)`/`setBounds(x, y, width, height)` to create
+the socket as a root-level, override-redirect window instead, which you're
+then responsible for keeping positioned yourself (e.g. a placeholder
+component's `getLocationOnScreen()` plus a resize/move listener calling
+`setBounds`).
 
 **Known-handle embedding, no socket:** if the host already knows the
 client's pid directly — e.g. it spawned the client process itself — the
@@ -78,14 +86,16 @@ actually happened via `XQueryTree` instead of trusting the client's
 cooperation:
 
 ```java
-socket.embedOpaque(clientWindowId, Duration.ofMillis(20), 100);
+socket.embedOpaque(clientWindowId); // interface: fixed, generous poll budget
+((EmbedSocketX11) socket).embedOpaque(clientWindowId, Duration.ofMillis(20), 100); // tuned
 ```
 
 Throws if the reparent is never confirmed within `pollInterval *
 maxAttempts`. Death detection (`onClientDetached`) still works here — it's
-based on the X server's own `DestroyNotify`, not client cooperation.
-`EmbedHost#embedOpaque(long)` (see the main README) wraps this with a
-fixed, generous poll budget.
+based on the X server's own `DestroyNotify`, not client cooperation. The
+no-argument `embedOpaque(long)` is on the `EmbedSocket` interface; the tuning
+overload is `EmbedSocketX11`-only. `EmbedHost#embedOpaque(long)` (see the
+main README) is the same fixed-budget call on the narrow facade.
 
 ## Modality and host-window activation
 
@@ -127,7 +137,7 @@ frame.setUndecorated(true); // avoid leaving a stray decoration frame behind
 // ... build the rest of the window, then make it visible ...
 frame.setVisible(true);
 
-EmbedClient client = new EmbedClient();
+EmbedClient client = EmbedClient.create();
 client.onEmbedded(embedderWindowId -> System.out.println("Embedded"));
 client.onHostDetached(() -> System.out.println("Host exited or crashed"));
 client.offer(Path.of("/run/user/1000/my-app.sock"));
@@ -154,17 +164,39 @@ start watching for the embed/host-death) except dial a host socket, for
 when the host already knows this process's pid directly:
 
 ```java
-EmbedClient client = new EmbedClient();
+EmbedClient client = EmbedClient.create();
 client.onEmbedded(embedderWindowId -> System.out.println("Embedded"));
 client.announce(); // no host socket path
 ```
 
 If a process owns more than one top-level window at the point it connects,
-both `EmbedSocket` and `EmbedClient` need a `WM_CLASS` (the same value
-`xprop WM_CLASS` prints) to disambiguate which one — see
-`EmbedSocket#expectClientWindowClass` and `EmbedClient#offer(Path, String)`.
+`EmbedClient` needs a `WM_CLASS` (the same value `xprop WM_CLASS` prints) to
+disambiguate which one — see `EmbedClient#offer(Path, String)` (and, on the
+host side, the X11-only `EmbedSocketX11#expectClientWindowClass`). Win32 has
+no `WM_CLASS` equivalent: `announce(String)` there throws
+`UnsupportedOperationException` for a non-null argument, and the process must
+own exactly one window.
 
 Both sides wait up to 5 seconds by default for a window to appear before
 giving up; override that with `EmbedSocket#setWindowLookupTimeout`/
 `EmbedClient#setWindowLookupTimeout` if that's too tight (or too loose) for
 your setup.
+
+## X11-only extras
+
+A few advanced capabilities have no Win32 counterpart and stay on the
+concrete X11 classes — downcast the value `EmbedSocket.create` /
+`EmbedClient.create` returned:
+
+```java
+EmbedSocketX11 socket = (EmbedSocketX11) EmbedSocket.create(placeholder);
+```
+
+- **`EmbedSocketX11`** — override-redirect `open(x, y, width, height)` /
+  `setBounds` / `resize` (see [above](#host-side)), the
+  `embedOpaque(long, Duration, int)` tuning overload, `onFocusNext` /
+  `onFocusPrev` focus-cycling callbacks, `destroyClient()` (unconditional
+  `XDestroyWindow`), and `expectClientWindowClass`.
+- **`EmbedClientX11`** — `onActivationChanged` (host-window activation;
+  Win32's host has no sender to pair with it) and `watchOwnWindow(long)`
+  (a toolkit-opaque client handing its own window handle over directly).
