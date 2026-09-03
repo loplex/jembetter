@@ -1,8 +1,8 @@
 package cz.loplex.jembetter.client;
 
 import cz.loplex.jembetter.common.FocusListener;
+import cz.loplex.jembetter.common.SizeListener;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
-import cz.loplex.jembetter.core.x11.SizeListener;
 import cz.loplex.jembetter.core.x11.WindowConfigureWatcher;
 import cz.loplex.jembetter.core.x11.WindowFinder;
 import cz.loplex.jembetter.core.x11.WindowFocusWatcher;
