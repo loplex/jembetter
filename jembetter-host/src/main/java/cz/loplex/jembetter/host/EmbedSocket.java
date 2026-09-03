@@ -2,6 +2,7 @@ package cz.loplex.jembetter.host;
 
 import com.sun.jna.platform.unix.X11.Display;
 import cz.loplex.jembetter.common.CanvasNativeHandle;
+import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.x11.InputFocus;
 import cz.loplex.jembetter.core.x11.RawWindow;
@@ -80,6 +81,19 @@ public final class EmbedSocket implements AutoCloseable {
     private volatile boolean listening = false;
     private ServerSocketChannel server;
     private Thread acceptThread;
+    /**
+     * The current {@link #listen}-embedded client's control channel — the
+     * same {@link SocketChannel} the accept loop took the pid handshake on,
+     * kept open for the life of that embed so {@link #setModal}/{@link
+     * #sendActivated} can write {@link ControlMessage} frames to it. Null
+     * whenever nothing is embedded via {@link #listen} (a plain {@link
+     * #embed(long)}/{@link #embed(Path)}/{@link #embedOpaque} never opens
+     * one). Host&rarr;client only: the client asks for focus with a real
+     * {@code XEMBED_REQUEST_FOCUS} {@code ClientMessage} the embedder
+     * connection reads directly (see {@link #handleInboundMessage}), so this
+     * needs no reader side the way {@code EmbedSocketWin32}'s does.
+     */
+    private volatile SocketChannel controlChannel;
     private volatile Runnable onClientDetached = () -> {
     };
     private volatile Runnable onClientEmbedded = () -> {
@@ -329,19 +343,37 @@ public final class EmbedSocket implements AutoCloseable {
                     }
                     throw new UncheckedIOException(e);
                 }
+                long clientPid;
                 try {
-                    try (accepted) {
-                        embedFromHandshake(accepted);
-                    }
-                } catch (RuntimeException | IOException e) {
+                    clientPid = PidHandshake.receive(accepted);
+                } catch (RuntimeException e) {
                     // A failed/aborted handshake must not take the accept
                     // loop down; the socket keeps listening for the next
                     // client.
+                    closeQuietly(accepted);
+                    e.printStackTrace();
+                    continue;
+                }
+                // Kept open, unlike embed(Path)'s one-shot handshake: this is
+                // the client's control channel for the rest of its embed, for
+                // setModal(boolean)/sendActivated(boolean) to write
+                // ControlMessage frames into. Set before embed() so the
+                // WINDOW_ACTIVATE frame embed() itself sends (owner.isFocused()
+                // at embed time) reaches a listen client too. Closed once this
+                // client detaches, below.
+                controlChannel = accepted;
+                try {
+                    embed(clientPid);
+                } catch (RuntimeException e) {
+                    closeQuietly(accepted);
+                    controlChannel = null;
                     e.printStackTrace();
                     continue;
                 }
                 onClientEmbedded.run();
                 awaitDetach();
+                closeQuietly(controlChannel);
+                controlChannel = null;
             }
         } finally {
             try {
@@ -350,10 +382,6 @@ public final class EmbedSocket implements AutoCloseable {
                 throw new UncheckedIOException(e);
             }
         }
-    }
-
-    private void embedFromHandshake(SocketChannel accepted) {
-        embed(PidHandshake.receive(accepted));
     }
 
     /**
@@ -563,7 +591,21 @@ public final class EmbedSocket implements AutoCloseable {
         windowLookupTimeout = timeout;
     }
 
-    /** Tells the embedded client it's shadowed by (or no longer shadowed by) a modal dialog. */
+    /**
+     * Tells the embedded client it's shadowed by (or no longer shadowed by)
+     * a modal dialog. Sends the XEmbed {@code XEMBED_MODALITY_ON}/{@code OFF}
+     * {@code ClientMessage} as a courtesy to a genuinely XEmbed-aware
+     * external toolkit, and — for a client embedded via {@link #listen} —
+     * also writes a {@link ControlMessage.Type#MODALITY} frame to that
+     * client's control channel, the path a {@code
+     * jembetter-client.EmbedClient} actually reads (via its {@code
+     * onModalityChanged}), since the {@code ClientMessage} only ever reaches
+     * the connection that created the client's window (AWT's own). No-op if
+     * nothing is embedded; the control-channel write is skipped (not an
+     * error) for a client embedded via {@link #embed(long)}/{@link
+     * #embed(Path)}/{@link #embedOpaque}, which never keep a channel open
+     * past the handshake.
+     */
     public void setModal(boolean modal) {
         long id = embeddedWindowId;
         if (id < 0) {
@@ -572,6 +614,26 @@ public final class EmbedSocket implements AutoCloseable {
         synchronized (X11Display.GLOBAL_LOCK) {
             XEmbedMessages.send(display.raw(), id, modal ? XEmbedMessage.MODALITY_ON : XEmbedMessage.MODALITY_OFF, 0,
                     0, 0);
+        }
+        sendControlMessage(ControlMessage.of(ControlMessage.Type.MODALITY, modal));
+    }
+
+    /**
+     * Best-effort write of {@code message} to the current {@link #listen}
+     * client's control channel — a no-op when nothing was embedded via
+     * {@link #listen}, and swallowing an {@link IOException} from a peer that
+     * has already closed its end, the same "no receiver required" contract
+     * {@link #setModal} documents.
+     */
+    private void sendControlMessage(ControlMessage message) {
+        SocketChannel channel = controlChannel;
+        if (channel == null) {
+            return;
+        }
+        try {
+            message.writeTo(channel);
+        } catch (IOException e) {
+            // Best-effort, no-receiver-required send - see setModal's Javadoc.
         }
     }
 
@@ -623,6 +685,16 @@ public final class EmbedSocket implements AutoCloseable {
         onClientDetached.run();
     }
 
+    /**
+     * Relays the host owner {@link Frame}'s activation state to the embedded
+     * client: the XEmbed {@code WINDOW_ACTIVATE}/{@code WINDOW_DEACTIVATE}
+     * (plus {@code FOCUS_IN}/{@code FOCUS_OUT}) {@code ClientMessage} for a
+     * real XEmbed toolkit, and — for a {@link #listen} client — a {@link
+     * ControlMessage.Type#ACTIVATION} frame on its control channel, the path
+     * a {@code jembetter-client.EmbedClient} reads via {@code
+     * onActivationChanged} (the {@code ClientMessage} reaching only AWT's own
+     * connection, not the client's).
+     */
     private void sendActivated(boolean active) {
         long id = embeddedWindowId;
         if (id < 0) {
@@ -638,6 +710,7 @@ public final class EmbedSocket implements AutoCloseable {
                 XEmbedMessages.send(raw, id, XEmbedMessage.WINDOW_DEACTIVATE, 0, 0, 0);
             }
         }
+        sendControlMessage(ControlMessage.of(ControlMessage.Type.ACTIVATION, active));
     }
 
     private long resolveClientWindow(long clientPid) {
@@ -718,6 +791,17 @@ public final class EmbedSocket implements AutoCloseable {
         }
     }
 
+    private static void closeQuietly(SocketChannel channel) {
+        if (channel == null) {
+            return;
+        }
+        try {
+            channel.close();
+        } catch (IOException e) {
+            // Best-effort cleanup of a channel already headed nowhere useful.
+        }
+    }
+
     @Override
     public void close() {
         closeImpl(false);
@@ -753,6 +837,11 @@ public final class EmbedSocket implements AutoCloseable {
                 throw new UncheckedIOException(e);
             }
         }
+        // Unblocks the accept loop's awaitDetach() path and covers the case
+        // where the acceptThread.join() below times out before the loop
+        // closes this itself.
+        closeQuietly(controlChannel);
+        controlChannel = null;
         if (acceptThread != null) {
             try {
                 acceptThread.join(1000);

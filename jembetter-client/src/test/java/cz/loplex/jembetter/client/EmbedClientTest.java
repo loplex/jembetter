@@ -1,5 +1,6 @@
 package cz.loplex.jembetter.client;
 
+import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.x11.InputFocus;
 import cz.loplex.jembetter.core.x11.RawWindow;
@@ -284,6 +285,61 @@ class EmbedClientTest {
             } finally {
                 RawWindow.destroy(rawDisplay, windowId);
             }
+        }
+    }
+
+    /**
+     * Regression coverage for {@link EmbedClient#onModalityChanged}/{@link
+     * EmbedClient#onActivationChanged}: {@code WINDOW_ACTIVATE}/{@code
+     * DEACTIVATE} and {@code MODALITY_ON}/{@code OFF} have no real X11 event
+     * to carry them (unlike {@code FocusIn}/{@code ReparentNotify}/{@code
+     * ConfigureNotify} the other client callbacks read), so {@code
+     * EmbedSocket#listen} relays them as {@link ControlMessage} frames on the
+     * rendezvous channel it keeps open past the handshake. This drives the
+     * client half against a hand-rolled host writing those frames directly.
+     */
+    @Test
+    void receivesModalityAndActivationFramesTheHostWritesOnTheControlChannel() throws IOException, InterruptedException {
+        frame = new JFrame("jembetter-client EmbedClientTest");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+
+        Path socketPath = Files.createTempFile("jembetter-client-test-", ".sock");
+        Files.delete(socketPath);
+        UnixDomainSocketAddress address = UnixDomainSocketAddress.of(socketPath);
+
+        try {
+            CountDownLatch hostReady = new CountDownLatch(1);
+            Thread host = new Thread(() -> {
+                try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
+                    server.bind(address);
+                    hostReady.countDown();
+                    try (SocketChannel accepted = server.accept()) {
+                        PidHandshake.receive(accepted);
+                        ControlMessage.of(ControlMessage.Type.MODALITY, true).writeTo(accepted);
+                        Thread.sleep(200); // let the reader dispatch before the next frame
+                        ControlMessage.of(ControlMessage.Type.ACTIVATION, false).writeTo(accepted);
+                        Thread.sleep(500); // keep the channel open past the last assertion
+                    }
+                } catch (IOException | InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            host.setDaemon(true);
+            host.start();
+            assertTrue(hostReady.await(5, TimeUnit.SECONDS), "fake host never started listening");
+
+            BlockingQueue<Boolean> modality = new ArrayBlockingQueue<>(4);
+            BlockingQueue<Boolean> activation = new ArrayBlockingQueue<>(4);
+            client = new EmbedClient();
+            client.onModalityChanged(modality::add);
+            client.onActivationChanged(activation::add);
+            client.offer(socketPath);
+
+            assertEquals(Boolean.TRUE, modality.poll(5, TimeUnit.SECONDS), "onModalityChanged(true) never fired");
+            assertEquals(Boolean.FALSE, activation.poll(5, TimeUnit.SECONDS), "onActivationChanged(false) never fired");
+        } finally {
+            Files.deleteIfExists(socketPath);
         }
     }
 

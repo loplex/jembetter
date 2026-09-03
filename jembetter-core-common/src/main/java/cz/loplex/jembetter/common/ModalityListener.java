@@ -2,12 +2,17 @@ package cz.loplex.jembetter.common;
 
 /**
  * Callback invoked when a client is told it's shadowed by ({@code true}) or
- * no longer shadowed by ({@code false}) a modal dialog — see {@code
- * jembetter-host}'s {@code EmbedSocketWin32#setModal(boolean)} (the sender)
- * and {@code jembetter-client}'s {@code EmbedClientWin32#onModalityChanged}
- * (the receiver). Win32-only for now: X11's own {@code
- * EmbedSocket#setModal(boolean)} sends {@code XEMBED_MODALITY_ON}/{@code OFF}
- * but has no receiving side either — see {@code docs/win32-status.md}.
+ * no longer shadowed by ({@code false}) a modal dialog. Delivered over the
+ * host&harr;client control channel (see {@code
+ * cz.loplex.jembetter.common.ipc.ControlMessage}) on both backends: {@code
+ * jembetter-host}'s {@code EmbedSocket#setModal(boolean)} / {@code
+ * EmbedSocketWin32#setModal(boolean)} send it, {@code jembetter-client}'s
+ * {@code EmbedClient#onModalityChanged} / {@code
+ * EmbedClientWin32#onModalityChanged} receive it. The X11 {@code setModal}
+ * also still sends the XEmbed {@code XEMBED_MODALITY_ON}/{@code OFF} {@code
+ * ClientMessage} as a courtesy to a genuinely XEmbed-aware external toolkit
+ * (Win32 has no XEmbed equivalent); on both backends this callback is the
+ * path that actually reaches a jembetter client.
  */
 @FunctionalInterface
 public interface ModalityListener {

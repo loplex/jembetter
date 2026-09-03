@@ -5,6 +5,7 @@ import com.sun.jna.platform.unix.X11.Window;
 import com.sun.jna.platform.unix.X11.XEvent;
 import com.sun.jna.platform.unix.X11.XWindowAttributes;
 import cz.loplex.jembetter.common.CanvasNativeHandle;
+import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.x11.InputFocus;
 import cz.loplex.jembetter.core.x11.WindowFinder;
@@ -37,6 +38,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -111,6 +113,68 @@ class EmbedSocketTest {
         socket.onClientEmbedded(reEmbedded::countDown);
         client2 = offerFakeClient(socketPath, pid).frame();
         assertTrue(reEmbedded.await(5, TimeUnit.SECONDS), "second client was never (re-)embedded on the same socket");
+    }
+
+    /**
+     * The rendezvous {@link SocketChannel} {@link EmbedSocket#listen} accepts
+     * the pid handshake on is kept open for the life of the embed as a
+     * host&rarr;client control channel: {@link EmbedSocket#setModal} and the
+     * host owner {@link Frame}'s activation state are relayed on it as {@link
+     * ControlMessage} frames — the path a jembetter client actually reads,
+     * since the equivalent XEmbed {@code MODALITY_ON}/{@code OFF} and {@code
+     * WINDOW_ACTIVATE}/{@code DEACTIVATE} {@code ClientMessage}s only reach
+     * the connection that created the client's window (AWT's own). This
+     * asserts the frames land on the wire; {@code
+     * EmbedClientTest.receivesModalityAndActivationFramesTheHostWritesOnTheControlChannel}
+     * covers the client decoding them.
+     */
+    @Test
+    void listenRelaysModalityAndActivationOnTheControlChannel() throws IOException, InterruptedException {
+        owner = new Frame("EmbedSocketTest owner");
+        socket = new EmbedSocket(owner);
+        socket.open(0, 0, 100, 100);
+
+        Path socketPath = Files.createTempFile("jembetter-host-test-", ".sock");
+        Files.delete(socketPath);
+
+        CountDownLatch embedded = new CountDownLatch(1);
+        socket.onClientEmbedded(embedded::countDown);
+        socket.listen(socketPath);
+
+        long pid = ProcessHandle.current().pid();
+        client1 = new JFrame("EmbedSocketTest fake client");
+        client1.setUndecorated(true);
+        client1.setBounds(0, 0, 30, 30);
+        client1.setVisible(true);
+        try (X11Display display = X11Display.open(null)) {
+            long windowId = waitForOwnWindow(display, pid);
+            XEmbedInfoProperty.write(display.raw(), windowId,
+                    new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
+        }
+
+        SocketChannel channel = SocketChannel.open(StandardProtocolFamily.UNIX);
+        try {
+            channel.connect(UnixDomainSocketAddress.of(socketPath));
+            PidHandshake.send(channel, pid);
+            assertTrue(embedded.await(5, TimeUnit.SECONDS), "client was never embedded via listen()");
+
+            // embed() itself relays the owner's activation state once
+            // (owner.isFocused() at embed time) before onClientEmbedded fires.
+            assertEquals(ControlMessage.Type.ACTIVATION, readFrame(channel).type(),
+                    "listen() embed did not open with a WINDOW_ACTIVATE control frame");
+
+            socket.setModal(true);
+            ControlMessage modalOn = readFrame(channel);
+            assertEquals(ControlMessage.Type.MODALITY, modalOn.type());
+            assertTrue(modalOn.flag(), "setModal(true) did not relay MODALITY=true");
+
+            socket.setModal(false);
+            ControlMessage modalOff = readFrame(channel);
+            assertEquals(ControlMessage.Type.MODALITY, modalOff.type());
+            assertFalse(modalOff.flag(), "setModal(false) did not relay MODALITY=false");
+        } finally {
+            channel.close();
+        }
     }
 
     @Test
@@ -750,6 +814,25 @@ class EmbedSocketTest {
             PidHandshake.send(channel, pid);
         }
         return new FakeClient(frame, windowId);
+    }
+
+    /** Reads one {@link ControlMessage} frame off {@code channel}, bounded by a deadline so a missing write fails rather than hangs. */
+    private static ControlMessage readFrame(SocketChannel channel) throws IOException, InterruptedException {
+        java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(2);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (buffer.hasRemaining()) {
+            if (channel.read(buffer) < 0) {
+                throw new IllegalStateException("Control channel closed before a full frame arrived");
+            }
+            if (!buffer.hasRemaining()) {
+                break;
+            }
+            if (System.nanoTime() > deadline) {
+                throw new IllegalStateException("Timed out waiting for a control frame");
+            }
+            Thread.sleep(20);
+        }
+        return ControlMessage.decode(buffer.array());
     }
 
     private static long waitForOwnWindow(X11Display display, long pid) throws InterruptedException {

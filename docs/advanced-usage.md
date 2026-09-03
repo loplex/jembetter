@@ -4,7 +4,8 @@
 [README](../README.md#quick-start)) are composed from — reach for them
 directly for anything the facade leaves out: several embedded clients at
 once (one `EmbedSocket` each), a voluntary host-initiated detach/re-embed,
-focus-next/prev tab-cycling, or modality signaling.
+focus-next/prev tab-cycling, or modality / host-activation signaling to the
+client.
 
 ## Host side
 
@@ -85,6 +86,38 @@ maxAttempts`. Death detection (`onClientDetached`) still works here — it's
 based on the X server's own `DestroyNotify`, not client cooperation.
 `EmbedHost#embedOpaque(long)` (see the main README) wraps this with a
 fixed, generous poll budget.
+
+## Modality and host-window activation
+
+Two host&rarr;client signals are purely semantic — a modal dialog shadowing
+the embedded area, and the host's own top-level window gaining or losing
+activation — with no real X11 event on the client's window to carry them.
+XEmbed defines `MODALITY_ON`/`OFF` and `WINDOW_ACTIVATE`/`DEACTIVATE`
+ClientMessages for exactly this, but those only ever reach the connection
+that created the client's window (AWT's own), the same restriction behind
+`onEmbedded` not using `EMBEDDED_NOTIFY`.
+
+So `EmbedSocket#listen` keeps the rendezvous socket open past the pid
+handshake as a **control channel** and relays both on it as small frames.
+The client reads them when embedded via `EmbedClient#offer` against a
+`listen` socket:
+
+```java
+socket.setModal(true);  // host side: shadowed by a modal dialog now
+```
+
+```java
+client.onModalityChanged(modal -> ...);      // shadowed by a host modal dialog
+client.onActivationChanged(active -> ...);    // host window (de)activated
+```
+
+`onActivationChanged` is host-level activation, distinct from
+`onFocusChanged`'s own input focus — it stays meaningful while the embedded
+client itself holds focus within an active host. Both fire only on the
+`offer` &harr; `listen` pairing: the one-shot `embed(long)`/`embed(Path)`/
+`embedOpaque` paths and `announce()` open no channel, so neither callback
+fires there (and `setModal` still sends the XEmbed ClientMessage as a
+courtesy to a genuinely XEmbed-aware external toolkit regardless).
 
 ## Client side
 

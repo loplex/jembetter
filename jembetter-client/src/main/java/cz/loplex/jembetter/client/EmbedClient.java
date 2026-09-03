@@ -1,7 +1,10 @@
 package cz.loplex.jembetter.client;
 
+import cz.loplex.jembetter.common.ActivationListener;
 import cz.loplex.jembetter.common.FocusListener;
+import cz.loplex.jembetter.common.ModalityListener;
 import cz.loplex.jembetter.common.SizeListener;
+import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.x11.WindowConfigureWatcher;
 import cz.loplex.jembetter.core.x11.WindowFinder;
@@ -32,6 +35,19 @@ import java.util.function.Supplier;
  * {@link #onEmbedded}) and for the host dying afterward (see
  * {@link #onHostDetached}). {@link #requestFocus()} sends {@code
  * XEMBED_REQUEST_FOCUS} back to the embedder once embedded.
+ *
+ * <p>When embedded via {@link #offer(Path)} against a host's {@code
+ * EmbedSocket#listen} socket, the rendezvous {@link SocketChannel} is kept
+ * open past the pid handshake as a <em>control channel</em>: a background
+ * thread reads {@link ControlMessage} frames off it and dispatches the
+ * purely-semantic host&rarr;client signals that have no X11 event to carry
+ * them — {@link #onModalityChanged} (host modal dialog) and {@link
+ * #onActivationChanged} (host window activation). These are the delivered
+ * counterparts of XEmbed's {@code MODALITY_ON}/{@code OFF} and {@code
+ * WINDOW_ACTIVATE}/{@code DEACTIVATE} {@code ClientMessage}s, which only ever
+ * reach the connection that created this window (AWT's own), not this class's.
+ * The {@link #announce}-only and {@link #watchOwnWindow} paths open no such
+ * channel, so those two callbacks never fire on them.
  */
 public final class EmbedClient implements AutoCloseable {
 
@@ -50,7 +66,13 @@ public final class EmbedClient implements AutoCloseable {
     };
     private volatile FocusListener onFocusChanged = focused -> {
     };
+    private volatile ModalityListener onModalityChanged = modal -> {
+    };
+    private volatile ActivationListener onActivationChanged = active -> {
+    };
     private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
+    private volatile SocketChannel controlChannel;
+    private volatile Thread controlChannelReaderThread;
 
     /**
      * Registers a callback invoked when this window is reparented back to
@@ -221,14 +243,72 @@ public final class EmbedClient implements AutoCloseable {
      */
     public void offer(Path hostSocketPath, String wmClass) {
         announce(wmClass);
+        SocketChannel channel;
         try {
-            UnixDomainSocketAddress address = UnixDomainSocketAddress.of(hostSocketPath);
-            try (SocketChannel channel = SocketChannel.open(StandardProtocolFamily.UNIX)) {
-                channel.connect(address);
-                PidHandshake.send(channel, ProcessHandle.current().pid());
-            }
+            channel = SocketChannel.open(StandardProtocolFamily.UNIX);
+            channel.connect(UnixDomainSocketAddress.of(hostSocketPath));
+            PidHandshake.send(channel, ProcessHandle.current().pid());
         } catch (IOException e) {
             throw new UncheckedIOException(e);
+        }
+        // Kept open past the handshake as this embed's control channel — a
+        // host embedding via EmbedSocket#listen keeps its end open too and
+        // writes ControlMessage frames (modality, host activation) that have
+        // no X11 event to arrive as. A host using the one-shot embed(Path)
+        // closes its end right away, so the reader below just sees EOF and
+        // exits — onModalityChanged/onActivationChanged simply never fire,
+        // exactly as on the announce()/watchOwnWindow() paths.
+        controlChannel = channel;
+        controlChannelReaderThread = new Thread(this::readControlChannel,
+                "jembetter-x11-embed-client-control-reader");
+        controlChannelReaderThread.setDaemon(true);
+        controlChannelReaderThread.start();
+    }
+
+    /**
+     * Registers a callback invoked when the host signals this client is
+     * shadowed by ({@code true}) or no longer shadowed by ({@code false}) a
+     * modal dialog it owns — see {@code EmbedSocket#setModal(boolean)}. Only
+     * fires for a client embedded via {@link #offer(Path)} against a host's
+     * {@code EmbedSocket#listen} socket (see this class's Javadoc). Runs on
+     * this class's own background control-channel reader thread.
+     */
+    public void onModalityChanged(ModalityListener callback) {
+        onModalityChanged = callback;
+    }
+
+    /**
+     * Registers a callback invoked when the host's own top-level window is
+     * activated ({@code true}) or deactivated ({@code false}) — host-level
+     * activation, distinct from this window's own input focus ({@link
+     * #onFocusChanged}). The delivered counterpart of XEmbed's {@code
+     * WINDOW_ACTIVATE}/{@code WINDOW_DEACTIVATE}. Only fires for a client
+     * embedded via {@link #offer(Path)} against a host's {@code
+     * EmbedSocket#listen} socket (see this class's Javadoc). Runs on this
+     * class's own background control-channel reader thread.
+     */
+    public void onActivationChanged(ActivationListener callback) {
+        onActivationChanged = callback;
+    }
+
+    private void readControlChannel() {
+        SocketChannel channel = controlChannel;
+        try {
+            ControlMessage message;
+            while ((message = ControlMessage.readFrom(channel)) != null) {
+                switch (message.type()) {
+                    case MODALITY -> onModalityChanged.modalityChanged(message.flag());
+                    case ACTIVATION -> onActivationChanged.activationChanged(message.flag());
+                    default -> {
+                        // FOCUS_REQUEST is client->host and never arrives here;
+                        // any future host->client type not yet handled is ignored.
+                    }
+                }
+            }
+        } catch (IOException e) {
+            // close() closes the channel to unblock this read() as its
+            // shutdown signal; the host disappearing does the same via EOF
+            // (the null return above), not this branch. Either way, done.
         }
     }
 
@@ -349,6 +429,22 @@ public final class EmbedClient implements AutoCloseable {
 
     @Override
     public void close() {
+        SocketChannel channel = controlChannel;
+        if (channel != null) {
+            try {
+                channel.close();
+            } catch (IOException e) {
+                // Best-effort cleanup of a channel already headed nowhere useful.
+            }
+        }
+        Thread reader = controlChannelReaderThread;
+        if (reader != null) {
+            try {
+                reader.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
         reparentWatcher.close();
         configureWatcher.close();
         focusWatcher.close();

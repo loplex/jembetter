@@ -75,15 +75,23 @@ gaps are blocked by a Windows API restriction:
   only a genuinely XEmbed-aware external toolkit (e.g. GTK) would — so
   there's no working X11 shape to mirror in the first place, and building a
   Win32-only version nothing calls either would be new dead code, not parity.
-- **`onModalityChanged` is not reachable from the narrow `EmbedPlug` facade.**
-  `EmbedPlugWin32#announce(Path, String)` still closes its handshake channel
-  immediately after sending the pid, unaffected by `EmbedClientWin32`'s
-  existence — a caller wanting modality delivery through `EmbedPlug` has to
-  use `EmbedClientWin32` directly instead (or alongside it) rather than
-  through `EmbedPlug#announce(Path, String)`. Wiring it into the narrow
-  facade would mean changing `announce(Path, String)`'s own channel-lifetime
-  behavior, which today is tested and documented the other way; deliberately
-  scoped down rather than done as a side effect of adding the receiver.
+- **`onModalityChanged`/`onActivationChanged` are not reachable from the
+  narrow `EmbedPlug` facade** — on either backend, deliberately. Both
+  `EmbedPlugX11#announce(Path, ...)` (via `EmbedClient#offer`) and
+  `EmbedPlugWin32#announce(Path, String)` close their handshake channel
+  immediately after sending the pid; a caller wanting these signals uses
+  `EmbedClient`/`EmbedClientWin32` directly instead. Wiring them into the
+  facade would mean changing `announce`'s own channel-lifetime behavior,
+  which is tested and documented the other way; scoped down rather than done
+  as a side effect of adding the receivers.
+
+The host&harr;client control channel these ride on shares one wire format
+across backends now — `cz.loplex.jembetter.common.ipc.ControlMessage`, a
+fixed 2-byte `[type][flag]` frame (`MODALITY`/`ACTIVATION` host&rarr;client,
+`FOCUS_REQUEST` client&rarr;host). X11 carries `ACTIVATION` too (relayed from
+the host owner `Frame`'s activation state); the Win32 host has no
+`sendActivated` equivalent to pair with yet, so its channel is
+`MODALITY`-only host&rarr;client.
 
 ## Will never match X11
 
