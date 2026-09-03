@@ -23,18 +23,30 @@ JDK, forked by the `windows-tests-on-linux` Surefire execution — see
 | `ProcessHandle.onExit()` for a foreign (not self-spawned) pid | Real `windows-latest`, 2026-08-26 spike |
 | `AF_UNIX` rendezvous between two JVMs | Real `windows-latest`, 2026-08-26 spike |
 | `Win32ReparentWatcher`: all 3 transitions (embed, host-detach, parent-destroy) | Real `windows-latest`, 2026-08-28 follow-up |
-| Click-to-focus hook install, hit-test, clean unhook | `Win32ClickWatcherTest` under Wine |
+| Click-to-focus hook install, hit-test, clean unhook | `Win32ClickWatcherTest` under Wine; facade path in `ClickToFocusWin32Check`&nbsp;† |
 | Click-to-focus survives an injected-click burst; latency a few µs/event | Real `windows-latest`, 2026-08-28 follow-up |
 | Destroying-close (`WM_CLOSE` instead of cross-process `DestroyWindow`) | `EmbedHostWin32Test` under Wine only |
-| Voluntary host-initiated detach (`Win32Reparent#release`, `EmbedSocketWin32#detachClient`) | `EmbedSocketWin32Test` under Wine only |
-| Multi-client reuse of one socket (`EmbedSocketWin32#listen`, accept-loop re-embed after a detach) | `EmbedSocketWin32Test` under Wine only |
-| `EmbedSocketWin32#setModal` opcode delivery, end-to-end (`EmbedSocketWin32#listen`'s control channel → `EmbedClientWin32#onModalityChanged`) | `EmbedSocketWin32Test` (send side) + `EmbedClientWin32Test` (receive side) under Wine only |
+| Voluntary host-initiated detach (`Win32Reparent#release`, `EmbedSocketWin32#detachClient`) | `EmbedSocketWin32Test` under Wine; `SocketClientWin32Check`&nbsp;† |
+| Multi-client reuse of one socket (`EmbedSocketWin32#listen`, accept-loop re-embed after a detach) | `EmbedSocketWin32Test` under Wine; `SocketClientWin32Check`&nbsp;† |
+| `EmbedSocketWin32#setModal` opcode delivery, end-to-end (`EmbedSocketWin32#listen`'s control channel → `EmbedClientWin32#onModalityChanged`) | `EmbedSocketWin32Test` (send side) + `EmbedClientWin32Test` (receive side) under Wine; `SocketClientWin32Check`&nbsp;† (both halves, one process pair) |
 | `EmbedPlugWin32#onFocusChanged` via `Win32FocusWatcher`'s `GetGUIThreadInfo` poll loop, same-process and cross-process | `Win32FocusWatcherTest`/`EmbedPlugWin32Test` under Wine + real `windows-latest`, 2026-09-02 follow-up |
-| `EmbedClientWin32`'s own reparent/focus/resize watching (`announce`/`offer`, `onEmbedded`/`onHostDetached`/`onFocusChanged`/`onResized`) and `requestFocus()` (a new `FocusRequestOpcode` marker byte on the same control channel `setModal` already uses, the other direction — read by a new `EmbedSocketWin32` control-channel reader) | `EmbedClientWin32Test`/`EmbedSocketWin32Test`/`Win32ConfigureWatcherTest` under Wine only |
+| `EmbedClientWin32`'s own reparent/focus/resize watching (`announce`/`offer`, `onEmbedded`/`onHostDetached`/`onFocusChanged`/`onResized`) and `requestFocus()` (a new `FocusRequestOpcode` marker byte on the same control channel `setModal` already uses, the other direction — read by a new `EmbedSocketWin32` control-channel reader) | `EmbedClientWin32Test`/`EmbedSocketWin32Test`/`Win32ConfigureWatcherTest` under Wine; `SocketClientWin32Check`&nbsp;† |
 
 `embed`/`embedOpaque` need no distinction on this backend — both collapse
 into the same operation, since there's no `_XEMBED_INFO` to make them
 differ.
+
+**†** `SocketClientWin32Check` and `ClickToFocusWin32Check`
+([`build-tools/win32-real-machine-checks`](../build-tools/win32-real-machine-checks/README.md))
+are the real-`windows-latest` checks for these rows: `EmbedSocketWin32` and
+`EmbedClientWin32` run against each other cross-process (the reactor can only
+pair each with a hand-rolled stand-in for the other, since the two modules
+don't depend on one another), and click-to-focus driven through the
+`EmbedHost` facade with a real injected click. Added alongside the same
+`win32-real-machine-checks.yml` job that runs the others; each is a gated
+PASS/FAIL. They have not yet had their first run on real hardware — until
+then these rows stay Wine-confirmed only, the check just now exists to close
+the gap.
 
 **Still unconfirmed:** UIPI blocking the click-to-focus hook against a
 higher-integrity-level target (the CI runner is itself elevated, so that
@@ -170,12 +182,16 @@ the rest of this module's tests. They run on every push, both on real `windows-l
 
 What Wine can't replicate closely enough — foreground-lock policy,
 cross-process reparent/DWM behaviour, `WH_MOUSE_LL` under an
-injected-input burst — is covered instead by
+injected-input burst — plus what no single reactor module can reach
+(`EmbedSocketWin32`↔`EmbedClientWin32` end to end across the
+`jembetter-host`/`jembetter-client` boundary; click-to-focus through the
+`EmbedHost` facade with a real injected click) — is covered instead by
 [`build-tools/win32-real-machine-checks`](../build-tools/win32-real-machine-checks/README.md),
-standalone checks run by hand against a real Windows machine.
-`SetWinEventHook`/`EVENT_OBJECT_FOCUS` delivery has no check there yet
-either — same "still unconfirmed" gap noted above, not just a Wine-vs-CI
-split.
+standalone checks run by hand or by
+`.github/workflows/win32-real-machine-checks.yml` against a real Windows
+machine. `SetWinEventHook`/`EVENT_OBJECT_FOCUS` delivery has no check there
+either — that mechanism was abandoned (see Mechanism notes), so there's
+nothing left to check.
 
 `maven-surefire-plugin`'s `<jvm>` wrapper
 (`build-tools/test-jvm-wrapper/bin/java`) only applies under an

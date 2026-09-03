@@ -9,7 +9,9 @@ import com.sun.jna.platform.win32.WinDef.HWND;
 import com.sun.jna.platform.win32.WinDef.LONG;
 import com.sun.jna.platform.win32.WinDef.RECT;
 import com.sun.jna.platform.win32.WinUser;
+import com.sun.jna.platform.win32.WinUser.GUITHREADINFO;
 import com.sun.jna.platform.win32.WinUser.INPUT;
+import com.sun.jna.ptr.IntByReference;
 
 /**
  * Helper shared by {@link FocusFallbackCheck} / {@link
@@ -57,6 +59,28 @@ final class CheckWindows {
 
     static boolean isWindow(long hwnd) {
         return User32.INSTANCE.IsWindow(toHwnd(hwnd));
+    }
+
+    /**
+     * Whether {@code hwnd} genuinely holds keyboard focus right now, per
+     * {@code GetGUIThreadInfo} on its owning thread — works cross-thread and
+     * cross-process without an {@code AttachThreadInput} bridge, unlike plain
+     * {@code GetFocus()}. The same call {@code Win32FocusWatcher} polls
+     * internally; used here as an independent probe of whether focus actually
+     * moved, separate from whatever watcher a check is exercising.
+     */
+    static boolean hasKeyboardFocus(long hwnd) {
+        IntByReference pid = new IntByReference();
+        int threadId = User32.INSTANCE.GetWindowThreadProcessId(toHwnd(hwnd), pid);
+        if (threadId == 0) {
+            return false;
+        }
+        GUITHREADINFO info = new GUITHREADINFO();
+        info.cbSize = info.size();
+        if (!User32.INSTANCE.GetGUIThreadInfo(threadId, info)) {
+            return false;
+        }
+        return info.hwndFocus != null && Pointer.nativeValue(info.hwndFocus.getPointer()) == hwnd;
     }
 
     static void destroyWindow(long hwnd) {
