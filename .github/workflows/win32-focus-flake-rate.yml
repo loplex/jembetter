@@ -34,6 +34,11 @@ name: Win32 focus flake rate
 # clustering in slow iterations point at load sensitivity rather than at a
 # defect.
 #
+# A hung fork is capped rather than allowed to consume the run - see the
+# surefire.timeout note in the loop. Note the arithmetic: enough consecutive
+# hangs still exhaust the job's own timeout-minutes, which is fine, because
+# hanging every iteration is itself the answer and shows up in the first few.
+#
 # Deliberately keeps Maven's default fail-fast rather than --fail-at-end. An
 # iteration that stops at the first failing module matches how windows-ci
 # fails, and letting the reactor run on into jembetter-client would exercise
@@ -92,7 +97,15 @@ jobs:
             $log = "logs/iteration-$i.log"
 
             $started = Get-Date
-            & mvn -B test 2>&1 | Tee-Object -FilePath $log
+            # surefire.timeout (forkedProcessTimeoutInSeconds) kills a fork that
+            # stops making progress and records it as a failure, so one hang
+            # costs a single iteration instead of the whole measurement. That
+            # matters here specifically: EmbedPlugWin32Test is on record as
+            # hanging indefinitely from a race that was never root-caused, and
+            # 30 iterations give it far more chances than the 6 it survived.
+            # 120 s is generous against a healthy iteration's ~20 s total while
+            # still letting several hangs be observed inside the job's cap.
+            & mvn -B test -Dsurefire.timeout=120 2>&1 | Tee-Object -FilePath $log
             $code = $LASTEXITCODE
             $seconds = [math]::Round(((Get-Date) - $started).TotalSeconds)
             if ($code -ne 0) { $failed++ }
@@ -122,6 +135,13 @@ jobs:
             $names = Select-String -Path $log -Pattern '\[ERROR\]\s+(\w+Test\.\w+)' |
                        ForEach-Object { $_.Matches[0].Groups[1].Value } |
                        Sort-Object -Unique
+            # A killed fork reports "There was a timeout in the fork" and names
+            # no test, so without this a hung iteration would show a failing
+            # exit code beside an empty failure list - precisely the blank the
+            # timeout was added to capture.
+            if (Select-String -Path $log -Pattern 'There was a timeout in the fork' -Quiet) {
+              $names = @($names) + '<fork timeout>' | Where-Object { $_ }
+            }
             foreach ($n in $names) { $tally[$n] = 1 + $(if ($tally.ContainsKey($n)) { $tally[$n] } else { 0 }) }
             $row['failedTests'] = $(if ($names) { $names -join ', ' } else { '-' })
             $rows += [pscustomobject]$row
