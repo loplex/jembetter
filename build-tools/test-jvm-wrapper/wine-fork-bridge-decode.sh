@@ -81,7 +81,7 @@ function read_n_hex() {
 function hex_to_text() {
   local hex=$1 text='' i ch
   for (( i = 0; i < ${#hex}; i += 2 )); do
-    printf -v ch '\x'"${hex:i:2}"
+    printf -v ch '%b' "\\x${hex:i:2}"
     text+=${ch}
   done
   REPLY=${text}
@@ -169,6 +169,7 @@ function skip_charset() {
 # Reads the 6-string + 1-int + 3-string body shared by testset-starting,
 # testset-completed and every test-* event (see EventChannelEncoder.encode
 # (ForkedProcessEventType, ReportEntry, boolean)).
+# shellcheck disable=SC2034
 function read_test_report_entry() {
   read_string; local source_name=${REPLY}
   read_string; local source_text=${REPLY}

@@ -77,6 +77,7 @@ function add_exit_trap() {
   existing=${existing#"trap -- '"}
   existing=${existing%"' EXIT"}
 
+  # shellcheck disable=SC2064
   trap "${existing:+${existing}; }${new_handler}" EXIT
 }
 
