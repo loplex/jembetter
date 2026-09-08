@@ -4,7 +4,7 @@ name: Linux (X11) CI
 # pair - see docs/testing.md and build-tools/test-jvm-wrapper/bin/java for
 # how that's wired up. The
 # @Tag("windows") suite also runs here, forked into a Windows JDK under Wine
-# (the win32-tests-under-wine Maven profile, activated by wine being
+# (the win32-tests-under-wine Maven profile, activated by the WineHQ Wine
 # installed below); real Windows exercises the same suite in windows-ci.yml.
 on:
   push:
@@ -15,7 +15,10 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Pinned rather than ubuntu-latest: the WineHQ pin below names a specific
+    # Ubuntu release (see that step's comment), so the runner has to be the one
+    # those package versions are built for.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -25,8 +28,51 @@ jobs:
           java-version: "21"
           cache: maven
 
-      - name: Install Xvfb + openbox + xdotool + wine
-        run: sudo apt-get update && sudo apt-get install -y xvfb openbox xdotool wine
+      - name: Install Xvfb + openbox + xdotool
+        run: sudo apt-get update && sudo apt-get install -y xvfb openbox xdotool
+
+      # Wine comes from WineHQ, not from the distro, and at a pinned version.
+      #
+      # Ubuntu's own `wine` package (9.0 on noble) crashes the Wine-hosted test
+      # JVM outright: an 0xc06d007f delay-load failure inside kernelbase.dll,
+      # taking the whole job down at the first @Tag("windows") test. The same
+      # suite passes under WineHQ's current staging build, so this pins CI to a
+      # Wine close to what the project is actually developed against instead of
+      # to whatever the distro froze at release time.
+      #
+      # Only winehq-staging needs the version: its dependencies are exact-
+      # versioned all the way down (winehq-staging -> wine-staging ->
+      # wine-staging-amd64 + wine-staging-i386), so one string pins the set.
+      # WineHQ keeps older builds in the repo, but not forever - if this step
+      # ever fails on an unavailable version, bump it to a current one rather
+      # than dropping the pin.
+      #
+      # Both the version string and the .sources URL below name noble, matching
+      # this job's pinned ubuntu-24.04 runner. Moving to a newer runner means
+      # updating all three together; until then they cannot drift apart.
+      #
+      # The i386 architecture is not optional here, even though the Windows JDK
+      # under test is amd64: wine-staging hard-depends on wine-staging-i386, so
+      # without multiarch the install itself cannot resolve. (This is what the
+      # distro packages let slip - `wine` + `wine64` install happily without
+      # i386, only printing "it looks like wine32 is missing" at runtime.)
+      #
+      # winehq-staging provides /usr/bin/wine, which is what activates the
+      # win32-tests-under-wine Maven profile, plus the wineserver/wineboot that
+      # provide-windows-java-using-wine.sh calls.
+      - name: Install Wine from WineHQ
+        env:
+          WINE_VERSION: "11.16~noble-1"
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo mkdir -pm755 /etc/apt/keyrings
+          sudo wget -O /etc/apt/keyrings/winehq-archive.key \
+            https://dl.winehq.org/wine-builds/winehq.key
+          sudo wget -NP /etc/apt/sources.list.d/ \
+            https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources
+          sudo apt-get update
+          sudo apt-get install -y --install-recommends "winehq-staging=${WINE_VERSION}"
+          wine --version
 
       # download-windows-java.sh resolves "latest 21 GA" itself, so pin the cache
       # key to the release it would actually fetch - a lightweight metadata query
