@@ -105,7 +105,15 @@ jobs:
             # 30 iterations give it far more chances than the 6 it survived.
             # 120 s is generous against a healthy iteration's ~20 s total while
             # still letting several hangs be observed inside the job's cap.
-            & mvn -B test -Dsurefire.timeout=120 2>&1 | Tee-Object -FilePath $log
+            #
+            # Splatted from an array, not written inline: passed as a bare
+            # token, PowerShell splits -Dsurefire.timeout=120 at the dot and
+            # Maven receives "-Dsurefire" plus ".timeout=120", which it rejects
+            # as an unknown lifecycle phase. That failed all 30 iterations in
+            # under two minutes without a single test running. Array elements
+            # are passed through verbatim.
+            $mvnArgs = @('-B', 'test', '-Dsurefire.timeout=120')
+            & mvn @mvnArgs 2>&1 | Tee-Object -FilePath $log
             $code = $LASTEXITCODE
             $seconds = [math]::Round(((Get-Date) - $started).TotalSeconds)
             if ($code -ne 0) { $failed++ }
@@ -141,6 +149,13 @@ jobs:
             # timeout was added to capture.
             if (Select-String -Path $log -Pattern 'There was a timeout in the fork' -Quiet) {
               $names = @($names) + '<fork timeout>' | Where-Object { $_ }
+            }
+            # A failing iteration in which no test ran at all means Maven itself
+            # did not get going - a bad argument, a broken workspace. Saying so
+            # separates it from "tests ran and passed", which is what an empty
+            # failure list would otherwise be read as.
+            if ($code -ne 0 -and -not (Select-String -Path $log -Pattern 'Tests run:' -Quiet)) {
+              $names = @($names) + '<no tests ran>' | Where-Object { $_ }
             }
             foreach ($n in $names) { $tally[$n] = 1 + $(if ($tally.ContainsKey($n)) { $tally[$n] } else { 0 }) }
             $row['failedTests'] = $(if ($names) { $names -join ', ' } else { '-' })
