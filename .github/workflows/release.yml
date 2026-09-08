@@ -1,0 +1,45 @@
+name: Publish to GitHub Packages
+
+# Deploys the reactor's artifacts (jembetter-demo excluded - see its pom.xml)
+# to this repository's own GitHub Packages Maven registry, on a v* tag.
+#
+# Tests are deliberately NOT run here: linux-ci.yml and windows-ci.yml already
+# cover the tagged commit, and this runner has neither Xvfb/openbox nor Wine
+# installed, so the suite would either skip wholesale or fail on a missing
+# X server rather than tell us anything new.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # GITHUB_TOKEN can publish to the packages of the repository it belongs
+      # to, so no personal access token has to be stored as a secret. Note the
+      # default token permissions are read-only, hence this explicit grant.
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          # Generates a settings.xml whose <server> id matches the
+          # <distributionManagement> ids in the root pom.xml, taking the
+          # credentials from the env vars named here (not their values -
+          # setup-java writes ${env.MAVEN_USERNAME}/${env.MAVEN_PASSWORD}
+          # placeholders that Maven resolves at deploy time).
+          server-id: github
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
+
+      - name: mvn deploy
+        run: mvn -B -DskipTests deploy
+        env:
+          MAVEN_USERNAME: ${{ github.actor }}
+          MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}

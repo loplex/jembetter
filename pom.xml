@@ -29,6 +29,33 @@
     <module>jembetter-demo</module>
   </modules>
 
+  <!--
+    Published to the GitHub Packages Maven registry of this project's own
+    GitHub repository. Note that GitHub Packages requires an authenticated
+    token even to *download* a public package, so consumers need one too -
+    README.md's "Publishing and consuming" section has both sides.
+
+    Release versions are immutable there: a given version can be uploaded
+    exactly once (a re-upload is rejected with HTTP 409), so a botched
+    release has to be superseded by a new version rather than replaced.
+    SNAPSHOT versions are exempt and can be re-deployed freely.
+
+    The <id>s below are what pair this up with the matching <server> entry
+    (credentials) in the deploying user's settings.xml.
+  -->
+  <distributionManagement>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages</name>
+      <url>https://maven.pkg.github.com/loplex/jembetter</url>
+    </repository>
+    <snapshotRepository>
+      <id>github</id>
+      <name>GitHub Packages</name>
+      <url>https://maven.pkg.github.com/loplex/jembetter</url>
+    </snapshotRepository>
+  </distributionManagement>
+
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -126,11 +153,10 @@
     </pluginManagement>
     <plugins>
       <!--
-        Local-only packaging: every module's `mvn install` also produces a
-        sources jar and a javadoc jar alongside the class jar, so a
-        dependency picked up from the local repo (../.m2) has real IDE
-        source/doc lookup. No distributionManagement here — nothing is
-        configured to be pushed anywhere.
+        Every module's `mvn install`/`deploy` also produces a sources jar and
+        a javadoc jar alongside the class jar, so a dependency picked up from
+        the local repo (~/.m2) or from GitHub Packages (see
+        <distributionManagement> above) has real IDE source/doc lookup.
       -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

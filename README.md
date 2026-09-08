@@ -40,8 +40,7 @@ breakdown and the module dependency diagram: [Architecture](docs/architecture.md
 
 ## Building
 
-There's no published artifact yet — everything is installed to your local
-`~/.m2` repository:
+`mvn install` builds everything into your local `~/.m2` repository:
 
 ```sh
 mvn install
@@ -60,6 +59,103 @@ Then depend on the module(s) you need:
   <version>0.0.1-SNAPSHOT</version>
 </dependency>
 ```
+
+To consume a build without cloning this repository, see
+[Publishing and consuming](#publishing-and-consuming) below.
+
+## Publishing and consuming
+
+Releases go to the GitHub Packages Maven registry of this project's GitHub
+repository:
+
+    https://maven.pkg.github.com/loplex/jembetter
+
+Everything except `jembetter-demo` is published there (the demo module is
+hand-launched verification apps, not something an embedding application
+depends on).
+
+### Consuming
+
+GitHub Packages requires an authenticated token **even to download a public
+package**, so unlike Maven Central this needs one-time setup on the consuming
+machine. Create a GitHub personal access token (classic) with the
+`read:packages` scope, then add both halves to your `~/.m2/settings.xml`:
+
+```xml
+<settings>
+  <servers>
+    <server>
+      <id>github</id>
+      <username>YOUR_GITHUB_USERNAME</username>
+      <password>YOUR_TOKEN</password>
+    </server>
+  </servers>
+
+  <profiles>
+    <profile>
+      <id>github-loplex</id>
+      <repositories>
+        <repository>
+          <!-- Must match the <server> id above - that's what pairs the
+               repository up with its credentials. -->
+          <id>github</id>
+          <url>https://maven.pkg.github.com/loplex/*</url>
+          <releases><enabled>true</enabled></releases>
+          <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+      </repositories>
+    </profile>
+  </profiles>
+
+  <activeProfiles>
+    <activeProfile>github-loplex</activeProfile>
+  </activeProfiles>
+</settings>
+```
+
+The trailing `/*` is GitHub's owner-wide wildcard: it resolves against every
+one of that owner's repositories, so this entry doesn't have to be repeated
+per project.
+
+The repository belongs in `settings.xml` rather than in the consuming
+project's `pom.xml` on purpose. A `<repositories>` block in a POM is
+inherited by everything that depends on that POM downstream, which would make
+Maven try this registry for unrelated dependencies too — and without a token
+that fails with an opaque 401 instead of a clean "not found". `settings.xml`
+is per-machine and never propagates.
+
+Two things that commonly break resolution here:
+
+- A `<mirror>` with `<mirrorOf>*</mirrorOf>` in the same `settings.xml`
+  intercepts this repository as well. Use `external:*` or an explicit
+  `<mirrorOf>` list instead, or add `!github` to it.
+- Fine-grained personal access tokens have a patchy history with the Maven
+  registry; a classic token is the reliable choice.
+
+### Publishing
+
+Tagging a commit `v*` runs the `Publish to GitHub Packages` workflow, which
+deploys from CI using the built-in `GITHUB_TOKEN` — no secret to configure.
+Cutting a release is therefore:
+
+```sh
+mvn versions:set -DnewVersion=0.1.0 -DgenerateBackupPoms=false
+git commit -am "Release 0.1.0"
+git tag v0.1.0
+git push origin main --tags
+
+mvn versions:set -DnewVersion=0.2.0-SNAPSHOT -DgenerateBackupPoms=false
+git commit -am "Back to snapshot development"
+```
+
+Release versions on GitHub Packages are immutable: a given version uploads
+exactly once, and a re-upload is rejected with HTTP 409. A botched release has
+to be superseded by a new version, not replaced. `-SNAPSHOT` versions are
+exempt and can be re-deployed freely.
+
+To deploy by hand instead, put a `<server>` entry as shown above — with a
+token carrying `write:packages` — in your `~/.m2/settings.xml` and run
+`mvn -DskipTests deploy`.
 
 ## Quick start
 
@@ -216,8 +312,9 @@ tests/CI are wired up — is covered in
   be swapped out for another via `detachClient()`).
 - No simultaneous-embed testing across multiple `EmbedSocket`s in one
   process.
-- No published artifact — `mvn install` to the local repo is the only way to
-  consume this today.
+- Artifacts are published only to GitHub Packages, which requires an
+  authenticated token even for public reads — see
+  [Publishing and consuming](#publishing-and-consuming).
 
 ## License
 

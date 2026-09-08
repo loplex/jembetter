@@ -16,6 +16,15 @@
   <name>jembetter-demo</name>
   <description>Runnable host/client demo apps used to manually verify the reparent/embed pipeline end to end on either backend.</description>
 
+  <properties>
+    <!-- These are hand-launched verification apps, not part of what an
+         embedding application depends on, so they stay out of the published
+         artifact set - the reactor's `mvn deploy` skips this module. `mvn
+         install` still installs it locally, which is what the "Try the demo"
+         classpath in README.md resolves against. -->
+    <maven.deploy.skip>true</maven.deploy.skip>
+  </properties>
+
   <dependencies>
     <dependency>
       <groupId>cz.loplex</groupId>
