@@ -2,64 +2,59 @@ name: Win32 focus flake rate
 
 # TEMPORARY DIAGNOSTIC - do not merge into main or develop.
 #
-# Follow-up to win32-focus-isolation-probe.yml, which came back inconclusive:
-# its control variant (the jembetter-host module as-is) passed, so the
-# isolation variants had nothing to differ from. Two reasons that probe could
-# not answer the question, both addressed here.
+# Measures how often the Win32 suite flakes on a GitHub-hosted Windows runner,
+# by repeating the exact windows-ci.yml invocation and tallying which tests
+# fail in which iteration.
 #
-# 1. It narrowed the context. It ran `mvn test -pl jembetter-host`, while the
-#    one observed failure came from a full-reactor `mvn -B test`, where
-#    jembetter-core-win32's 21 window-creating tests run in the same job
-#    first. This workflow uses the exact windows-ci.yml invocation instead, so
-#    whatever the reactor contributes is present.
+# History, because it explains the shape:
 #
-# 2. It took one sample per variant. The failure has been seen exactly once
-#    (of three Windows CI runs, only one got past jembetter-core-x11), so a
-#    single green run distinguishes nothing. Each variant here repeats.
+# - win32-focus-isolation-probe.yml asked whether
+#   EmbedSocketWin32Test.aFocusRequestMarkerByteFromTheClientFocusesTheEmbeddedWindow
+#   fails because earlier tests in a shared Surefire fork leave focus state
+#   behind. It came back inconclusive - its control variant passed, so the
+#   isolation variants had nothing to differ from.
+# - The first run of this workflow then passed that test in 6 baseline
+#   iterations and ~4 fork-per-class ones. Against the single failure ever
+#   observed, the isolation hypothesis has nothing to stand on, so the
+#   -DreuseForks=false variant is gone: it cost 90 minutes and could only ever
+#   confirm a hypothesis already out of evidence.
+# - That run did surface a different, fully explained race, in
+#   Win32FocusWatcherTest.unwatchStopsFurtherCallbacks (1 of 6). Hence the
+#   change of purpose: rather than testing one hypothesis about one test, tally
+#   whatever fails, so the actual flake profile becomes visible.
 #
-# What comes back per iteration: exit code, and for both Win32 classes the
-# Tests-run line with its failure count and elapsed time. The timings matter -
-# in the red run those classes took 17.89 s / 11.80 s against 5.65 s / 6.03 s
-# in the probe, so if failures cluster in the slow iterations, that points at a
-# timing-sensitive race rather than at leftover state.
+# Iteration count is high because the samples are nearly free: only the first
+# iteration compiles, so the rest run in roughly 20 s each, not the 4+ minutes
+# a cold windows-ci job takes.
 #
-# Reading the result:
-#   baseline red sometimes, fresh-forks always green => isolation confirmed,
-#     fix belongs in test isolation
-#   both red at a similar rate                       => a flake independent of
-#     fork reuse; correlate with the elapsed times before touching Win32Focus
-#   both always green over this many runs             => the single red run was
-#     an outlier of conditions not reproduced here; say so and stop chasing it
+# Per iteration it records the exit code, wall-clock duration, the two
+# jembetter-host Win32 classes' elapsed times, and every test reported as
+# failed. The timings are worth having: the one red CI run took 17.89 s /
+# 11.80 s on those classes against 3.7-6.4 s whenever they passed, so failures
+# clustering in slow iterations point at load sensitivity rather than at a
+# defect.
 #
-# Deliberately keeps Maven's default fail-fast rather than --fail-at-end: an
-# iteration that stops at jembetter-host matches the red run's shape, and
-# letting the reactor continue into jembetter-client would run
+# Deliberately keeps Maven's default fail-fast rather than --fail-at-end. An
+# iteration that stops at the first failing module matches how windows-ci
+# fails, and letting the reactor run on into jembetter-client would exercise
 # EmbedPlugWin32Test - which has a known hang, so far only diagnosed under
-# Wine - for the first time on real Windows, inside a loop. timeout-minutes
-# below is the backstop either way.
+# Wine - for the first time on real Windows, inside a loop. Note the
+# consequence when reading results: once a module fails, later modules'
+# tests did not run in that iteration, so their absence is not a pass.
 on:
   push:
     branches: [spike_win32]
   workflow_dispatch:
     inputs:
       iterations:
-        description: Iterations per variant
+        description: Iterations
         required: false
-        default: "6"
+        default: "30"
 
 jobs:
   flake-rate:
     runs-on: windows-latest
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: baseline
-            extra: ""
-          - id: fresh-fork-per-class
-            extra: "-DreuseForks=false"
-    name: ${{ matrix.id }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -81,8 +76,7 @@ jobs:
             $PSNativeCommandUseErrorActionPreference = $false
           }
 
-          $iterations = [int]("${{ github.event.inputs.iterations }}" -replace '^$', '6')
-          $extra = "${{ matrix.extra }}"
+          $iterations = [int]("${{ github.event.inputs.iterations }}" -replace '^$', '30')
           $classes = @(
             'cz.loplex.jembetter.host.EmbedHostWin32Test',
             'cz.loplex.jembetter.host.EmbedSocketWin32Test'
@@ -91,18 +85,19 @@ jobs:
           New-Item -ItemType Directory -Force -Path logs | Out-Null
           $rows = @()
           $failed = 0
+          $tally = @{}
 
           for ($i = 1; $i -le $iterations; $i++) {
             Write-Host "::group::iteration $i of $iterations"
             $log = "logs/iteration-$i.log"
 
-            $mvnArgs = @('-B', 'test')
-            if ($extra -ne '') { $mvnArgs += $extra }
-            & mvn @mvnArgs 2>&1 | Tee-Object -FilePath $log
+            $started = Get-Date
+            & mvn -B test 2>&1 | Tee-Object -FilePath $log
             $code = $LASTEXITCODE
+            $seconds = [math]::Round(((Get-Date) - $started).TotalSeconds)
             if ($code -ne 0) { $failed++ }
 
-            $row = [ordered]@{ iteration = $i; exit = $code }
+            $row = [ordered]@{ iteration = $i; exit = $code; seconds = $seconds }
             foreach ($c in $classes) {
               $short = $c.Split('.')[-1]
               $line = Select-String -Path $log -Pattern ([regex]::Escape("-- in $c")) |
@@ -113,19 +108,42 @@ jobs:
                 $e = [regex]::Match($line.Line, 'Errors:\s*(\d+)').Groups[1].Value
                 $row[$short] = "F=$f E=$e ${t}s"
               } else {
-                $row[$short] = "did not run"
+                # Not a pass: fail-fast means an earlier module stopped the run.
+                $row[$short] = "not reached"
               }
             }
-            $focus = Select-String -Path $log -Pattern 'never focused after the client wrote'
-            $row['focusTestFailed'] = [bool]$focus
+
+            # Surefire's end-of-run summary lists each failure as
+            # "[ERROR]   SomeTest.someMethod:123 message".
+            # Unanchored on purpose: anchoring at line start would silently
+            # report "no failures" if anything ever prefixes the captured
+            # output, and a false clean result is the worst failure mode a
+            # flake tally can have.
+            $names = Select-String -Path $log -Pattern '\[ERROR\]\s+(\w+Test\.\w+)' |
+                       ForEach-Object { $_.Matches[0].Groups[1].Value } |
+                       Sort-Object -Unique
+            foreach ($n in $names) { $tally[$n] = 1 + $(if ($tally.ContainsKey($n)) { $tally[$n] } else { 0 }) }
+            $row['failedTests'] = $(if ($names) { $names -join ', ' } else { '-' })
             $rows += [pscustomobject]$row
 
             Write-Host "::endgroup::"
-            Write-Host "iteration $i => exit $code, focus test failed: $([bool]$focus)"
+            Write-Host "iteration $i => exit $code, ${seconds}s, failed: $($row['failedTests'])"
           }
 
           $summary = @()
-          $summary += "## ${{ matrix.id }}: $failed of $iterations iterations failed"
+          $summary += "## $failed of $iterations iterations failed"
+          $summary += ""
+          if ($tally.Count -gt 0) {
+            $summary += "### Flake rate per test"
+            $summary += ""
+            $summary += '| test | failed in |'
+            $summary += '| --- | --- |'
+            foreach ($k in ($tally.Keys | Sort-Object { -$tally[$_] })) {
+              $summary += "| $k | $($tally[$k]) of $iterations |"
+            }
+            $summary += ""
+          }
+          $summary += "### Per iteration"
           $summary += ""
           $cols = $rows[0].PSObject.Properties.Name
           $summary += '| ' + ($cols -join ' | ') + ' |'
@@ -140,14 +158,14 @@ jobs:
           "iterations=$iterations" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
           # The tally IS the result, so a red iteration must not redden the step -
-          # read the table above. An infrastructure failure still shows up there,
-          # as rows whose classes read "did not run".
+          # read the tables above. An infrastructure failure still shows up there,
+          # as iterations whose classes read "not reached".
           exit 0
 
       - name: Upload iteration logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: iteration-logs-${{ matrix.id }}
+          name: iteration-logs
           path: logs/
           if-no-files-found: warn
