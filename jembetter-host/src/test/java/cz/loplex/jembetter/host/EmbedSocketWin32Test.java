@@ -260,11 +260,13 @@ class EmbedSocketWin32Test {
             if (System.nanoTime() > deadline) {
                 throw new IllegalStateException("Timed out waiting for a control frame");
             }
+            //noinspection BusyWait
             Thread.sleep(20);
         }
         return buffer.array();
     }
 
+    @SuppressWarnings("SameParameterValue")
     private static void assertControlFrame(byte[] frame, ControlMessage.Type type, boolean flag, String message) {
         assertEquals(type.code(), frame[0], message + " (type byte)");
         assertEquals((byte) (flag ? 1 : 0), frame[1], message + " (flag byte)");

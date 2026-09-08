@@ -208,6 +208,7 @@ class TwoSocketsConcurrentTest {
             if (!found.isEmpty()) {
                 return found.getFirst();
             }
+            //noinspection BusyWait
             Thread.sleep(50);
         } while (System.nanoTime() < deadline);
         throw new IllegalStateException("fake client process " + pid + " never published a top-level window");

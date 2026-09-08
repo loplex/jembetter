@@ -16,6 +16,7 @@ import java.awt.Color;
  * host already knows this process's pid (it spawned it), so no Unix domain
  * socket rendezvous is needed.
  */
+@SuppressWarnings("JavaPrintToLogpoint")
 public final class ClientFacadeDemo {
 
     private ClientFacadeDemo() {

@@ -44,6 +44,7 @@ import java.util.concurrent.CountDownLatch;
  * <p>Kill this host process (including {@code kill -9}) instead to see
  * {@link ClientDemo}'s symmetrical host-death detection fire on its side.
  */
+@SuppressWarnings("JavaPrintToLogpoint")
 public final class HostDemo {
 
     private HostDemo() {

@@ -135,6 +135,7 @@ class VisualEmbedDemoTest {
             if (!found.isEmpty()) {
                 return found.getFirst();
             }
+            //noinspection BusyWait
             Thread.sleep(50);
         } while (System.nanoTime() < deadline);
         throw new IllegalStateException("Client window never became visible to the window manager");

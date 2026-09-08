@@ -85,6 +85,7 @@ class WindowFinderTest {
             if (!found.isEmpty()) {
                 return found;
             }
+            //noinspection BusyWait
             Thread.sleep(100);
         } while (System.nanoTime() < deadline);
         return found;

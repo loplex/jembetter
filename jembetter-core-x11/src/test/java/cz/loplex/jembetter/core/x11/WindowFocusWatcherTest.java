@@ -142,6 +142,7 @@ class WindowFocusWatcherTest {
             if (WindowTree.isMapped(display, windowId)) {
                 return;
             }
+            //noinspection BusyWait
             Thread.sleep(50);
         } while (System.nanoTime() < deadline);
         throw new IllegalStateException("window " + windowId + " never became mapped");

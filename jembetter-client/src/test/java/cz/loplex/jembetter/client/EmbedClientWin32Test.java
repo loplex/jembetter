@@ -284,6 +284,7 @@ class EmbedClientWin32Test {
             if (!found.isEmpty()) {
                 return found.getFirst();
             }
+            //noinspection BusyWait
             Thread.sleep(50);
         } while (System.nanoTime() < deadline);
         throw new IllegalStateException("Client process " + pid + " never published a top-level window");

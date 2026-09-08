@@ -50,6 +50,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * process would), and confirms a second fake client can embed on the same
  * socket afterward without restarting the host.
  */
+@SuppressWarnings("BusyWait")
 @EnabledIfEnvironmentVariable(named = "DISPLAY", matches = ".+")
 class EmbedSocketX11Test {
 

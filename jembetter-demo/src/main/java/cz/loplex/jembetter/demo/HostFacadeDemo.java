@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit;
  * a 1:1 facade for the lifetime of a single child process, so that stays
  * {@code EmbedSocket}-only — see {@link HostDemo} for it.
  */
+@SuppressWarnings("JavaPrintToLogpoint")
 public final class HostFacadeDemo {
 
     private HostFacadeDemo() {

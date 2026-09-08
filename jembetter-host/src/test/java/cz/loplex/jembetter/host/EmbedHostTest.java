@@ -145,6 +145,7 @@ class EmbedHostTest {
             if (System.nanoTime() > deadline) {
                 throw new IllegalStateException("EmbedHost.embed(Path) never created the rendezvous socket");
             }
+            //noinspection BusyWait
             Thread.sleep(20);
         }
     }
@@ -186,6 +187,7 @@ class EmbedHostTest {
             if (!found.isEmpty()) {
                 return found.getFirst();
             }
+            //noinspection BusyWait
             Thread.sleep(50);
         } while (System.nanoTime() < deadline);
         throw new IllegalStateException("Fake client window never became visible to the window manager");

@@ -202,6 +202,7 @@ class EmbedHostWin32Test {
             if (!User32.INSTANCE.IsWindow(handle)) {
                 return true;
             }
+            //noinspection BusyWait
             Thread.sleep(50);
         } while (System.nanoTime() < deadline);
         return false;

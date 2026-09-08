@@ -109,6 +109,7 @@ class Win32ClickWatcherTest {
 
         long deadline = System.currentTimeMillis() + 3000;
         while (hits.get() < burst && System.currentTimeMillis() < deadline) {
+            //noinspection BusyWait
             Thread.sleep(50);
         }
 

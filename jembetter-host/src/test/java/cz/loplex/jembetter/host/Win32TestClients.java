@@ -39,6 +39,7 @@ final class Win32TestClients {
             if (!found.isEmpty()) {
                 return found.getFirst();
             }
+            //noinspection BusyWait
             Thread.sleep(50);
         } while (System.nanoTime() < deadline);
         throw new IllegalStateException("Fake client window never became visible; top-level windows for pid " + pid
@@ -74,6 +75,7 @@ final class Win32TestClients {
                 if (System.nanoTime() > deadline) {
                     throw new IllegalStateException("Rendezvous socket was never bound", notReadyYet);
                 }
+                //noinspection BusyWait
                 Thread.sleep(20);
             }
         }

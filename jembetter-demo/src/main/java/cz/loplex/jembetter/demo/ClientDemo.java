@@ -22,6 +22,7 @@ import java.awt.Color;
  * after this window has been embedded and the host window (unrelated,
  * unfocused) should lose input focus to this one.
  */
+@SuppressWarnings("JavaPrintToLogpoint")
 public final class ClientDemo {
 
     private ClientDemo() {
