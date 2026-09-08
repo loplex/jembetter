@@ -1,0 +1,93 @@
+name: Win32 focus-isolation probe
+
+# TEMPORARY DIAGNOSTIC - do not merge into main or develop.
+#
+# Answers one question: why does
+# EmbedSocketWin32Test.aFocusRequestMarkerByteFromTheClientFocusesTheEmbeddedWindow
+# fail on real Windows when SocketClientWin32Check exercises the same
+# client-marker-byte -> host-focuses-embedded-child path there and passes?
+#
+# The suspicion is process isolation. Each real-machine check runs in its own
+# fresh JVM, one check per process. The JUnit suite runs EmbedHostWin32Test -
+# Robot-injected clicks, frames destroyed while still holding a client - in the
+# SAME Surefire fork, before EmbedSocketWin32Test. Leftover foreground/focus
+# state from those is the candidate.
+#
+# Four variants run side by side, none allowed to fail the job, so one push
+# yields the whole picture:
+#
+#   whole-module          reproduces the red: EmbedHostWin32Test then
+#                         EmbedSocketWin32Test in one fork
+#   class-alone           the class by itself - passes => something earlier in
+#                         the fork is the cause, not Win32Focus
+#   method-alone          the single method - if class-alone fails but this
+#                         passes, the poisoning comes from within the class
+#   fresh-fork-per-class  whole module, one JVM per test class (the
+#                         one-process-per-check shape the checks use) - passes
+#                         => isolation confirmed, and this is the fix's shape
+#
+# Reading the result: any variant greener than whole-module means the failure
+# is shared-fork state and belongs to test isolation, not to Win32Focus. All
+# four equally red means the hypothesis is wrong and the difference lies
+# somewhere between Surefire's fork and a plain JVM.
+on:
+  push:
+    branches: [spike_win32]
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: whole-module
+            args: -pl jembetter-host
+          - id: class-alone
+            args: -pl jembetter-host -Dtest=EmbedSocketWin32Test
+          - id: method-alone
+            args: -pl jembetter-host "-Dtest=EmbedSocketWin32Test#aFocusRequestMarkerByteFromTheClientFocusesTheEmbeddedWindow"
+          - id: fresh-fork-per-class
+            args: -pl jembetter-host -DreuseForks=false
+    name: ${{ matrix.id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      # -pl needs the reactor's other modules resolvable from the local repo.
+      - name: mvn install -DskipTests
+        run: mvn -B install -DskipTests
+
+      - name: mvn test (${{ matrix.id }})
+        id: probe
+        continue-on-error: true
+        run: mvn -B test ${{ matrix.args }}
+
+      - name: Summarize
+        if: always()
+        run: |
+          $outcome = "${{ steps.probe.outcome }}"
+          "## ${{ matrix.id }}: $outcome" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          $reports = Get-ChildItem -Path jembetter-host/target/surefire-reports -Filter *.txt -ErrorAction SilentlyContinue
+          if ($reports) {
+            "``````" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            foreach ($r in $reports) {
+              Select-String -Path $r.FullName -Pattern 'Tests run:|FAILURE!|never focused' |
+                ForEach-Object { $_.Line.Trim() | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append }
+            }
+            "``````" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
+
+      - name: Upload surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-${{ matrix.id }}
+          path: jembetter-host/target/surefire-reports/
+          if-no-files-found: warn
