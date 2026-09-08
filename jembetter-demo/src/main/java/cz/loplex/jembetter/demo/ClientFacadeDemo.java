@@ -32,16 +32,17 @@ public final class ClientFacadeDemo {
 
         System.out.println("Client PID: " + ProcessHandle.current().pid());
 
-        EmbedPlug plug = EmbedPlug.create();
         // Deliberately never closed: the plug has to outlive announce() for
         // the rest of this process's life. close() tears down the watchers
         // the two callbacks below are delivered by, and the host only embeds
         // after the READY line at the bottom — closing here would mean
         // neither callback ever fires.
         //noinspection resource
+        EmbedPlug plug = EmbedPlug.create();
         plug.onHostDetached(() -> System.out.println("Host detached (process exited or crashed)."));
-        plug.onEmbedded(embedderWindowId -> System.out
-                .println("Embedded; embedder window id is 0x" + Long.toHexString(embedderWindowId)));
+        plug.onEmbedded(embedderWindowId ->
+                System.out.println("Embedded; embedder window id is 0x" + Long.toHexString(embedderWindowId))
+        );
         plug.announce(null);
 
         // announce() must run (arming the reparent watcher and publishing
