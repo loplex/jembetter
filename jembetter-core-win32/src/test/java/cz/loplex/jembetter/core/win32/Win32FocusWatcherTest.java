@@ -90,16 +90,45 @@ class Win32FocusWatcherTest {
 
     @Test
     void unwatchStopsFurtherCallbacks() throws InterruptedException {
-        hwndA = createVisibleTopLevelWindowAt("Win32FocusWatcherTest unwatch", 120, 120, 200, 150);
+        hwndA = createVisibleTopLevelWindowAt("Win32FocusWatcherTest unwatch-A", 120, 120, 200, 150);
+        hwndB = createVisibleTopLevelWindowAt("Win32FocusWatcherTest unwatch-B", 340, 120, 200, 150);
         watcher = new Win32FocusWatcher();
 
-        CountDownLatch fired = new CountDownLatch(1);
-        watcher.watch(hwndA, focused -> fired.countDown());
-        watcher.unwatch(hwndA);
-
+        // Get one report out of the watcher while it is still watching, the
+        // same "prove it's live first" shape as the test above, before
+        // unwatching. Two things need that: it establishes that the poll
+        // thread has actually picked hwndA up, and it leaves hwndA's recorded
+        // state as focused.
+        //
+        // The second half is what makes this test deterministic. watch()
+        // seeds no baseline, so the poll thread's first look at a
+        // just-created visible window is a false->true transition and fires
+        // the callback. Unwatching before that first poll therefore produced
+        // a callback indistinguishable from the leak this test looks for -
+        // it failed that way roughly 1 run in 6 on Windows CI. With the state
+        // already recorded as focused, no in-flight poll can manufacture a
+        // transition: it either still sees focus (true == true) or sees the
+        // move to hwndB below after unwatch() cleared the record
+        // (false == false, since a cleared record reads as unfocused).
+        CountDownLatch gained = new CountDownLatch(1);
+        AtomicBoolean unwatched = new AtomicBoolean(false);
+        CountDownLatch leaked = new CountDownLatch(1);
+        watcher.watch(hwndA, focused -> {
+            if (unwatched.get()) {
+                leaked.countDown();
+            } else if (focused) {
+                gained.countDown();
+            }
+        });
         Win32Focus.set(hwndA);
+        assertTrue(gained.await(3, TimeUnit.SECONDS), "setup: SetFocus on hwndA never reached the callback");
 
-        assertFalse(fired.await(1, TimeUnit.SECONDS), "an unwatched window still invoked the callback");
+        watcher.unwatch(hwndA);
+        unwatched.set(true);
+
+        Win32Focus.set(hwndB);
+
+        assertFalse(leaked.await(1, TimeUnit.SECONDS), "an unwatched window still invoked the callback");
     }
 
     @Test
