@@ -52,7 +52,7 @@ class EmbedPlugTest {
     }
 
     @Test
-    void announcesWithoutDialingAHostSocket() throws IOException, InterruptedException {
+    void announcesWithoutDialingAHostSocket() throws InterruptedException {
         frame = new JFrame("EmbedPlugTest");
         frame.setBounds(0, 0, 50, 50);
         frame.setVisible(true);
@@ -115,7 +115,7 @@ class EmbedPlugTest {
      * WindowFocusWatcherTest}.
      */
     @Test
-    void deliversFocusGainedToTheClientThroughTheFacade() throws IOException, InterruptedException {
+    void deliversFocusGainedToTheClientThroughTheFacade() throws InterruptedException {
         frame = new JFrame("EmbedPlugTest");
         frame.setUndecorated(true);
         frame.setBounds(0, 0, 50, 50);

@@ -141,7 +141,7 @@ class EmbedClientX11Test {
      * domain socket rendezvous at all.
      */
     @Test
-    void announceSetsUpXEmbedInfoAndWatchersWithoutDialingAHostSocket() throws IOException, InterruptedException {
+    void announceSetsUpXEmbedInfoAndWatchersWithoutDialingAHostSocket() throws InterruptedException {
         frame = new JFrame("jembetter-client EmbedClientX11Test");
         frame.setBounds(0, 0, 50, 50);
         frame.setVisible(true);

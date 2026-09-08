@@ -24,8 +24,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Exercises {@link EmbedHost}, the 1:1 facade over {@link EmbedSocket} —
@@ -120,7 +119,7 @@ class EmbedHostTest {
         }
 
         embedder.join(TimeUnit.SECONDS.toMillis(5));
-        assertTrue(!embedder.isAlive(), "EmbedHost.embed(Path) never returned after the one-shot handshake");
+        assertFalse(embedder.isAlive(), "EmbedHost.embed(Path) never returned after the one-shot handshake");
 
         long canvasWindowId = CanvasNativeHandle.extract(canvas);
         try (X11Display display = X11Display.open(null)) {

@@ -10,7 +10,6 @@ import cz.loplex.jembetter.core.win32.Win32WindowFinder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.condition.OS;
 
 import javax.swing.JFrame;
 import java.awt.AWTException;
@@ -27,9 +26,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Exercises {@link EmbedHost}'s Win32 backend ({@code EmbedHostWin32})
@@ -179,7 +176,7 @@ class EmbedHostWin32Test {
         }
 
         embedder.join(TimeUnit.SECONDS.toMillis(5));
-        assertTrue(!embedder.isAlive(), "EmbedHost.embed(Path) never returned after the one-shot handshake");
+        assertFalse(embedder.isAlive(), "EmbedHost.embed(Path) never returned after the one-shot handshake");
 
         long canvasHwnd = CanvasNativeHandle.extract(canvas);
         assertEquals(canvasHwnd, Win32Reparent.parentOf(clientHwnd),

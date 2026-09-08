@@ -3,7 +3,6 @@ package cz.loplex.jembetter.core.win32;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.condition.OS;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;

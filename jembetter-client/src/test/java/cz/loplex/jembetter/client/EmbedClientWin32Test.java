@@ -27,9 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Exercises {@link EmbedClientWin32} against a hand-rolled fake host — a raw
@@ -121,7 +119,7 @@ class EmbedClientWin32Test {
         assertTrue(firstDelivered.await(5, TimeUnit.SECONDS), "onModalityChanged never fired for the first opcode");
         assertTrue(firstOpcode.get(), "the first opcode (1) was not decoded as modal=true");
         assertTrue(secondDelivered.await(5, TimeUnit.SECONDS), "onModalityChanged never fired for the second opcode");
-        assertEquals(false, secondOpcode.get(), "the second opcode (0) was not decoded as modal=false");
+        assertFalse(secondOpcode.get(), "the second opcode (0) was not decoded as modal=false");
     }
 
     @Test

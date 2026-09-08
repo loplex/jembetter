@@ -7,8 +7,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 @EnabledIfEnvironmentVariable(named = "DISPLAY", matches = ".+")
 class WindowConfigureWatcherTest {
@@ -62,7 +61,7 @@ class WindowConfigureWatcherTest {
                     WindowGeometry.moveResize(hostDisplay, clientWindow, 0, 0, 42, 24);
                 }
 
-                assertTrue(!resized.await(1, TimeUnit.SECONDS), "callback fired after unwatch");
+                assertFalse(resized.await(1, TimeUnit.SECONDS), "callback fired after unwatch");
             } finally {
                 RawWindow.destroy(clientDisplay, clientWindow);
             }

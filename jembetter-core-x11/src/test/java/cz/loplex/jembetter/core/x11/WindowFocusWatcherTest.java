@@ -10,8 +10,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 @EnabledIfEnvironmentVariable(named = "DISPLAY", matches = ".+")
 class WindowFocusWatcherTest {
@@ -69,8 +68,7 @@ class WindowFocusWatcherTest {
                     // changed, so nothing new should be reported.
                     InputFocus.set(hostDisplay, watched);
                     InputFocus.set(hostDisplay, watched);
-                    assertEquals(null, reported.poll(1, TimeUnit.SECONDS),
-                            "a redundant focus-gained was reported");
+                    assertNull(reported.poll(1, TimeUnit.SECONDS), "a redundant focus-gained was reported");
                 }
             } finally {
                 RawWindow.destroy(clientDisplay, watched);
@@ -106,8 +104,7 @@ class WindowFocusWatcherTest {
                         X11Ext.INSTANCE.XFlush(hostDisplay.raw());
                     }
 
-                    assertEquals(null, reported.poll(1, TimeUnit.SECONDS),
-                            "a grab's bracketing focus out/in pair was reported as a real focus change");
+                    assertNull(reported.poll(1, TimeUnit.SECONDS), "a grab's bracketing focus out/in pair was reported as a real focus change");
                 }
             } finally {
                 RawWindow.destroy(clientDisplay, watched);
@@ -132,7 +129,7 @@ class WindowFocusWatcherTest {
                     InputFocus.set(hostDisplay, watched);
                 }
 
-                assertTrue(!focused.await(1, TimeUnit.SECONDS), "callback fired after unwatch");
+                assertFalse(focused.await(1, TimeUnit.SECONDS), "callback fired after unwatch");
             } finally {
                 RawWindow.destroy(clientDisplay, watched);
             }
