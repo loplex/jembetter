@@ -415,7 +415,7 @@ class EmbedClientX11Test {
         do {
             found = WindowFinder.findTopLevelWindowsByPid(display, pid);
             if (!found.isEmpty()) {
-                return found.get(0);
+                return found.getFirst();
             }
             sleep();
         } while (System.nanoTime() < deadline);

@@ -772,7 +772,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
                 list -> !list.isEmpty(),
                 "Client process " + clientPid + " never published a top-level window");
         if (candidates.size() == 1) {
-            return candidates.get(0);
+            return candidates.getFirst();
         }
         throw new IllegalStateException("Client process " + clientPid + " has " + candidates.size()
                 + " top-level windows; call expectClientWindowClass(...) to disambiguate");
@@ -791,7 +791,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
         do {
             List<Long> matches = probe.get();
             if (matches.size() == 1) {
-                return matches.get(0);
+                return matches.getFirst();
             }
             if (matches.size() > 1) {
                 throw new IllegalStateException(ambiguousMessage.apply(matches.size()));

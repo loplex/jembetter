@@ -226,7 +226,7 @@ final class Win32EmbedCore {
             throw new IllegalStateException("Client process " + clientPid + " has " + candidates.size()
                     + " application windows; Win32 has no WM_CLASS-equivalent way to disambiguate them: " + dump);
         }
-        return candidates.get(0);
+        return candidates.getFirst();
     }
 
     private static void sleep(long millis) {

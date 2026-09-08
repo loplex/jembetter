@@ -396,7 +396,7 @@ public final class EmbedClientX11 implements EmbedClient {
         do {
             List<Long> ownWindows = WindowFinder.findTopLevelWindowsByPid(display, pid);
             if (ownWindows.size() == 1) {
-                return ownWindows.get(0);
+                return ownWindows.getFirst();
             }
             if (ownWindows.size() > 1) {
                 throw new IllegalStateException("This process has " + ownWindows.size()
@@ -420,7 +420,7 @@ public final class EmbedClientX11 implements EmbedClient {
         do {
             List<Long> matches = probe.get();
             if (matches.size() == 1) {
-                return matches.get(0);
+                return matches.getFirst();
             }
             if (matches.size() > 1) {
                 throw new IllegalStateException(ambiguousMessage.apply(matches.size()));

@@ -60,7 +60,7 @@ class WindowFinderTest {
         long pid = ProcessHandle.current().pid();
         List<Long> found = pollUntilNonEmptyOrTimeout(pid);
         assertFalse(found.isEmpty(), "window manager never published this process's window in _NET_CLIENT_LIST");
-        long windowId = found.get(0);
+        long windowId = found.getFirst();
 
         Optional<String> wmClass = WindowFinder.readWmClass(display, windowId);
         assertTrue(wmClass.isPresent(), "AWT window has no WM_CLASS property");

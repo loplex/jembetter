@@ -284,7 +284,7 @@ class EmbedClientWin32Test {
         do {
             found = Win32WindowFinder.findApplicationWindowsByPid(pid);
             if (!found.isEmpty()) {
-                return found.get(0);
+                return found.getFirst();
             }
             Thread.sleep(50);
         } while (System.nanoTime() < deadline);

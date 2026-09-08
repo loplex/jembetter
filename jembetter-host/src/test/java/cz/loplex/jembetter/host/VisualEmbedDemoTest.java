@@ -133,7 +133,7 @@ class VisualEmbedDemoTest {
         do {
             found = WindowFinder.findTopLevelWindowsByPid(display, pid);
             if (!found.isEmpty()) {
-                return found.get(0);
+                return found.getFirst();
             }
             Thread.sleep(50);
         } while (System.nanoTime() < deadline);

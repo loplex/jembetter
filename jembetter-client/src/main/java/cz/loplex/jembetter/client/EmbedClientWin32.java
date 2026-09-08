@@ -215,7 +215,7 @@ public final class EmbedClientWin32 implements EmbedClient {
         do {
             ownWindows = Win32WindowFinder.findApplicationWindowsByPid(pid);
             if (ownWindows.size() == 1) {
-                return ownWindows.get(0);
+                return ownWindows.getFirst();
             }
             if (ownWindows.size() > 1) {
                 throw new IllegalStateException("This process has " + ownWindows.size()
