@@ -185,8 +185,7 @@ class EmbedSocketWin32Test {
         // itself doesn't require a live peer (see setModal's own Javadoc),
         // but this test wants to prove the byte is actually written on the
         // wire, not just that the call doesn't throw.
-        SocketChannel channel = Win32TestClients.connectWhenReady(socketPath, new AtomicReference<>());
-        try {
+        try (SocketChannel channel = Win32TestClients.connectWhenReady(socketPath, new AtomicReference<>())) {
             PidHandshake.send(channel, clientPid);
             assertTrue(embedded.await(5, TimeUnit.SECONDS), "client was never embedded via listen()");
 
@@ -197,8 +196,6 @@ class EmbedSocketWin32Test {
             socket.setModal(false);
             assertControlFrame(readFrame(channel), ControlMessage.Type.MODALITY, false,
                     "setModal(false) did not write a MODALITY=false frame into the control channel");
-        } finally {
-            channel.close();
         }
     }
 
@@ -222,8 +219,7 @@ class EmbedSocketWin32Test {
         // the marker byte moved it, rather than it already having been there.
         Win32Focus.set(CanvasNativeHandle.extract(canvas));
 
-        Win32FocusWatcher focusWatcher = new Win32FocusWatcher();
-        try {
+        try (Win32FocusWatcher focusWatcher = new Win32FocusWatcher()) {
             CountDownLatch focused = new CountDownLatch(1);
             focusWatcher.watch(clientHwnd, gained -> {
                 if (gained) {
@@ -231,8 +227,7 @@ class EmbedSocketWin32Test {
                 }
             });
 
-            SocketChannel channel = Win32TestClients.connectWhenReady(socketPath, new AtomicReference<>());
-            try {
+            try (SocketChannel channel = Win32TestClients.connectWhenReady(socketPath, new AtomicReference<>())) {
                 PidHandshake.send(channel, clientPid);
                 assertTrue(embedded.await(5, TimeUnit.SECONDS), "client was never embedded via listen()");
 
@@ -240,11 +235,7 @@ class EmbedSocketWin32Test {
 
                 assertTrue(focused.await(5, TimeUnit.SECONDS),
                         "the embedded window was never focused after the client wrote a FOCUS_REQUEST frame");
-            } finally {
-                channel.close();
             }
-        } finally {
-            focusWatcher.close();
         }
     }
 
