@@ -14,11 +14,11 @@ import java.util.concurrent.CountDownLatch;
 
 /**
  * Manual demo: run this, then run {@link ClientDemo} in a second JVM on
- * the same X display. The client's window should visually jump into the
+ * the same display. The client's window should visually jump into the
  * canvas placeholder area and resize to fill it once the handshake
  * completes, then follow the host frame down to a smaller size a couple of
- * seconds later — via {@link EmbedSocketX11#open(Canvas)}'s own resize
- * tracking, not any resize code in this demo — then get voluntarily
+ * seconds later — via {@link EmbedSocket}'s own resize tracking, not any
+ * resize code in this demo — then get voluntarily
  * released back to being a normal top-level window a couple of seconds
  * after that — run {@link ClientDemo} again afterward (or a fresh one) to
  * see the socket accept a new client in its place, without restarting this
@@ -29,11 +29,13 @@ import java.util.concurrent.CountDownLatch;
  * socket goes back to listening the same way.
  *
  * <p>The placeholder below is a real {@code Canvas} laid out with the rest
- * of this frame's UI; {@link EmbedSocketX11#open(Canvas)} reparents the
- * embedded window as a genuine X11 child of it, so — unlike an
- * override-redirect socket window — a heavyweight Swing popup/dialog from
- * this host now correctly renders above the embedded window instead of
- * underneath it. See it for yourself: add a {@code JPopupMenu} shown over
+ * of this frame's UI; {@link EmbedSocket#create(Canvas)} reparents the
+ * embedded window as a genuine native child of it — a real X11 child via
+ * {@link EmbedSocketX11#open(Canvas)}, a {@code SetParent} child on Win32 —
+ * so, unlike an override-redirect socket window, a heavyweight Swing
+ * popup/dialog from this host now correctly renders above the embedded
+ * window instead of underneath it. See it for yourself: add a
+ * {@code JPopupMenu} shown over
  * the placeholder (call {@code JPopupMenu.setDefaultLightWeightPopupEnabled(false)}
  * first to force it heavyweight) and it stacks above the embedded client,
  * exactly as confirmed against a real X server during this library's

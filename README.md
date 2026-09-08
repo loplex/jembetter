@@ -2,19 +2,25 @@
 
 *A Java window embedder. Just better.*
 
-Reparents one X11 Java application's top-level window into another's, using
-the [XEmbed](https://specifications.freedesktop.org/xembed-spec/xembed-spec-latest.html)
-protocol for focus/activation/geometry handoff between the two. The two
+Reparents one Java application's top-level window into another's. The two
 windows can belong to entirely separate JVM processes — the client connects
 to the host over a Unix domain socket to hand off its process id, the host
-resolves that to a window id via X11 and reparents it directly.
+resolves that to a native window handle and reparents it directly.
 
-Built and tested against a real X server (no Xvfb/mocking) on Linux/X11 —
-there is no Wayland support. `EmbedHost`/`EmbedPlug` also dispatch to a Win32
-(`SetParent`) backend by `os.name`, confirmed against a real Windows machine
-for the primitives it's built from — see [Win32 backend
-status](docs/win32-status.md) for exactly what was confirmed versus what's a
-reasoned-about implementation choice on top.
+Two backends, dispatched by `os.name`: on X11 the reparent goes through the
+[XEmbed](https://specifications.freedesktop.org/xembed-spec/xembed-spec-latest.html)
+protocol, which carries the focus/activation/geometry handoff between the
+two windows; on Windows it goes through `SetParent`. Both public API pairs
+— `EmbedHost`/`EmbedPlug` and `EmbedSocket`/`EmbedClient` — are
+backend-portable interfaces; a handful of X11-only extras stay on the
+concrete `*X11` classes (see [X11-only
+extras](docs/advanced-usage.md#x11-only-extras)).
+
+The X11 backend is built and tested against a real X server (no
+Xvfb/mocking) on Linux/X11 — there is no Wayland support. The Win32 backend
+is confirmed against a real Windows machine for the primitives it's built
+from — see [Win32 backend status](docs/win32-status.md) for exactly what was
+confirmed versus what's a reasoned-about implementation choice on top.
 
 ## Modules
 
@@ -28,7 +34,8 @@ breakdown and the module dependency diagram: [Architecture](docs/architecture.md
 ## Requirements
 
 - Java 21+
-- An X11 display (a window manager is recommended but not required)
+- Linux/X11 with a display (a window manager is recommended but not
+  required), or Windows
 - Maven
 
 ## Building
@@ -81,15 +88,18 @@ Process clientProcess = new ProcessBuilder(...).start();
 host.embed(clientProcess.pid());
 ```
 
-`EmbedHost.create(Canvas)` reparents the embedded window as a genuine X11
-child of the placeholder's own native window — normal X11 stacking (and the
-window manager) then treats it as part of your host window, so a
-heavyweight popup/tooltip/modal dialog from your own UI correctly renders
-above it — and tracks the placeholder's resizes automatically; no
-`ComponentListener` of your own required. This needs the JVM started with
-`--add-opens java.desktop/java.awt=ALL-UNNAMED --add-opens
-java.desktop/sun.awt.X11=ALL-UNNAMED` (see `.mvn/jvm.config` in this repo for
-the flags `mvn exec:java` picks up automatically when running the demo).
+`EmbedHost.create(Canvas)` reparents the embedded window as a genuine native
+child of the placeholder's own window — a real X11 child on the X11 backend,
+a `SetParent` child on Win32 — so normal stacking (and, on X11, the window
+manager) treats it as part of your host window and a heavyweight
+popup/tooltip/modal dialog from your own UI correctly renders above it. It
+also tracks the placeholder's resizes automatically; no `ComponentListener`
+of your own required. This needs the JVM started with `--add-opens
+java.desktop/java.awt=ALL-UNNAMED` plus the AWT toolkit package for the
+platform — `--add-opens java.desktop/sun.awt.X11=ALL-UNNAMED` on X11,
+`--add-opens java.desktop/sun.awt.windows=ALL-UNNAMED` on Windows (see
+`.mvn/jvm.config` in this repo for the flags `mvn exec:java` picks up
+automatically when running the demo).
 
 `host.embed(rendezvousSocketPath)` is also available for a client that isn't
 self-spawned — it opens a Unix domain socket, accepts exactly one client
@@ -98,7 +108,7 @@ doesn't keep accepting further clients afterward). `host.embedOpaque(id)`
 handles a toolkit-opaque client the same way `EmbedSocket#embedOpaque` does
 — see [Toolkit-opaque embedding](docs/advanced-usage.md#toolkit-opaque-embedding)
 for why that's needed at all. Call `host.close()` to release the socket and
-its X11 window.
+the native window it holds.
 
 `host.tryDestroy()` is a destroying close: it destroys a still-embedded
 client's window instead of gracefully releasing it the way plain
@@ -157,7 +167,7 @@ mvn -pl jembetter-demo exec:java@host
 java -cp "jembetter-demo/target/classes:$(< jembetter-demo/target/cp.txt)" cz.loplex.jembetter.demo.HostDemo
 ```
 
-Then, in a second terminal on the same X display:
+Then, in a second terminal on the same display:
 
 ```sh
 mvn -pl jembetter-demo exec:java@client

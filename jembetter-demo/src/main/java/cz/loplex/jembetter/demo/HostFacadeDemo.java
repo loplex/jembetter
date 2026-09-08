@@ -24,8 +24,8 @@ import java.util.concurrent.TimeUnit;
  * pattern this facade actually targets: a host that already knows its
  * child's pid because it spawned the process itself.
  *
- * <p>Demonstrates the same automatic resize forwarding {@code
- * EmbedSocketX11#open(Canvas)} always provides (unchanged under {@link
+ * <p>Demonstrates the same automatic resize forwarding {@code EmbedSocket}
+ * always provides on either backend (unchanged under {@link
  * EmbedHost#create}) and the same crash detection {@link
  * EmbedHost#onDetached} exposes — kill the child process (including
  * {@code kill -9}) to see it fire. Unlike {@link HostDemo}, there is no

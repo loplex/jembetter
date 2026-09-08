@@ -10,7 +10,7 @@
   <packaging>pom</packaging>
 
   <name>Jembetter</name>
-  <description>Reparenting of one X11 Java application's window into another via the XEmbed protocol.</description>
+  <description>Reparenting of one Java application's window into another: XEmbed on X11, SetParent on Win32.</description>
 
   <licenses>
     <license>

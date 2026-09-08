@@ -14,7 +14,7 @@
   <packaging>jar</packaging>
 
   <name>jembetter-demo</name>
-  <description>Runnable host/client demo apps used to manually verify the reparent + XEmbed pipeline end to end.</description>
+  <description>Runnable host/client demo apps used to manually verify the reparent/embed pipeline end to end on either backend.</description>
 
   <dependencies>
     <dependency>

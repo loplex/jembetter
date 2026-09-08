@@ -14,12 +14,13 @@ import java.awt.Color;
  * window-manager decoration frame is left behind once its content window is
  * reparented away.
  *
- * <p>Exercises the client side of the XEmbed focus protocol: the "Request
- * Focus" button sends {@code XEMBED_REQUEST_FOCUS} to the embedder via
- * {@link EmbedClient#requestFocus()}, which {@code HostDemo}'s
- * {@code EmbedSocket} grants unconditionally — click it after this window
- * has been embedded and the host window (unrelated, unfocused) should lose
- * input focus to this one.
+ * <p>Exercises the client side of the focus handoff: the "Request Focus"
+ * button asks the embedder for input focus via {@link
+ * EmbedClient#requestFocus()} — an {@code XEMBED_REQUEST_FOCUS} message on
+ * the X11 backend, a {@code FOCUS_REQUEST} control frame on Win32 — which
+ * {@code HostDemo}'s {@code EmbedSocket} grants unconditionally. Click it
+ * after this window has been embedded and the host window (unrelated,
+ * unfocused) should lose input focus to this one.
  */
 public final class ClientDemo {
 
@@ -45,7 +46,7 @@ public final class ClientDemo {
 
         JButton requestFocusButton = new JButton("Request Focus");
         requestFocusButton.addActionListener(event -> {
-            System.out.println("Sending XEMBED_REQUEST_FOCUS to the embedder...");
+            System.out.println("Requesting input focus from the embedder...");
             client.requestFocus();
         });
         frame.add(requestFocusButton, BorderLayout.CENTER);
