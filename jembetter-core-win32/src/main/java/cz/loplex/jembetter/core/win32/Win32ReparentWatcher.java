@@ -79,7 +79,7 @@ public final class Win32ReparentWatcher implements AutoCloseable {
                 callback.accept(current);
             } catch (RuntimeException e) {
                 // A misbehaving callback must not take the watcher thread down.
-                e.printStackTrace();
+                e.printStackTrace(System.err);
             }
         }
     }

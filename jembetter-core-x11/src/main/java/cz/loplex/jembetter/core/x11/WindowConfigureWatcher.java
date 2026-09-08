@@ -76,7 +76,7 @@ public final class WindowConfigureWatcher implements AutoCloseable {
                 callback.resized(event.xconfigure.width, event.xconfigure.height);
             } catch (RuntimeException e) {
                 // A misbehaving callback must not take the watcher thread down.
-                e.printStackTrace();
+                e.printStackTrace(System.err);
             }
         }
     }

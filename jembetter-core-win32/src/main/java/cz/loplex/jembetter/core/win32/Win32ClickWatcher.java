@@ -158,7 +158,7 @@ public final class Win32ClickWatcher implements AutoCloseable {
             callback.run();
         } catch (RuntimeException e) {
             // A misbehaving callback must not take the dispatch thread down.
-            e.printStackTrace();
+            e.printStackTrace(System.err);
         }
     }
 

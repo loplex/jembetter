@@ -69,7 +69,7 @@ public final class Win32ConfigureWatcher implements AutoCloseable {
                 callback.resized((int) current[0], (int) current[1]);
             } catch (RuntimeException e) {
                 // A misbehaving callback must not take the watcher thread down.
-                e.printStackTrace();
+                e.printStackTrace(System.err);
             }
         }
     }

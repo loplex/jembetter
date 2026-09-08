@@ -74,7 +74,7 @@ public final class WindowReparentWatcher implements AutoCloseable {
                 callback.accept(newParentId);
             } catch (RuntimeException e) {
                 // A misbehaving callback must not take the watcher thread down.
-                e.printStackTrace();
+                e.printStackTrace(System.err);
             }
         }
     }

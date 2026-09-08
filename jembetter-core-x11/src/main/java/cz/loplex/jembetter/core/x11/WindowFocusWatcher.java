@@ -108,7 +108,7 @@ public final class WindowFocusWatcher implements AutoCloseable {
             callback.focusChanged(focused);
         } catch (RuntimeException e) {
             // A misbehaving callback must not take the watcher thread down.
-            e.printStackTrace();
+            e.printStackTrace(System.err);
         }
     }
 

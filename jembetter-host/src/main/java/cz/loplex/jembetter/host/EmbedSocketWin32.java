@@ -158,7 +158,7 @@ public final class EmbedSocketWin32 implements EmbedSocket {
                     // loop down; the socket keeps listening for the next
                     // client.
                     closeQuietly(accepted);
-                    e.printStackTrace();
+                    e.printStackTrace(System.err);
                     continue;
                 }
                 // Kept open, unlike embed(Path)'s one-shot handshake: this is

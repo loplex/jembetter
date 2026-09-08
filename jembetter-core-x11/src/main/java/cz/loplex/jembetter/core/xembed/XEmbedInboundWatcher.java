@@ -180,7 +180,7 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
             onClientMessage.accept(XEmbedMessage.fromOpcode(opcode), detail);
         } catch (RuntimeException e) {
             // A misbehaving handler must not take the watcher thread down.
-            e.printStackTrace();
+            e.printStackTrace(System.err);
         }
     }
 
@@ -193,7 +193,7 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
         try {
             onEmbeddedInfoChanged.accept(windowId);
         } catch (RuntimeException e) {
-            e.printStackTrace();
+            e.printStackTrace(System.err);
         }
     }
 
@@ -210,7 +210,7 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
             onButtonPress.run();
         } catch (RuntimeException e) {
             // A misbehaving handler must not take the watcher thread down.
-            e.printStackTrace();
+            e.printStackTrace(System.err);
         } finally {
             ButtonGrab.replay(display);
         }
