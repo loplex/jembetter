@@ -311,5 +311,43 @@
         </pluginManagement>
       </build>
     </profile>
+
+    <!-- From JDK 23 on, the standard doclet copies eight DejaVu web font
+         files into every javadoc output directory it writes - about 2 MB,
+         against class jars measured in tens of kilobytes, and identical in
+         all five modules. The doclet's no-fonts option leaves them out; the
+         pages then render in the reader's own sans-serif instead. (Spelled
+         only in the configuration below, not here: an XML comment cannot
+         contain a double hyphen.)
+
+         Gated on the JDK rather than set outright, because that option does
+         not exist before 23 and javadoc fails on an option it does not know.
+         An unconditional flag would break `mvn package` on 21 or 22 - and 21
+         is both what this reactor compiles against and what CI builds on, so
+         building there is the normal case, not an edge one. Those older
+         doclets bundle no fonts in the first place, so this profile is what
+         keeps a build on a newer JDK producing the same lean javadoc jar as
+         one on 21, rather than a twentyfold heavier one. -->
+    <profile>
+      <id>javadoc-no-fonts</id>
+      <activation>
+        <jdk>[23,)</jdk>
+      </activation>
+      <build>
+        <pluginManagement>
+          <plugins>
+            <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-javadoc-plugin</artifactId>
+              <configuration>
+                <additionalOptions>
+                  <additionalOption>--no-fonts</additionalOption>
+                </additionalOptions>
+              </configuration>
+            </plugin>
+          </plugins>
+        </pluginManagement>
+      </build>
+    </profile>
   </profiles>
 </project>
