@@ -6,7 +6,7 @@
 
   <groupId>cz.loplex</groupId>
   <artifactId>jembetter-parent</artifactId>
-  <version>0.0.1-SNAPSHOT</version>
+  <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <name>Jembetter</name>

@@ -56,7 +56,7 @@ Then depend on the module(s) you need:
 <dependency>
   <groupId>cz.loplex</groupId>
   <artifactId>jembetter-host</artifactId>
-  <version>0.0.1-SNAPSHOT</version>
+  <version>0.1.0-SNAPSHOT</version>
 </dependency>
 ```
 
