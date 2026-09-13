@@ -1,0 +1,240 @@
+name: Win32 flake rate
+
+# Repeats a Win32 test run many times on both platforms the @Tag("windows")
+# suite is exercised on - under Wine on Linux and on real windows-latest -
+# and tallies which tests failed in which iteration.
+#
+# It answers two questions that a normal CI run cannot:
+#
+#   How often does this actually fail? linux-ci.yml and windows-ci.yml each
+#   run the suite once. A test that fails one run in three reads as "red" or
+#   "green" depending on which run you looked at, and neither reading is the
+#   truth. A rate is.
+#
+#   Is Wine to blame, or is the test? @Tag("wine-incompatible") excludes a
+#   test from the Wine fork (see the win32-tests-under-wine profile in the
+#   root pom.xml), and it is a claim about Wine, not about the test. Judging
+#   a failure "Wine-shaped" by eye works when Wine is consistently wrong and
+#   fails when it is intermittently wrong, because then an ordinary flaky
+#   test and a real Wine gap look identical. Comparing rates across the two
+#   platforms tells them apart: green N-for-N on real Windows while
+#   measurably not green under Wine is a Wine limitation; anything short of
+#   green on real Windows is a defect, and tagging it would hide one.
+#
+# Timings are recorded per iteration alongside the failures, because failures
+# clustering in slow iterations point at load sensitivity rather than at a
+# defect - worth knowing before hunting for a logic bug.
+#
+# Samples after the first are cheap: only the first iteration compiles.
+on:
+  workflow_dispatch:
+    inputs:
+      test:
+        # Empty on purpose. An input left blank at dispatch does not arrive as
+        # an empty string - it arrives as absent, and whatever is declared here
+        # takes its place. With a test class named here, a run dispatched with
+        # the field cleared measured that one class, finished in a quarter of
+        # the time, and had the Verdict job report "Clean on both" - a true
+        # statement about one class that reads as a clean whole suite. The
+        # duration was the only visible sign. Default to the same thing a push
+        # gets, so an unsupplied selector means what the description says.
+        description: "Surefire -Dtest selector; empty runs the whole suite"
+        required: false
+        default: ""
+      iterations:
+        description: "Iterations per platform"
+        required: false
+        default: "10"
+      platforms:
+        description: "Which platforms to measure"
+        required: false
+        default: both
+        type: choice
+        options: [both, wine, windows]
+      reuse-forks:
+        description: "false runs one JVM per test class, to test whether shared-fork state is the cause"
+        required: false
+        default: "true"
+  # spike_win32 is in the push list so this can be run before it reaches the
+  # default branch - workflow_dispatch reads a workflow's definition from
+  # there, so a change to this file is otherwise unrunnable until merged.
+  # win32-real-machine-checks.yml carries the same allowance for the same
+  # reason.
+  push:
+    branches: [spike_win32]
+    paths:
+      - 'build-tools/win32-flake-rate/**'
+      - '.github/workflows/win32-flake-rate.yml'
+
+env:
+  # -Dsurefire.timeout is the inner cap; RUN_TIMEOUT_SECONDS kills Maven itself
+  # when that misses. It has now been seen to miss on BOTH platforms - under
+  # Wine because the fork is launched through the test-jvm-wrapper (so the
+  # process Surefire can signal is not the stuck one), and on real
+  # windows-latest for reasons not yet explained. So RUN_TIMEOUT_SECONDS is
+  # what a hung iteration actually costs on either, and each job's
+  # timeout-minutes has to leave room for several. See the probe README.
+  FORK_TIMEOUT_SECONDS: "120"
+  RUN_TIMEOUT_SECONDS: "600"
+  REUSE_FORKS: ${{ inputs.reuse-forks || 'true' }}
+  TEST_SELECTOR: ${{ inputs.test || '' }}
+  ITERATIONS: ${{ inputs.iterations || '10' }}
+
+jobs:
+  wine:
+    name: Under Wine (Linux)
+    if: inputs.platforms != 'windows'
+    # Pinned rather than ubuntu-latest for the same reason linux-ci.yml pins
+    # it: the WineHQ version below names a specific Ubuntu release, so the
+    # runner has to be the one those packages are built for. Bump together.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      iterations: ${{ steps.probe.outputs.iterations }}
+      failed: ${{ steps.probe.outputs.failed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Install Xvfb + openbox + xdotool
+        run: sudo apt-get update && sudo apt-get install -y xvfb openbox xdotool
+
+      # Same WineHQ install and pin as linux-ci.yml - see that workflow for
+      # why the distro's own wine package is unusable here and why the i386
+      # architecture is not optional. Keep the version in step with it.
+      - name: Install Wine from WineHQ
+        env:
+          WINE_VERSION: "11.16~noble-1"
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo mkdir -pm755 /etc/apt/keyrings
+          sudo wget -O /etc/apt/keyrings/winehq-archive.key \
+            https://dl.winehq.org/wine-builds/winehq.key
+          sudo wget -NP /etc/apt/sources.list.d/ \
+            https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources
+          sudo apt-get update
+          sudo apt-get install -y --install-recommends "winehq-staging=${WINE_VERSION}"
+          wine --version
+
+      - name: Resolve Windows JDK release
+        id: windows-jdk
+        run: |
+          release=$(curl -fsSL "https://api.adoptium.net/v3/assets/feature_releases/21/ga?image_type=jdk&os=windows&architecture=x64&heap_size=normal&vendor=eclipse" | jq -r '.[0].release_name')
+          echo "release=${release}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Windows JDK
+        uses: actions/cache@v4
+        with:
+          path: build-tools/test-jvm-wrapper/.cache
+          key: windows-jdk-21-ga-${{ steps.windows-jdk.outputs.release }}
+
+      # Uncounted: the first Wine-hosted fork of a job also creates the Wine
+      # prefix and unpacks the downloaded Windows JDK, which can outlast the
+      # fork cap on its own and would register as a flake that says nothing
+      # about the test.
+      - name: Warm up the Wine prefix
+        continue-on-error: true
+        run: mvn -B test -Dtest=EmbedPlugWin32Test -Dsurefire.failIfNoSpecifiedTests=false > /dev/null 2>&1 || true
+
+      - name: Measure
+        id: probe
+        run: build-tools/win32-flake-rate/probe.sh "$TEST_SELECTOR" "$ITERATIONS"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iteration-logs-wine
+          path: logs/
+          if-no-files-found: warn
+
+  windows:
+    name: On real Windows
+    if: inputs.platforms != 'wine'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    outputs:
+      iterations: ${{ steps.probe.outputs.iterations }}
+      failed: ${{ steps.probe.outputs.failed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Measure
+        id: probe
+        run: .\build-tools\win32-flake-rate\probe.ps1 "$env:TEST_SELECTOR" "$env:ITERATIONS"
+        shell: pwsh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iteration-logs-windows
+          path: logs/
+          if-no-files-found: warn
+
+  verdict:
+    name: Verdict
+    needs: [wine, windows]
+    # inputs.platforms is empty on a push trigger, where both probe jobs run
+    # (their own conditions are "!= the other one", which an empty value
+    # satisfies). Comparing it to 'both' alone silently skipped the comparison
+    # exactly when it was most wanted - the first push-triggered run produced
+    # two sets of numbers and no verdict.
+    if: always() && (inputs.platforms == 'both' || inputs.platforms == '')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compare the two platforms
+        run: |
+          # Everything this step concludes goes to the log as well as to the
+          # step summary. It exits 1 on a real-Windows failure, and an exit
+          # code with no explanation above it is the whole of what a reader
+          # sees otherwise - the summary lives on a different tab, and a
+          # failing step is exactly when nobody wants to go hunting for it.
+          set -x
+          wine_total='${{ needs.wine.outputs.iterations }}'
+          wine_failed='${{ needs.wine.outputs.failed }}'
+          win_total='${{ needs.windows.outputs.iterations }}'
+          win_failed='${{ needs.windows.outputs.failed }}'
+
+          set +x
+
+          # say <markdown> - to the log and to the step summary, both.
+          say() {
+            printf '%s\n' "$*"
+            printf '%s\n' "$*" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          say "## Verdict"
+          say ""
+          say "| Platform | failed | of |"
+          say "|---|---:|---:|"
+          say "| Real Windows | ${win_failed:-?} | ${win_total:-?} |"
+          say "| Wine (Linux) | ${wine_failed:-?} | ${wine_total:-?} |"
+          say ""
+
+          if [ -z "$wine_failed" ] || [ -z "$win_failed" ]; then
+            say "A probe job reported no counts - read its log before concluding anything."
+            echo "::error title=Verdict inconclusive::One of the probe jobs produced no counts"
+            exit 1
+          fi
+
+          if [ "$win_failed" -eq 0 ] && [ "$wine_failed" -gt 0 ]; then
+            say "**Clean on real Windows, not under Wine.** This is what a genuine Wine limitation looks like, and what justifies \`@Tag(\"wine-incompatible\")\` on the tests named in the per-test tables above. Record what Wine does differently next to the tag, not just that it failed."
+            echo "::notice title=Wine limitation::Clean on real Windows ($win_total runs), $wine_failed of $wine_total failed under Wine"
+          elif [ "$win_failed" -gt 0 ]; then
+            say "**Not clean on real Windows either.** Whatever the Wine numbers say, the test or the code under it is at fault - \`@Tag(\"wine-incompatible\")\` would hide a real defect here."
+            echo "::error title=Not clean on real Windows::$win_failed of $win_total iterations failed on windows-latest; see that job's per-test table"
+            exit 1
+          else
+            say "**Clean on both.** Nothing to exclude."
+            echo "::notice title=Clean on both::0 failures in $win_total runs on each platform"
+          fi
