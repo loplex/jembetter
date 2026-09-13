@@ -1,3 +1,6 @@
 /.idea/
 target/
 
+# Per-iteration logs written by build-tools/win32-flake-rate/probe.sh
+# when it is run by hand outside CI.
+/logs/

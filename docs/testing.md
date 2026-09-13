@@ -61,6 +61,18 @@ fork and covered instead by
 [`build-tools/win32-real-machine-checks`](../build-tools/win32-real-machine-checks/README.md),
 a set of standalone checks run by hand against a real Windows machine.
 
+Before adding that tag to anything, measure rather than assume: a Wine gap of
+this kind shows up as flakiness, not as a consistent failure, so a single CI
+run can't tell "Wine doesn't replicate this" apart from "the test is broken".
+The `Win32 flake rate` workflow repeats a run on both platforms and tallies
+which tests fail at what rate in each — see
+[`build-tools/win32-flake-rate`](../build-tools/win32-flake-rate/README.md).
+Clean on real Windows while measurably not clean under Wine is what justifies
+the tag; anything short of clean on real Windows means the defect is real and
+the tag would hide it. The same workflow answers the neighbouring question of
+whether a flake comes from tests sharing one Surefire fork, via its
+`reuse-forks` input.
+
 Every fork above — plain Linux or Wine-hosted — spawns its own Xvfb and
 openbox via `build-tools/test-jvm-wrapper/spawn-xserver.sh`. Their own
 boot/shutdown chatter (keysym warnings, GPU probing, ...) is captured to a
