@@ -36,7 +36,9 @@ public final class Win32ReparentWatcher implements AutoCloseable {
 
     private final Thread thread;
     private final Map<Long, LongConsumer> callbacks = new ConcurrentHashMap<>();
+    private final Map<Long, Runnable> destroyCallbacks = new ConcurrentHashMap<>();
     private final Map<Long, Long> lastKnownParent = new ConcurrentHashMap<>();
+    private final Map<Long, Boolean> lastKnownAlive = new ConcurrentHashMap<>();
     private volatile boolean running = true;
 
     public Win32ReparentWatcher() {
@@ -53,13 +55,40 @@ public final class Win32ReparentWatcher implements AutoCloseable {
      * previously observed parent.
      */
     public void watch(long hwnd, LongConsumer onReparented) {
+        watch(hwnd, onReparented, () -> {
+        });
+    }
+
+    /**
+     * Same as {@link #watch(long, LongConsumer)}, plus {@code onDestroyed}
+     * for the window ceasing to exist.
+     *
+     * <p>Worth having separately because {@code onReparented} cannot express
+     * it: its argument is 0 both for "this window has no parent" and for
+     * "this window is gone", so a window that is embedded and then destroyed
+     * with its parent goes 0 -> host -> 0. If no poll lands while the host
+     * owns it — 50 ms is a long time for a host to embed a client and then
+     * crash — the watcher sees the same value twice, reports nothing at all,
+     * and the destruction passes unnoticed. {@code onDestroyed} fires on the
+     * transition itself, so it does not depend on the parent having been
+     * observed to change.
+     *
+     * <p>Both fire when a window with a parent is destroyed: {@code
+     * onReparented(0)} first, then {@code onDestroyed}. A caller that acts on
+     * either must tolerate the other following it.
+     */
+    public void watch(long hwnd, LongConsumer onReparented, Runnable onDestroyed) {
         lastKnownParent.put(hwnd, currentParentOf(hwnd));
+        lastKnownAlive.put(hwnd, isWindow(hwnd));
         callbacks.put(hwnd, onReparented);
+        destroyCallbacks.put(hwnd, onDestroyed);
     }
 
     public void unwatch(long hwnd) {
         callbacks.remove(hwnd);
+        destroyCallbacks.remove(hwnd);
         lastKnownParent.remove(hwnd);
+        lastKnownAlive.remove(hwnd);
     }
 
     private void loop() {
@@ -72,16 +101,33 @@ public final class Win32ReparentWatcher implements AutoCloseable {
     }
 
     private void pollOne(long hwnd, LongConsumer callback) {
+        boolean alive = isWindow(hwnd);
         long current = currentParentOf(hwnd);
         Long previous = lastKnownParent.put(hwnd, current);
+        Boolean wasAlive = lastKnownAlive.put(hwnd, alive);
+
         if (previous != null && previous != current) {
-            try {
-                callback.accept(current);
-            } catch (RuntimeException e) {
-                // A misbehaving callback must not take the watcher thread down.
-                e.printStackTrace(System.err);
+            dispatch(() -> callback.accept(current));
+        }
+        if (Boolean.TRUE.equals(wasAlive) && !alive) {
+            Runnable onDestroyed = destroyCallbacks.get(hwnd);
+            if (onDestroyed != null) {
+                dispatch(onDestroyed);
             }
         }
+    }
+
+    private static void dispatch(Runnable notification) {
+        try {
+            notification.run();
+        } catch (RuntimeException e) {
+            // A misbehaving callback must not take the watcher thread down.
+            e.printStackTrace(System.err);
+        }
+    }
+
+    private static boolean isWindow(long hwnd) {
+        return User32.INSTANCE.IsWindow(new HWND(new Pointer(hwnd)));
     }
 
     private static long currentParentOf(long hwnd) {

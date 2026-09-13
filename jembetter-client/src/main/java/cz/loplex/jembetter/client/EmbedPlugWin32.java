@@ -63,7 +63,7 @@ final class EmbedPlugWin32 implements EmbedPlug {
         long pid = ProcessHandle.current().pid();
         windowId = waitForOwnWindow(pid);
         awaitingEmbed = true;
-        watcher.watch(windowId, this::handleParentChanged);
+        watcher.watch(windowId, this::handleParentChanged, this::handleWindowDestroyed);
         focusWatcher.watch(windowId, focused -> onFocusChanged.focusChanged(focused));
     }
 
@@ -113,6 +113,31 @@ final class EmbedPlugWin32 implements EmbedPlug {
     public void close() {
         watcher.close();
         focusWatcher.close();
+    }
+
+    /**
+     * The watched window no longer exists. On this backend that is how a host
+     * dying is normally seen — destroying a parent HWND destroys its children
+     * outright, with no X11-style save-set to leave the client's window alive
+     * — so it is reported as the host detaching, which is what {@code
+     * onHostDetached} documents itself to cover.
+     *
+     * <p>Handled separately from {@link #handleParentChanged} because the
+     * parent-based path cannot see this case at all when the embed and the
+     * destruction fall inside one poll interval: the parent reads 0 before and
+     * after, so nothing appears to change and no embed is ever recorded. Both
+     * paths clear the state they check, so whichever runs first is the only
+     * one that reports.
+     */
+    private void handleWindowDestroyed() {
+        if (embedderHwnd >= 0) {
+            embedderHwnd = -1;
+            awaitingEmbed = false;
+            onHostDetached.run();
+        } else if (awaitingEmbed) {
+            awaitingEmbed = false;
+            onHostDetached.run();
+        }
     }
 
     private void handleParentChanged(long newParent) {

@@ -109,4 +109,31 @@ class Win32ReparentWatcherTest {
         assertFalse(isWindow(childHwnd),
                 "destroying the parent should have destroyed the reparented child");
     }
+    /**
+     * The case the parent-based callback structurally cannot report: a window
+     * embedded into a host and destroyed with it inside a single poll
+     * interval. Its parent reads 0 before and 0 after, so nothing appears to
+     * have changed — which is exactly the sequence a host that embeds a client
+     * and then crashes produces.
+     *
+     * <p>No sleep between the two operations, on purpose: the point is that
+     * the watcher never gets to observe the intermediate state.
+     */
+    @Test
+    void reportsDestructionEvenWhenTheEmbedItselfWasNeverObserved() throws InterruptedException {
+        parentHwnd = createTopLevelWindow("Win32ReparentWatcherTest fast-parent");
+        childHwnd = createTopLevelWindow("Win32ReparentWatcherTest fast-child");
+        watcher = new Win32ReparentWatcher();
+
+        CountDownLatch destroyed = new CountDownLatch(1);
+        watcher.watch(childHwnd, parent -> {
+        }, destroyed::countDown);
+
+        Win32Reparent.reparent(childHwnd, parentHwnd, 0, 0);
+        destroyWindow(parentHwnd);
+
+        assertTrue(destroyed.await(5, TimeUnit.SECONDS),
+                "onDestroyed was never invoked for a window destroyed with its parent");
+    }
+
 }
