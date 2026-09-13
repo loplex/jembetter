@@ -163,6 +163,36 @@
           <artifactId>exec-maven-plugin</artifactId>
           <version>3.5.0</version>
         </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-jar-plugin</artifactId>
+          <version>3.4.2</version>
+          <configuration>
+            <archive>
+              <manifest>
+                <!-- Implementation-Title/Version and their Specification-*
+                     counterparts, from the project's own coordinates, so a jar
+                     separated from its path can still say what it is and
+                     Package#getImplementationVersion() answers at runtime
+                     instead of returning null. -->
+                <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                <addDefaultSpecificationEntries>true</addDefaultSpecificationEntries>
+              </manifest>
+              <manifestEntries>
+                <!-- Pins the name this jar gets on the module path. Without it
+                     the name is derived from the filename, so it would change
+                     silently if the artifactId or the version scheme ever did -
+                     an accident of packaging leaking into a published
+                     contract. Each module sets automatic.module.name itself,
+                     since the name has to differ per artifact; there is
+                     deliberately no default here, because a shared one would
+                     give two modules the same name and clash on the module
+                     path. -->
+                <Automatic-Module-Name>${automatic.module.name}</Automatic-Module-Name>
+              </manifestEntries>
+            </archive>
+          </configuration>
+        </plugin>
       </plugins>
     </pluginManagement>
     <plugins>

@@ -14,6 +14,10 @@
   <packaging>jar</packaging>
 
   <name>jembetter-host</name>
+
+  <properties>
+    <automatic.module.name>cz.loplex.jembetter.host</automatic.module.name>
+  </properties>
   <description>Embedder-side API: hosts another application's window inside a Swing container.</description>
 
   <dependencies>

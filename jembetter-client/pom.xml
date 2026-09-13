@@ -14,6 +14,10 @@
   <packaging>jar</packaging>
 
   <name>jembetter-client</name>
+
+  <properties>
+    <automatic.module.name>cz.loplex.jembetter.client</automatic.module.name>
+  </properties>
   <description>Client-side API: makes an application's own top-level window embeddable by a host.</description>
 
   <dependencies>
