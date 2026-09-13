@@ -42,9 +42,18 @@ check per process for the same reason.
 ## Reading the result
 
 The per-test table gives each failing test's rate. The per-iteration table adds
-exit code and wall-clock duration, which is worth reading before hunting for a
-logic bug: failures that cluster in slow iterations point at load sensitivity
-instead. Full logs are attached as artifacts, and so is any
+exit code, wall-clock duration and how many tests ran, each worth reading
+before hunting for a logic bug: failures that cluster in slow iterations point
+at load sensitivity instead, and a tests column of zero means the run measured
+nothing at all.
+
+That last one is the failure mode to know about. A `-Dtest` selector matching
+no class exits 0 under `-Dsurefire.failIfNoSpecifiedTests=false`, so every
+iteration passes, no test is tallied, and the verdict would otherwise read
+"clean on both" - the strongest result the tool can print, over a run that
+tested nothing. Each half now marks such an iteration `<no tests ran>`,
+annotates the job, and reports its test count to the verdict, which refuses to
+conclude anything when either platform's count is zero. Full logs are attached as artifacts, and so is any
 `hs_err_pid*.log` a crashed fork left behind: the probe moves those into
 the same place after each iteration, named for the iteration that produced
 them.
@@ -59,6 +68,8 @@ The verdict job then compares the platforms:
   fault whatever Wine reports. The job fails on this, so the tag cannot end up
   looking justified by a run that did not justify it.
 - **Clean on both** — nothing to exclude.
+- **Nothing was measured** — one of the probes ran no tests, so none of the
+  above applies. Fix the selector and run it again.
 
 ## Hangs
 

@@ -92,6 +92,7 @@ jobs:
     outputs:
       iterations: ${{ steps.probe.outputs.iterations }}
       failed: ${{ steps.probe.outputs.failed }}
+      tests: ${{ steps.probe.outputs.tests }}
     steps:
       - uses: actions/checkout@v4
 
@@ -160,6 +161,7 @@ jobs:
     outputs:
       iterations: ${{ steps.probe.outputs.iterations }}
       failed: ${{ steps.probe.outputs.failed }}
+      tests: ${{ steps.probe.outputs.tests }}
     steps:
       - uses: actions/checkout@v4
 
@@ -204,6 +206,8 @@ jobs:
           wine_failed='${{ needs.wine.outputs.failed }}'
           win_total='${{ needs.windows.outputs.iterations }}'
           win_failed='${{ needs.windows.outputs.failed }}'
+          wine_tests='${{ needs.wine.outputs.tests }}'
+          win_tests='${{ needs.windows.outputs.tests }}'
 
           set +x
 
@@ -219,6 +223,20 @@ jobs:
           say "|---|---:|---:|"
           say "| Real Windows | ${win_failed:-?} | ${win_total:-?} |"
           say "| Wine (Linux) | ${wine_failed:-?} | ${wine_total:-?} |"
+          say ""
+
+          # Before anything is concluded from those zeros: a probe that ran no
+          # test reports none failed, which is indistinguishable here from a
+          # clean measurement and reads as the strongest possible result. It
+          # has happened - a -Dtest selector matching no class exits 0 under
+          # -Dsurefire.failIfNoSpecifiedTests=false - and the only outward sign
+          # was that the run finished in a quarter of the usual time.
+          if [ "${wine_tests:-0}" -eq 0 ] || [ "${win_tests:-0}" -eq 0 ]; then
+            say "**Nothing was measured.** Tests run: ${win_tests:-0} on real Windows, ${wine_tests:-0} under Wine. A selector matching no class leaves every iteration passing, so no conclusion below would mean anything. Check the \`test\` input."
+            echo "::error title=Verdict void::A probe ran no tests (Windows ${win_tests:-0}, Wine ${wine_tests:-0}) - nothing was measured"
+            exit 1
+          fi
+          say "Tests run per platform: ${win_tests} on real Windows, ${wine_tests} under Wine."
           say ""
 
           if [ -z "$wine_failed" ] || [ -z "$win_failed" ]; then

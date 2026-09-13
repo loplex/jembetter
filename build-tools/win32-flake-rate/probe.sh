@@ -42,6 +42,8 @@ fi
 
 failed=0
 hung=0
+total_tests=0
+barren=0
 declare -A tally=()
 rows=()
 
@@ -96,10 +98,22 @@ for i in $(seq 1 "$ITERATIONS"); do
         echo "collected $(basename "$crash") from ${crash%/*}"
     done < <(find . -maxdepth 3 \( -name 'hs_err_pid*.log' -o -name 'replay_pid*.log' \) \
              -not -path './logs/*' 2>/dev/null)
-    # A failing iteration in which no test ran at all means Maven itself did
-    # not get going - a bad argument, a broken workspace. Saying so separates
-    # it from "tests ran and passed", which is what an empty list reads as.
-    if [ "$code" -ne 0 ] && ! grep -q "Tests run:" "$log"; then
+    # How many tests actually ran, summed over Surefire's per-class summary
+    # lines. Carried into the table below because "did this measure anything"
+    # is otherwise invisible: a selector matching no class exits 0 under
+    # -Dsurefire.failIfNoSpecifiedTests=false, so every iteration passes, the
+    # verdict reads "clean on both", and nothing on the page says that nothing
+    # ran. It has happened, and what gave it away was the job's duration.
+    tests_run=$(grep -E "Tests run: .* -- in " "$log" \
+                | sed -E 's/.*Tests run: ([0-9]+),.*/\1/' \
+                | awk '{ s += $1 } END { print s + 0 }')
+
+    # An iteration that ran no test is a failed measurement whatever Maven's
+    # exit code says - a bad selector and a broken workspace are both worth
+    # hearing about, and only one of them reddens the exit code.
+    total_tests=$(( total_tests + tests_run ))
+    if [ "$tests_run" -eq 0 ]; then
+        barren=$(( barren + 1 ))
         names=$(printf '%s\n<no tests ran>' "$names")
     fi
 
@@ -123,7 +137,7 @@ for i in $(seq 1 "$ITERATIONS"); do
 
     joined=$(echo "$names" | paste -sd ', ' -)
     [ -z "$joined" ] && joined="-"
-    rows+=("| $i | $code | ${seconds}s | $joined |")
+    rows+=("| $i | $code | ${seconds}s | $tests_run | $joined |")
 
     # The failing test's name alone does not say why it failed, and chasing
     # that into the uploaded artifact is a slow round trip when the answer is
@@ -133,8 +147,15 @@ for i in $(seq 1 "$ITERATIONS"); do
             | sort -u | head -10
     fi
 
+    # Which classes ran, inside the iteration's own collapsed group. The
+    # Windows half echoes Maven's whole output and so answers this for free;
+    # this half sends it to a file, which left "what actually ran" readable
+    # only by downloading the artifact. These are the lines worth having.
+    grep -E "Tests run: .* -- in " "$log" | sed -E 's/.*-- in /  /' \
+        | sort -u || true
+
     echo "::endgroup::"
-    echo "iteration $i => exit $code, ${seconds}s, failed: $joined"
+    echo "iteration $i => exit $code, ${seconds}s, $tests_run tests, failed: $joined"
 done
 
 emit_report() {
@@ -152,8 +173,8 @@ emit_report() {
     fi
     echo "### Per iteration"
     echo
-    echo '| iteration | exit | seconds | failed tests |'
-    echo '| --- | --- | --- | --- |'
+    echo '| iteration | exit | seconds | tests | failed tests |'
+    echo '| --- | --- | --- | ---: | --- |'
     printf '%s\n' "${rows[@]}"
 }
 
@@ -171,11 +192,19 @@ if [ "$failed" -gt 0 ]; then
     echo "::warning title=Wine: $failed of $ITERATIONS iterations failed::This job is green by design - the rate is the result. See its tables, and the Verdict job for what it means."
 fi
 
+# Louder than a table row, because this one invalidates the whole measurement
+# rather than describing it: iterations that ran no test pass, so they leave
+# the failure count at zero and the verdict reads clean.
+if [ "$barren" -gt 0 ]; then
+    echo "::error title=Wine: $barren of $ITERATIONS iterations ran no tests::Nothing was measured. Check the -Dtest selector before reading anything else on this page."
+fi
+
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
     {
         echo "iterations=$ITERATIONS"
         echo "failed=$failed"
         echo "hung=$hung"
+        echo "tests=$total_tests"
     } >> "$GITHUB_OUTPUT"
 fi
 
