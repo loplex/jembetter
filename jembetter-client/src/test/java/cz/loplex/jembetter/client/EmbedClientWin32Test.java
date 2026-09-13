@@ -260,21 +260,27 @@ class EmbedClientWin32Test {
         AtomicInteger reportedWidth = new AtomicInteger(-1);
         AtomicInteger reportedHeight = new AtomicInteger(-1);
         client = new EmbedClientWin32();
+        // The embed below is itself a size change, and the watch is already
+        // armed by then, so the callback fires for it too. Both reports are
+        // truthful; this test is about the resize that follows, so latch on
+        // the size it asks for rather than on whichever arrives first.
         client.onResized((width, height) -> {
             reportedWidth.set(width);
             reportedHeight.set(height);
-            resized.countDown();
+            if (width == 200 && height == 150) {
+                resized.countDown();
+            }
         });
         client.announce();
 
-        // Reparent first, like a real embed would (Win32Reparent.reparent
-        // strips the caption/border style bits) - otherwise GetClientRect
-        // (what Win32ConfigureWatcher polls) reports less than the window
-        // rect moveResize sets, short by the still-decorated JFrame's own
-        // title bar/border.
+        // Embed at a known size first, the way a host does it in one call, so
+        // what follows is a resize of an already-embedded window rather than
+        // the embed's own geometry change. Reparenting without a size and
+        // resizing afterwards would report the undecorated window's own size
+        // in between - a real transition, but not the one under test.
         long ownHwnd = waitForOwnWindow(ProcessHandle.current().pid());
         fakeHostHwnd = Win32TestWindow.create("EmbedClientWin32Test fake host (resize)");
-        Win32Reparent.reparent(ownHwnd, fakeHostHwnd, 0, 0);
+        Win32Reparent.reparent(ownHwnd, fakeHostHwnd, 0, 0, 120, 90);
         Win32WindowGeometry.moveResize(ownHwnd, 0, 0, 200, 150);
 
         assertTrue(resized.await(5, TimeUnit.SECONDS), "onResized was never invoked after the resize");
@@ -375,16 +381,23 @@ class EmbedClientWin32Test {
         AtomicInteger reportedWidth = new AtomicInteger(-1);
         AtomicInteger reportedHeight = new AtomicInteger(-1);
         client = new EmbedClientWin32();
+        // The embed below is itself a size change, and the watch is already
+        // armed by then, so the callback fires for it too. Both reports are
+        // truthful; this test is about the resize that follows, so latch on
+        // the size it asks for rather than on whichever arrives first.
         client.onResized((width, height) -> {
             reportedWidth.set(width);
             reportedHeight.set(height);
-            resized.countDown();
+            if (width == 200 && height == 150) {
+                resized.countDown();
+            }
         });
         client.watchOwnWindow(ownHwnd);
 
-        // Reparent first, for the same reason onResizedIsInvokedAfterAResize does.
+        // Embed at a known size first, for the same reason
+        // onResizedIsInvokedAfterAResize does.
         fakeHostHwnd = Win32TestWindow.create("EmbedClientWin32Test fake host (watch-own-window resize)");
-        Win32Reparent.reparent(ownHwnd, fakeHostHwnd, 0, 0);
+        Win32Reparent.reparent(ownHwnd, fakeHostHwnd, 0, 0, 120, 90);
         Win32WindowGeometry.moveResize(ownHwnd, 0, 0, 200, 150);
 
         assertTrue(resized.await(5, TimeUnit.SECONDS), "onResized was never invoked after the resize");

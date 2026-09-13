@@ -25,10 +25,41 @@ public final class Win32Reparent {
      * Reparents {@code childHwnd} under {@code newParentHwnd}: clears the
      * top-level-window style bits ({@code WS_POPUP|WS_CAPTION|WS_SYSMENU|
      * WS_THICKFRAME}), sets {@code WS_CHILD}, then {@code SetParent} and
-     * repositions to {@code (x, y)} in the new parent's client coordinates.
-     * Sizing is a separate concern — see {@link Win32WindowGeometry}.
+     * repositions to {@code (x, y)} in the new parent's client coordinates,
+     * leaving the size alone. Prefer {@link #reparent(long, long, int, int,
+     * int, int)} when the caller already knows the size it wants — see there
+     * for why the two-call form is visible to the embedded client.
      */
     public static void reparent(long childHwnd, long newParentHwnd, int x, int y) {
+        reparent(childHwnd, newParentHwnd, x, y, 0, 0, true);
+    }
+
+    /**
+     * Reparents {@code childHwnd} under {@code newParentHwnd} and gives it
+     * {@code width}x{@code height} in the same operation.
+     *
+     * <p>Worth preferring over {@link #reparent(long, long, int, int)}
+     * followed by {@link Win32WindowGeometry#moveResize}, which is what this
+     * replaces: that sequence changes the window's geometry twice, and the
+     * embedded client sees both. Clearing {@code WS_CAPTION}/{@code
+     * WS_THICKFRAME} shrinks the client area on its own — a decorated window
+     * Windows refused to make narrower than its title-bar buttons can drop to
+     * a fraction of that once undecorated — so the first change reports a size
+     * the host never asked for and never intended, purely because the move
+     * happened in two steps. A client driving layout from {@code onResized}
+     * then lays out once against a size that existed only in between.
+     *
+     * <p>Folding the size into the same {@code SetWindowPos} makes the
+     * intermediate geometry unobservable rather than merely brief. This is a
+     * Win32-only concern: X11 keeps decorations in a separate window-manager
+     * frame, so reparenting a client there does not resize it at all.
+     */
+    public static void reparent(long childHwnd, long newParentHwnd, int x, int y, int width, int height) {
+        reparent(childHwnd, newParentHwnd, x, y, width, height, false);
+    }
+
+    private static void reparent(long childHwnd, long newParentHwnd, int x, int y,
+            int width, int height, boolean keepSize) {
         HWND child = toHwnd(childHwnd);
         HWND newParent = toHwnd(newParentHwnd);
 
@@ -37,8 +68,8 @@ public final class Win32Reparent {
         User32.INSTANCE.SetWindowLong(child, WinUser.GWL_STYLE, style);
 
         User32.INSTANCE.SetParent(child, newParent);
-        User32.INSTANCE.SetWindowPos(child, null, x, y, 0, 0,
-                WinUser.SWP_NOSIZE | WinUser.SWP_NOZORDER | WinUser.SWP_SHOWWINDOW);
+        int flags = WinUser.SWP_NOZORDER | WinUser.SWP_SHOWWINDOW | (keepSize ? WinUser.SWP_NOSIZE : 0);
+        User32.INSTANCE.SetWindowPos(child, null, x, y, width, height, flags);
     }
 
     /**

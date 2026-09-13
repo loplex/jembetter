@@ -160,8 +160,11 @@ final class Win32EmbedCore {
     }
 
     private void reparentAndWatch(long clientHwnd, long clientPid) {
-        Win32Reparent.reparent(clientHwnd, hostCanvasHwnd, 0, 0);
-        Win32WindowGeometry.moveResize(clientHwnd, 0, 0, hostCanvas.getWidth(), hostCanvas.getHeight());
+        // One SetWindowPos, not a reparent followed by a resize: the two-call
+        // form lets the client observe the size the window happens to have
+        // between losing its decorations and being given the host's geometry.
+        Win32Reparent.reparent(clientHwnd, hostCanvasHwnd, 0, 0,
+                hostCanvas.getWidth(), hostCanvas.getHeight());
         waitForReparentConfirmed(clientHwnd);
         embeddedHwnd = clientHwnd;
         Win32Focus.set(clientHwnd);
