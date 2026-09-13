@@ -95,7 +95,27 @@ maxAttempts`. Death detection (`onClientDetached`) still works here — it's
 based on the X server's own `DestroyNotify`, not client cooperation. The
 no-argument `embedOpaque(long)` is on the `EmbedSocket` interface; the tuning
 overload is `EmbedSocketX11`-only. `EmbedHost#embedOpaque(long)` (see the
-main README) is the same fixed-budget call on the narrow facade.
+main README) is the same fixed-budget call on the narrow facade. On the
+Win32 backend `embedOpaque` and `embed` are the same operation — there's no
+`_XEMBED_INFO` to make them differ (see
+[Win32 backend status](win32-status.md)).
+
+On the client side such a process already holds its own window handle, so it
+needs neither handshake — just `EmbedClient#watchOwnWindow(long)`, which
+starts the `onEmbedded`/`onHostDetached`/`onFocusChanged`/`onResized`
+watching that `announce()` would, without resolving the window itself:
+
+```java
+EmbedClient client = EmbedClient.create();
+client.onResized((width, height) -> relayoutSceneGraph(width, height));
+client.watchOwnWindow(stage.getRawHandle());   // JavaFX Stage, GTK xid, ...
+System.out.println("READY " + stage.getRawHandle());  // host reads this, then embedOpaque()s it
+```
+
+No socket is opened on this path, so `onModalityChanged` (and X11's
+`onActivationChanged`) never fire for a client embedded this way — the same
+as on `announce()`. If you need them, use the `offer` &harr; `listen`
+pairing below instead.
 
 ## Modality and host-window activation
 
@@ -198,5 +218,4 @@ EmbedSocketX11 socket = (EmbedSocketX11) EmbedSocket.create(placeholder);
   `onFocusPrev` focus-cycling callbacks, `destroyClient()` (unconditional
   `XDestroyWindow`), and `expectClientWindowClass`.
 - **`EmbedClientX11`** — `onActivationChanged` (host-window activation;
-  Win32's host has no sender to pair with it) and `watchOwnWindow(long)`
-  (a toolkit-opaque client handing its own window handle over directly).
+  Win32's host has no sender to pair with it).

@@ -121,14 +121,54 @@ public final class EmbedClientWin32 implements EmbedClient {
     }
 
     /**
+     * Starts watching this process's own already-known top-level window
+     * ({@code windowId}) for {@link #onEmbedded}/{@link #onHostDetached}/
+     * {@link #onFocusChanged}/{@link #onResized} — everything {@link
+     * #announce} does except resolving the window by pid, for a
+     * toolkit-opaque client whose host embeds it via {@code
+     * EmbedSocketWin32#embedOpaque} after being handed this handle
+     * out-of-band (e.g. on the client's own stdout). Use this when the
+     * client process already knows its own native window handle directly —
+     * a JavaFX {@code Stage}, say — rather than needing this class to
+     * resolve it.
+     *
+     * <p>Nothing else is skipped relative to {@link #announce}: the X11
+     * backend additionally publishes {@code _XEMBED_INFO} there and skips it
+     * here, but this backend has no {@code _XEMBED_INFO} to publish in the
+     * first place — which is also why {@code embedOpaque} and {@code embed}
+     * are the same operation on the host side here (see {@code
+     * EmbedHostWin32}). All three watchers poll ({@code GetParent}, {@code
+     * GetGUIThreadInfo}, {@code GetClientRect}) rather than reading this
+     * window's own {@code WM_SIZE}/{@code WM_SETFOCUS}, so a caller whose
+     * window belongs to a foreign toolkit's message loop gets the same
+     * callbacks as one whose window is a Swing peer.
+     *
+     * <p>Bypassing the pid lookup also sidesteps {@code
+     * Win32WindowFinder#findApplicationWindowsByPid}, which by design only
+     * reports top-level windows: a window already reparented into a host is
+     * a {@code WS_CHILD} and no longer appears there, so a caller re-arming
+     * a watch on an already-embedded window can only do it through this
+     * method.
+     */
+    @Override
+    public void watchOwnWindow(long windowId) {
+        this.windowId = windowId;
+        awaitingEmbed = true;
+        reparentWatcher.watch(windowId, this::handleParentChanged);
+        focusWatcher.watch(windowId, focused -> onFocusChanged.focusChanged(focused));
+        configureWatcher.watch(windowId, (width, height) -> onResized.resized(width, height));
+    }
+
+    /**
      * Registers a callback invoked once this window has been reparented into
      * an embedder, with the embedder's window handle. Runs on {@link
      * Win32ReparentWatcher}'s own background thread.
      *
-     * <p>Only the first reparent following {@link #announce} counts, the same
-     * filter {@link EmbedClientX11#onEmbedded} applies: a desktop shell
-     * reparents an ordinary top-level window into a frame of its own, and
-     * without this that would be indistinguishable from a host embedding it.
+     * <p>Only the first reparent following {@link #announce}/{@link
+     * #watchOwnWindow} counts, the same filter {@link
+     * EmbedClientX11#onEmbedded} applies: a desktop shell reparents an
+     * ordinary top-level window into a frame of its own, and without this
+     * that would be indistinguishable from a host embedding it.
      */
     @Override
     public void onEmbedded(LongConsumer callback) {

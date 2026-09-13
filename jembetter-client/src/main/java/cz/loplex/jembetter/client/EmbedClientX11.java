@@ -197,6 +197,7 @@ public final class EmbedClientX11 implements EmbedClient {
      * hands the host out-of-band, e.g. on its own stdout) rather than
      * needing this class to resolve it.
      */
+    @Override
     public void watchOwnWindow(long windowId) {
         this.windowId = windowId;
         awaitingEmbed = true;

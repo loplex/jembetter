@@ -20,11 +20,10 @@ import java.util.function.LongConsumer;
  *
  * <p>This interface is the <strong>intersection</strong> of what both
  * backends implement (plus a {@link #setWindowLookupTimeout} parity shim).
- * X11-only capabilities — {@link EmbedClientX11#onActivationChanged}
- * (host-window activation; Win32's host has no sender to pair with) and
- * {@link EmbedClientX11#watchOwnWindow} (toolkit-opaque handoff) — live on
- * {@link EmbedClientX11} only; a caller that needs one downcasts to it
- * explicitly.
+ * The one X11-only capability — {@link
+ * EmbedClientX11#onActivationChanged} (host-window activation; Win32's host
+ * has no sender to pair with) — lives on {@link EmbedClientX11} only; a
+ * caller that needs it downcasts to that class explicitly.
  */
 public interface EmbedClient extends AutoCloseable {
 
@@ -64,6 +63,24 @@ public interface EmbedClient extends AutoCloseable {
      * the Win32 caveat).
      */
     void offer(Path hostSocketPath, String wmClass);
+
+    /**
+     * Starts watching this process's own already-known top-level window for
+     * {@link #onEmbedded}/{@link #onHostDetached}/{@link
+     * #onFocusChanged}/{@link #onResized} — everything {@link #announce()}
+     * does except resolving the window, for a toolkit-opaque client that
+     * already holds its own native window handle (a JavaFX {@code Stage}, a
+     * GTK window) and hands it to the host out-of-band rather than through
+     * either handshake. The host embeds such a window with {@code
+     * EmbedHost#embedOpaque(long)}/{@code EmbedSocket#embedOpaque(long)}.
+     * See {@link EmbedClientX11#watchOwnWindow} and {@link
+     * EmbedClientWin32#watchOwnWindow} for each backend's specifics.
+     *
+     * <p>No socket is opened on this path, so {@link #onModalityChanged}
+     * (and X11's {@code onActivationChanged}) never fire for a client
+     * embedded this way — the same as on the {@link #announce()} path.
+     */
+    void watchOwnWindow(long windowId);
 
     /**
      * Registers a callback invoked once this window has been reparented into

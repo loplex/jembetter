@@ -276,6 +276,84 @@ class EmbedClientWin32Test {
                 "requestFocus() did not write a FOCUS_REQUEST control frame");
     }
 
+    /**
+     * The toolkit-opaque handoff: a client that already holds its own window
+     * handle watches it directly, with no pid lookup and no socket, and still
+     * sees the whole embed lifecycle — what {@code EmbedSocketWin32#embedOpaque}
+     * pairs with on the host side.
+     *
+     * <p>The watched window is a {@link JFrame} like the {@link
+     * EmbedClientWin32#announce} tests above use, even though the path under
+     * test exists for windows a foreign toolkit owns: what matters here is
+     * that the handle is passed in rather than resolved, and a {@code
+     * Win32TestWindow} can't stand in for it. A {@code STATIC} window created
+     * on the JUnit thread has no message pump, and a window whose owning
+     * thread never pumps blocks any {@code SendMessage} into it forever —
+     * which deadlocks AWT's own event thread during {@code @AfterEach}'s
+     * {@code frame.dispose()}. The pre-existing tests keep {@code
+     * Win32TestWindow} in the passive fake-host role for the same reason.
+     */
+    @Test
+    void watchOwnWindowDetectsBeingEmbeddedAndReleasedWithoutAnnouncing() throws InterruptedException {
+        frame = new JFrame("EmbedClientWin32Test watch-own-window");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+        long ownHwnd = waitForOwnWindow(ProcessHandle.current().pid());
+
+        CountDownLatch embedded = new CountDownLatch(1);
+        CountDownLatch detached = new CountDownLatch(1);
+        AtomicLong reportedEmbedderWindow = new AtomicLong(-1);
+        client = new EmbedClientWin32();
+        client.onEmbedded(id -> {
+            reportedEmbedderWindow.set(id);
+            embedded.countDown();
+        });
+        client.onHostDetached(detached::countDown);
+        client.watchOwnWindow(ownHwnd);
+
+        fakeHostHwnd = Win32TestWindow.create("EmbedClientWin32Test fake host (watch-own-window)");
+        Win32Reparent.reparent(ownHwnd, fakeHostHwnd, 0, 0);
+        assertTrue(embedded.await(5, TimeUnit.SECONDS), "onEmbedded was never invoked after watchOwnWindow()");
+        assertEquals(fakeHostHwnd, reportedEmbedderWindow.get());
+
+        Win32Reparent.release(ownHwnd, 0, 0);
+        assertTrue(detached.await(5, TimeUnit.SECONDS), "onHostDetached was never invoked after the release");
+    }
+
+    /**
+     * {@link EmbedClientWin32#onResized} on the {@link
+     * EmbedClientWin32#watchOwnWindow} path — how a toolkit-opaque client
+     * learns its on-screen size once the host resizes it, with no handshake
+     * to carry the geometry instead.
+     */
+    @Test
+    void watchOwnWindowInvokesOnResizedAfterAResize() throws InterruptedException {
+        frame = new JFrame("EmbedClientWin32Test watch-own-window resize");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+        long ownHwnd = waitForOwnWindow(ProcessHandle.current().pid());
+
+        CountDownLatch resized = new CountDownLatch(1);
+        AtomicInteger reportedWidth = new AtomicInteger(-1);
+        AtomicInteger reportedHeight = new AtomicInteger(-1);
+        client = new EmbedClientWin32();
+        client.onResized((width, height) -> {
+            reportedWidth.set(width);
+            reportedHeight.set(height);
+            resized.countDown();
+        });
+        client.watchOwnWindow(ownHwnd);
+
+        // Reparent first, for the same reason onResizedIsInvokedAfterAResize does.
+        fakeHostHwnd = Win32TestWindow.create("EmbedClientWin32Test fake host (watch-own-window resize)");
+        Win32Reparent.reparent(ownHwnd, fakeHostHwnd, 0, 0);
+        Win32WindowGeometry.moveResize(ownHwnd, 0, 0, 200, 150);
+
+        assertTrue(resized.await(5, TimeUnit.SECONDS), "onResized was never invoked after the resize");
+        assertEquals(200, reportedWidth.get());
+        assertEquals(150, reportedHeight.get());
+    }
+
     private static long waitForOwnWindow(long pid) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         List<Long> found;
