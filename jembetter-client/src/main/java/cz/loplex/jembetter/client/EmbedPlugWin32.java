@@ -49,6 +49,7 @@ final class EmbedPlugWin32 implements EmbedPlug {
     private final Win32FocusWatcher focusWatcher = new Win32FocusWatcher();
     private long windowId = -1;
     private volatile long embedderHwnd = -1;
+    private volatile boolean awaitingEmbed = false;
     private volatile Runnable onHostDetached = () -> {
     };
     private volatile LongConsumer onEmbedded = embedderId -> {
@@ -61,6 +62,7 @@ final class EmbedPlugWin32 implements EmbedPlug {
         requireNoWmClass(wmClass);
         long pid = ProcessHandle.current().pid();
         windowId = waitForOwnWindow(pid);
+        awaitingEmbed = true;
         watcher.watch(windowId, this::handleParentChanged);
         focusWatcher.watch(windowId, focused -> onFocusChanged.focusChanged(focused));
     }
@@ -121,10 +123,15 @@ final class EmbedPlugWin32 implements EmbedPlug {
             }
             // else: not embedded yet - this window's own parent is 0 until a
             // host calls SetParent on it, nothing to report.
-        } else {
+        } else if (awaitingEmbed) {
+            awaitingEmbed = false;
             embedderHwnd = newParent;
             onEmbedded.accept(newParent);
         }
+        // else: some other non-zero parent while not expecting an embed - a
+        // desktop shell taking this window into a frame of its own, say - not
+        // an embed, ignore. Same filter EmbedClientWin32 and EmbedClientX11
+        // apply; without it any reparent at all reads as a host embedding us.
     }
 
     private static void requireNoWmClass(String wmClass) {

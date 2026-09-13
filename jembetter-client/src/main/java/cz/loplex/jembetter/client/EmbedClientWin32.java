@@ -56,6 +56,7 @@ public final class EmbedClientWin32 implements EmbedClient {
     private final Win32ConfigureWatcher configureWatcher = new Win32ConfigureWatcher();
     private long windowId = -1;
     private volatile long embedderHwnd = -1;
+    private volatile boolean awaitingEmbed = false;
     private volatile SocketChannel controlChannel;
     private volatile Thread readerThread;
     private volatile ModalityListener onModalityChanged = modal -> {
@@ -113,6 +114,7 @@ public final class EmbedClientWin32 implements EmbedClient {
         }
         long pid = ProcessHandle.current().pid();
         windowId = waitForOwnWindow(pid);
+        awaitingEmbed = true;
         reparentWatcher.watch(windowId, this::handleParentChanged);
         focusWatcher.watch(windowId, focused -> onFocusChanged.focusChanged(focused));
         configureWatcher.watch(windowId, (width, height) -> onResized.resized(width, height));
@@ -122,6 +124,11 @@ public final class EmbedClientWin32 implements EmbedClient {
      * Registers a callback invoked once this window has been reparented into
      * an embedder, with the embedder's window handle. Runs on {@link
      * Win32ReparentWatcher}'s own background thread.
+     *
+     * <p>Only the first reparent following {@link #announce} counts, the same
+     * filter {@link EmbedClientX11#onEmbedded} applies: a desktop shell
+     * reparents an ordinary top-level window into a frame of its own, and
+     * without this that would be indistinguishable from a host embedding it.
      */
     @Override
     public void onEmbedded(LongConsumer callback) {
@@ -203,10 +210,14 @@ public final class EmbedClientWin32 implements EmbedClient {
             }
             // else: not embedded yet - this window's own parent is 0 until a
             // host calls SetParent on it, nothing to report.
-        } else {
+        } else if (awaitingEmbed) {
+            awaitingEmbed = false;
             embedderHwnd = newParent;
             onEmbedded.accept(newParent);
         }
+        // else: some other non-zero parent while not expecting an embed - the
+        // desktop shell taking this window into a frame of its own, say - not
+        // an embed, ignore. Mirrors EmbedClientX11#handleParentChanged.
     }
 
     private long waitForOwnWindow(long pid) {
