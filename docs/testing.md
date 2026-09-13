@@ -53,15 +53,23 @@ window.
 `jembetter-core-win32`'s and the Win32-backend tests elsewhere are tagged
 `@Tag("windows")` and forked into a Windows JDK under Wine (the
 `windows-tests-on-linux` Surefire execution) rather than gated on `DISPLAY` —
-see [Win32 backend status](win32-status.md) for what that confirms. A few of
-them are additionally tagged `@Tag("wine-incompatible")` where Wine's
-simulation doesn't replicate the real behaviour closely enough (foreground
-lock, some reparent-watcher transitions); those are excluded from the Wine
-fork and covered instead by
-[`build-tools/win32-real-machine-checks`](../build-tools/win32-real-machine-checks/README.md),
-a set of standalone checks run by hand against a real Windows machine.
+see [Win32 backend status](win32-status.md) for what that confirms.
 
-Before adding that tag to anything, measure rather than assume: a Wine gap of
+`@Tag("wine-incompatible")` marks a test Wine's simulation cannot replicate
+closely enough to be worth running there; the Wine fork excludes those and
+[`build-tools/win32-real-machine-checks`](../build-tools/win32-real-machine-checks/README.md)
+covers them instead, as standalone checks run against a real Windows machine.
+**No test currently carries it.** Three did until 2026-09-13 — two
+click-watcher tests and one reparent-watcher test — and all three were found
+to pass under the pinned wine-staging 11.16 once measured; the behaviour their
+tags described had stopped being true, and nothing had rechecked them.
+
+That is the hazard worth keeping in mind: the tag records a claim about a
+particular Wine, and Wine keeps changing, so a tag left alone silently becomes
+a test that no longer runs anywhere it could. `mvn test -Dwine.excludedGroups=`
+runs tagged tests under Wine anyway, which is how such a claim gets rechecked.
+
+Before adding the tag to anything, measure rather than assume: a Wine gap of
 this kind shows up as flakiness, not as a consistent failure, so a single CI
 run can't tell "Wine doesn't replicate this" apart from "the test is broken".
 The `Win32 flake rate` workflow repeats a run on both platforms and tallies

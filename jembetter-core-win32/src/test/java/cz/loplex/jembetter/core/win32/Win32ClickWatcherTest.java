@@ -40,12 +40,12 @@ class Win32ClickWatcherTest {
         destroyWindow(hwnd);
     }
 
-    // Wine's WH_MOUSE_LL emulation never delivers a SendInput-synthesized click to the
-    // hook here, unlike real Windows (see Win32ClickWatcher's Javadoc and
-    // docs/win32-status.md) - excluded from the pom.xml Wine-forked test run via this
-    // tag so that run doesn't permanently fail on it, while windows-ci.yml (real
-    // windows-latest, no Wine involved) still exercises it normally.
-    @Tag("wine-incompatible")
+    // Was @Tag("wine-incompatible") until 2026-09-13, on the grounds that Wine's
+    // WH_MOUSE_LL emulation never delivered a SendInput-synthesized click to the hook.
+    // wine-staging 11.16 does: run under the Wine fork with the exclusion lifted
+    // (`mvn test -Dwine.excludedGroups=`) this passed every time across repeated runs.
+    // If it starts failing under a Wine that regresses, re-measure before re-tagging -
+    // the tag is a claim about a specific Wine, not a permanent property.
     @Test
     void clickInsideAWatchedWindowInvokesTheCallback() throws InterruptedException {
         hwnd = createVisibleTopLevelWindowAt("Win32ClickWatcherTest inside", 120, 120, 300, 200);
@@ -85,11 +85,12 @@ class Win32ClickWatcherTest {
      * A {@code WH_MOUSE_LL} proc that overruns {@code LowLevelHooksTimeout}
      * too often is silently unhooked by Windows; {@code Win32ClickWatcher}
      * offloads callback work to a dispatch thread to stay under that budget.
-     * A burst of clicks should nearly all still reach the callback. Wine
-     * doesn't deliver {@code SendInput} clicks to the hook at all, hence
-     * {@code @Tag("wine-incompatible")}.
+     * A burst of clicks should nearly all still reach the callback.
+     *
+     * <p>Was {@code @Tag("wine-incompatible")} until 2026-09-13 on the same
+     * since-disproved premise as the test above — that Wine delivers no
+     * {@code SendInput} click to the hook at all.
      */
-    @Tag("wine-incompatible")
     @Test
     void theHookSurvivesABurstOfClicks() throws InterruptedException {
         hwnd = createVisibleTopLevelWindowAt("Win32ClickWatcherTest burst", 120, 120, 300, 200);

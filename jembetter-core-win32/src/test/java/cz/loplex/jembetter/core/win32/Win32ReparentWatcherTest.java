@@ -77,11 +77,15 @@ class Win32ReparentWatcherTest {
     /**
      * The Win32-vs-X11 asymmetry {@code EmbedPlugWin32#onHostDetached} depends
      * on: destroying a parent HWND destroys its reparented children outright
-     * (X11 would reparent a released child back to the root, alive). Wine
-     * doesn't replicate that, hence {@code @Tag("wine-incompatible")} — the
+     * (X11 would reparent a released child back to the root, alive). The
      * real-machine {@code ReparentWatcherCheck} covers the cross-process form.
+     *
+     * <p>Was {@code @Tag("wine-incompatible")} until 2026-09-13, on the
+     * grounds that Wine did not replicate the cascade. wine-staging 11.16
+     * does: run under the Wine fork with the exclusion lifted
+     * ({@code mvn test -Dwine.excludedGroups=}) this passed every time across
+     * repeated runs.
      */
-    @Tag("wine-incompatible")
     @Test
     void destroyingTheParentAlsoDestroysTheReparentedChildAndReportsZero() throws InterruptedException {
         parentHwnd = createTopLevelWindow("Win32ReparentWatcherTest asym-parent");

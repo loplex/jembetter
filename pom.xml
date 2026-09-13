@@ -76,6 +76,20 @@
          the default in place would exclude the very tests -Dgroups=visual
          asks for). -->
     <test.excludedGroups>visual</test.excludedGroups>
+    <!-- Tags excluded from the Wine-hosted fork (see the
+         win32-tests-under-wine profile below): behaviour Wine genuinely
+         cannot replicate, which real Windows covers instead.
+
+         A property rather than a literal so the exclusion can be *revoked*
+         from the command line - `mvn test -Dwine.excludedGroups=` runs the
+         tagged tests under Wine too. That matters because the tag is a claim
+         about Wine that should stay checkable: the way to confirm one is to
+         run the tagged test on both platforms and see a deterministic split
+         (fails every time under Wine, passes every time on real Windows). A
+         flaky result under Wine means the tag is covering a race instead, and
+         then it hides a defect rather than recording an environment gap. The
+         `Win32 flake rate` workflow exists to make that measurement. -->
+    <wine.excludedGroups>wine-incompatible</wine.excludedGroups>
   </properties>
 
   <dependencyManagement>
@@ -284,11 +298,13 @@
                   <configuration>
                     <groups>windows</groups>
                     <!-- Excludes windows-tagged tests that are known to never pass under
-                         Wine specifically (as opposed to on real Windows) - see the
-                         comment on Win32ClickWatcherTest's
-                         clickInsideAWatchedWindowInvokesTheCallback for the current
-                         one. -->
-                    <excludedGroups>wine-incompatible</excludedGroups>
+                         Wine specifically (as opposed to on real Windows). Nothing
+                         carries the tag at present - the last three were removed on
+                         2026-09-13 after measurement showed the pinned Wine does what
+                         their tags said it could not. See the wine.excludedGroups
+                         property for how to run a tagged test under Wine anyway, which
+                         is how such a claim gets rechecked. -->
+                    <excludedGroups>${wine.excludedGroups}</excludedGroups>
                     <environmentVariables>
                       <TEST_GROUP>windows</TEST_GROUP>
                     </environmentVariables>
