@@ -105,6 +105,20 @@ public interface EmbedClient extends AutoCloseable {
     /**
      * Registers a callback invoked whenever this window's own size changes —
      * see {@link EmbedClientX11#onResized}.
+     *
+     * <p><b>Being embedded is itself a size change</b>, so a client that
+     * registered this before the embed is called for the embed as well as for
+     * every resize afterwards. Treat the callback as "the window is now this
+     * size", not as "the host has finished deciding": act on the latest
+     * values rather than on the first call, and make the work idempotent
+     * rather than assuming one call per intent. A layout driven from the
+     * first call after an embed can be laying out against a size that is
+     * about to change again.
+     *
+     * <p>How many calls arrive is not part of the contract and differs by
+     * backend — Win32 reparenting also strips the window's decorations, which
+     * moves the client area on its own. The values are always truthful; their
+     * number and timing are not something to depend on.
      */
     void onResized(SizeListener callback);
 

@@ -117,6 +117,18 @@ No socket is opened on this path, so `onModalityChanged` (and X11's
 as on `announce()`. If you need them, use the `offer` &harr; `listen`
 pairing below instead.
 
+**`onResized` fires for the embed too.** Being embedded is a size change like
+any other, so a callback registered beforehand — as above, which is the point
+of registering it there — is called for the embed as well as for every resize
+after it. On Win32 there is a second reason: reparenting strips the window's
+caption and border, which moves the client area on its own.
+
+So treat each call as *"the window is now this size"* rather than *"the host
+has finished deciding"*. Act on the latest values, keep the work idempotent,
+and don't count calls. The relayout above is written the right way already,
+being a plain function of the size it is handed; what to avoid is logic that
+runs once on the first call, or that assumes one call per host action.
+
 ## Modality and host-window activation
 
 Two host&rarr;client signals are purely semantic — a modal dialog shadowing

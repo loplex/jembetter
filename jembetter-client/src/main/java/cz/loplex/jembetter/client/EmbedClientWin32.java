@@ -201,6 +201,12 @@ public final class EmbedClientWin32 implements EmbedClient {
      * Registers a callback invoked whenever this window's own size changes —
      * see {@link Win32ConfigureWatcher}'s Javadoc for the mechanism. Runs on
      * {@link Win32ConfigureWatcher}'s own background thread.
+     *
+     * <p>Expect a call for the embed itself, before any the host makes
+     * afterwards: {@code SetParent} here comes with a style change that drops
+     * the window's caption and border, which moves the client area this
+     * watcher reports on. See {@link EmbedClient#onResized} for why that means
+     * acting on the latest values rather than on the first call.
      */
     @Override
     public void onResized(SizeListener callback) {
