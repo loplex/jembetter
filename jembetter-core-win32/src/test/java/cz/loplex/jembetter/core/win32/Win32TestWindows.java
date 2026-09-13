@@ -82,6 +82,41 @@ final class Win32TestWindows {
         return User32.INSTANCE.IsWindow(toHwnd(hwnd));
     }
 
+    /**
+     * {@code GetDesktopWindow()}, for telling "this window's parent is the
+     * desktop" apart from "its parent is some other window" in a failure
+     * message. {@code GetParent} returns the desktop handle rather than 0 for
+     * a {@code WS_CHILD} window that has not been given a real parent, so a
+     * reported parent that happens to equal this one means something quite
+     * different from any other value.
+     */
+    static long desktopWindow() {
+        return Pointer.nativeValue(User32.INSTANCE.GetDesktopWindow().getPointer());
+    }
+
+    /**
+     * Gives {@code hwnd} the {@code WS_CHILD} style without giving it a parent
+     * — the state {@code Win32Reparent.reparent} passes through between its
+     * style flip and its {@code SetParent}, reproduced deliberately so a test
+     * can look at it instead of racing a 50 ms poll against it.
+     */
+    static void addChildStyle(long hwnd) {
+        HWND handle = toHwnd(hwnd);
+        int style = User32.INSTANCE.GetWindowLong(handle, WinUser.GWL_STYLE);
+        User32.INSTANCE.SetWindowLong(handle, WinUser.GWL_STYLE, style | WinUser.WS_CHILD);
+    }
+
+    /**
+     * {@code GetParent} with nothing interpreted, unlike {@code
+     * Win32Reparent.parentOf} — so a test can assert what Windows itself
+     * reports rather than take the production code's word for the premise it
+     * is built on.
+     */
+    static long rawParentOf(long hwnd) {
+        HWND parent = User32.INSTANCE.GetParent(toHwnd(hwnd));
+        return parent == null ? 0 : Pointer.nativeValue(parent.getPointer());
+    }
+
     static HWND toHwnd(long value) {
         return new HWND(new Pointer(value));
     }

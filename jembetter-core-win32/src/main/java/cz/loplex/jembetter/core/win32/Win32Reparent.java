@@ -90,10 +90,39 @@ public final class Win32Reparent {
                 WinUser.SWP_NOSIZE | WinUser.SWP_NOZORDER | WinUser.SWP_SHOWWINDOW);
     }
 
-    /** {@code GetParent(hwnd)}, or {@code 0} if the window has no parent (e.g. it's desktop-parented). */
+    /**
+     * {@code GetParent(hwnd)}, or {@code 0} if the window has no parent —
+     * which includes being parented to the desktop, where {@code GetParent}
+     * reports the desktop window rather than nothing.
+     *
+     * <p>That distinction is not cosmetic. {@code GetParent} returns a real
+     * parent for any {@code WS_CHILD} window, and a top-level window's parent
+     * in Windows' own window tree *is* the desktop — so a window carrying
+     * {@code WS_CHILD} without having been given a parent of its own reads as
+     * a child of the desktop. {@link #reparent} produces exactly that state
+     * for as long as it takes to get from its style flip to its {@code
+     * SetParent}, and a watcher polling the window in that gap sees a genuine
+     * change to a genuine handle: measured on CI 2026-09-13 at 3-4 polls in
+     * 10, long enough for a client to report the desktop as the host that
+     * embedded it. Reporting 0 makes that interval read as unchanged rather
+     * than as an embed nobody performed.
+     *
+     * <p>Nothing is lost by it: being parented to the desktop is what every
+     * unembedded top-level window already is, and is what {@link #release}
+     * puts a window back to. It matches {@code jembetter-core-x11}, where a
+     * client reparented to the root window is released rather than embedded.
+     */
     public static long parentOf(long hwnd) {
         HWND parent = User32.INSTANCE.GetParent(toHwnd(hwnd));
-        return parent == null ? 0 : Pointer.nativeValue(parent.getPointer());
+        if (parent == null) {
+            return 0;
+        }
+        long parentHwnd = Pointer.nativeValue(parent.getPointer());
+        return parentHwnd == desktopWindow() ? 0 : parentHwnd;
+    }
+
+    private static long desktopWindow() {
+        return Pointer.nativeValue(User32.INSTANCE.GetDesktopWindow().getPointer());
     }
 
     private static HWND toHwnd(long value) {

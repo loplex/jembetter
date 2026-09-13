@@ -130,13 +130,19 @@ public final class Win32ReparentWatcher implements AutoCloseable {
         return User32.INSTANCE.IsWindow(new HWND(new Pointer(hwnd)));
     }
 
+    /**
+     * Deliberately {@link Win32Reparent#parentOf} rather than a second
+     * {@code GetParent} of its own: what counts as "has a parent" wants one
+     * definition, and that one already excludes the desktop — which this
+     * watcher would otherwise report as a reparent every time it polled a
+     * window mid-{@code SetParent}. See there.
+     */
     private static long currentParentOf(long hwnd) {
         HWND handle = new HWND(new Pointer(hwnd));
         if (!User32.INSTANCE.IsWindow(handle)) {
             return 0;
         }
-        HWND parent = User32.INSTANCE.GetParent(handle);
-        return parent == null ? 0 : Pointer.nativeValue(parent.getPointer());
+        return Win32Reparent.parentOf(hwnd);
     }
 
     private void idle() {

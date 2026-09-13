@@ -42,6 +42,29 @@ class Win32ReparentTest {
         assertEquals(parentHwnd, Win32Reparent.parentOf(childHwnd));
     }
 
+    /**
+     * Regression coverage for the transient that
+     * {@code Win32ReparentWatcherTest.reportsANewParentAfterSetParent} caught
+     * on CI at 3-4 iterations in 10 and could only catch by luck: a window
+     * carrying {@code WS_CHILD} with no parent of its own is a child of the
+     * desktop as far as {@code GetParent} is concerned, and reading that
+     * literally makes {@code reparent}'s own intermediate state look like a
+     * host embedding the window. Reproduced here without the race, by styling
+     * a window and not reparenting it.
+     *
+     * <p>The first assertion is the premise, not the behaviour: if Windows
+     * ever stopped reporting the desktop here, the second assertion would pass
+     * for a reason that has nothing to do with the code it covers.
+     */
+    @Test
+    void aWindowStyledAsAChildWithNoParentOfItsOwnReadsAsUnparented() {
+        Win32TestWindows.addChildStyle(childHwnd);
+
+        assertEquals(Win32TestWindows.desktopWindow(), Win32TestWindows.rawParentOf(childHwnd),
+                "premise: Windows reports the desktop as the parent of a styled-but-unparented child");
+        assertEquals(0L, Win32Reparent.parentOf(childHwnd));
+    }
+
     @Test
     void releaseRestoresDesktopParent() {
         Win32Reparent.reparent(childHwnd, parentHwnd, 5, 5);
