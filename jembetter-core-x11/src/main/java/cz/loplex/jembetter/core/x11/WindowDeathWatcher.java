@@ -39,7 +39,17 @@ public final class WindowDeathWatcher implements AutoCloseable {
         synchronized (X11Display.GLOBAL_LOCK) {
             X11Ext.INSTANCE.XSelectInput(display.raw(), new Window(windowId),
                     new NativeLong(X11Ext.StructureNotifyMask));
-            X11Ext.INSTANCE.XFlush(display.raw());
+            // XSync, not XFlush: XFlush only empties the output buffer, so
+            // watch() could return before the server had processed the
+            // XSelectInput above. Each watcher owns a separate connection from
+            // its caller's, so the caller's very next request - destroying or
+            // reparenting this window - could reach the server first, and
+            // XSelectInput is not retroactive: the DestroyNotify it was
+            // registered for would simply never be sent. XSync returns only
+            // once the server has processed the request, which is what callers
+            // already assume watch() guarantees. It costs one round trip, held
+            // under GLOBAL_LOCK, on a path that runs once per watched window.
+            X11Ext.INSTANCE.XSync(display.raw(), false);
         }
     }
 
