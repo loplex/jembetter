@@ -1,5 +1,10 @@
 package cz.loplex.jembetter.client;
 
+import com.sun.jna.Pointer;
+import com.sun.jna.platform.win32.User32;
+import com.sun.jna.platform.win32.WinDef.DWORD;
+import com.sun.jna.platform.win32.WinDef.HWND;
+import com.sun.jna.platform.win32.WinUser;
 import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.win32.Win32Focus;
@@ -60,11 +65,41 @@ class EmbedClientWin32Test {
         if (socketPath != null) {
             Files.deleteIfExists(socketPath);
         }
+        // Put anything still embedded in the fake host back on the desktop
+        // BEFORE disposing the frame. Win32 destroys a window on its owning
+        // thread, and disposing an AWT frame whose HWND is still a WS_CHILD of
+        // a foreign window wedges AWT's event thread inside
+        // EventQueue.invokeAndWait - which hangs this class outright, with no
+        // failure and no output. A test that embeds the frame and does not
+        // release it is the normal case here (a host detaching is a separate
+        // behaviour, tested on its own), so the teardown has to undo it rather
+        // than every test remembering to.
+        if (fakeHostHwnd >= 0 && Win32TestWindow.exists(fakeHostHwnd)) {
+            releaseChildrenOf(fakeHostHwnd);
+        }
         if (frame != null) {
             frame.dispose();
         }
         if (fakeHostHwnd >= 0 && Win32TestWindow.exists(fakeHostHwnd)) {
             Win32TestWindow.destroy(fakeHostHwnd);
+        }
+    }
+
+    /**
+     * Reparents every direct child of {@code parent} back to the desktop.
+     * Walks with {@code GW_CHILD} repeatedly rather than enumerating once:
+     * each release removes that window from the parent's child list, so the
+     * next call returns the following one. Bounded so a window that refuses to
+     * detach can't spin the teardown forever.
+     */
+    private static void releaseChildrenOf(long parent) {
+        HWND parentHandle = new HWND(new Pointer(parent));
+        for (int guard = 0; guard < 16; guard++) {
+            HWND child = User32.INSTANCE.GetWindow(parentHandle, new DWORD(WinUser.GW_CHILD));
+            if (child == null) {
+                return;
+            }
+            Win32Reparent.release(Pointer.nativeValue(child.getPointer()), 0, 0);
         }
     }
 
