@@ -53,6 +53,7 @@ class EmbedClientWin32Test {
     private EmbedClientWin32 client;
     private JFrame frame;
     private long fakeHostHwnd = -1;
+    private long opaqueClientHwnd = -1;
 
     @AfterEach
     void cleanup() throws IOException {
@@ -82,6 +83,9 @@ class EmbedClientWin32Test {
         }
         if (fakeHostHwnd >= 0 && Win32TestWindow.exists(fakeHostHwnd)) {
             Win32TestWindow.destroy(fakeHostHwnd);
+        }
+        if (opaqueClientHwnd >= 0 && Win32TestWindow.exists(opaqueClientHwnd)) {
+            Win32TestWindow.destroy(opaqueClientHwnd);
         }
     }
 
@@ -317,23 +321,22 @@ class EmbedClientWin32Test {
      * sees the whole embed lifecycle — what {@code EmbedSocketWin32#embedOpaque}
      * pairs with on the host side.
      *
-     * <p>The watched window is a {@link JFrame} like the {@link
-     * EmbedClientWin32#announce} tests above use, even though the path under
-     * test exists for windows a foreign toolkit owns: what matters here is
-     * that the handle is passed in rather than resolved, and a {@code
-     * Win32TestWindow} can't stand in for it. A {@code STATIC} window created
-     * on the JUnit thread has no message pump, and a window whose owning
-     * thread never pumps blocks any {@code SendMessage} into it forever —
-     * which deadlocks AWT's own event thread during {@code @AfterEach}'s
-     * {@code frame.dispose()}. The pre-existing tests keep {@code
-     * Win32TestWindow} in the passive fake-host role for the same reason.
+     * <p>The watched window is a plain {@link Win32TestWindow}, not a {@link
+     * JFrame} like the {@link EmbedClientWin32#announce} tests above use. That
+     * matches what the path is for — a window a foreign toolkit owns, which
+     * AWT knows nothing about — and it avoids a source of flakiness that has
+     * nothing to do with the code under test: under Wine the desktop shell
+     * reparents a decorated top-level window into a frame of its own shortly
+     * after it becomes visible, which arrives as an embed and consumes the
+     * one-shot gate in {@code handleParentChanged} before the host's own
+     * {@code SetParent} lands. Measured at 3 failures in 10 runs with a
+     * {@code JFrame} here, reporting a shell window's handle in place of the
+     * fake host's; a {@code STATIC} window is not decorated and the shell
+     * leaves it alone.
      */
     @Test
     void watchOwnWindowDetectsBeingEmbeddedAndReleasedWithoutAnnouncing() throws InterruptedException {
-        frame = new JFrame("EmbedClientWin32Test watch-own-window");
-        frame.setBounds(0, 0, 50, 50);
-        frame.setVisible(true);
-        long ownHwnd = waitForOwnWindow(ProcessHandle.current().pid());
+        opaqueClientHwnd = Win32TestWindow.create("EmbedClientWin32Test opaque client");
 
         CountDownLatch embedded = new CountDownLatch(1);
         CountDownLatch detached = new CountDownLatch(1);
@@ -344,14 +347,14 @@ class EmbedClientWin32Test {
             embedded.countDown();
         });
         client.onHostDetached(detached::countDown);
-        client.watchOwnWindow(ownHwnd);
+        client.watchOwnWindow(opaqueClientHwnd);
 
         fakeHostHwnd = Win32TestWindow.create("EmbedClientWin32Test fake host (watch-own-window)");
-        Win32Reparent.reparent(ownHwnd, fakeHostHwnd, 0, 0);
+        Win32Reparent.reparent(opaqueClientHwnd, fakeHostHwnd, 0, 0);
         assertTrue(embedded.await(5, TimeUnit.SECONDS), "onEmbedded was never invoked after watchOwnWindow()");
         assertEquals(fakeHostHwnd, reportedEmbedderWindow.get());
 
-        Win32Reparent.release(ownHwnd, 0, 0);
+        Win32Reparent.release(opaqueClientHwnd, 0, 0);
         assertTrue(detached.await(5, TimeUnit.SECONDS), "onHostDetached was never invoked after the release");
     }
 
