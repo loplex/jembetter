@@ -8,7 +8,7 @@
 
   FOCUS, FOCUSWATCH, REPARENT, CLICK/hook-survival, SOCKETCLIENT and
   CLICKFOCUS print an automatic PASS/FAIL and gate this script's exit code.
-  FG-LOCK, CLICK/latency and CLICK/UIPI are observational — read their
+  FG-LOCK, BGFOCUS, CLICK/latency and CLICK/UIPI are observational — read their
   printed lines yourself.
 
 .PARAMETER RepoRoot
@@ -97,6 +97,7 @@ Run-Check "REPARENT"     "cz.loplex.jembetter.win32check.ReparentWatcherCheck"  
 Run-Check "CLICK"        "cz.loplex.jembetter.win32check.ClickWatcherCaveatsCheck"  @()
 Run-Check "SOCKETCLIENT" "cz.loplex.jembetter.win32check.SocketClientWin32Check"    $awtOpens
 Run-Check "CLICKFOCUS"   "cz.loplex.jembetter.win32check.ClickToFocusWin32Check"    $awtOpens
+Run-Check "BGFOCUS"      "cz.loplex.jembetter.win32check.BackgroundFocusGrantCheck" $awtOpens
 
 Write-Host ""
 Write-Host "=== Summary ==="
@@ -105,6 +106,7 @@ foreach ($key in $results.Keys | Sort-Object) {
     Write-Host "$key : $status"
 }
 Write-Host "FG-LOCK has no automatic verdict - read its printed lines above (or the log file) yourself."
+Write-Host "BGFOCUS has none either, and is the one to read across runs rather than in one: it samples whether a focus grant lands while a third process holds the foreground."
 Write-Host "CLICK's latency and UIPI lines are observational too - only hook-survival gates CLICK's exit code."
 
 $anyHardFailure = ($results["FOCUS"] -ne 0) -or ($results["FOCUSWATCH"] -ne 0) `
