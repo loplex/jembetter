@@ -65,6 +65,17 @@ public final class Win32ClickWatcher implements AutoCloseable {
     private static final int WM_LBUTTONDOWN = 0x0201;
     private static final int WM_QUIT = 0x0012;
     private static final int HC_ACTION = 0;
+    /**
+     * How long the constructor waits for the pump thread to report its hook.
+     * Generous on purpose, and matched to the 5s the rest of the library
+     * allows for "the window system should answer promptly but might not":
+     * under Wine, {@code SetWindowsHookEx} has been measured taking over a
+     * second to return while several test forks are running. The wait exists
+     * to close a startup race, not to time the call, so the budget has to
+     * cover the slowest environment this runs in — a value that is too
+     * small does not report a problem, it manufactures one.
+     */
+    private static final int INSTALL_TIMEOUT_SECONDS = 5;
 
     private final Map<Long, Runnable> callbacks = new ConcurrentHashMap<>();
     private final ExecutorService dispatch =
@@ -81,6 +92,7 @@ public final class Win32ClickWatcher implements AutoCloseable {
     private final LowLevelMouseProc hookProc = this::onMouseEvent;
 
     private volatile HHOOK hook;
+    private volatile int installErrorCode;
     private volatile int pumpThreadId;
     private volatile boolean running = true;
 
@@ -91,7 +103,20 @@ public final class Win32ClickWatcher implements AutoCloseable {
         // The watcher isn't functional until the hook is actually installed
         // on the pump thread; block here so a click right after construction
         // can't race past a not-yet-installed hook.
-        awaitInstalled();
+        boolean reported = awaitInstalled();
+        if (!reported || hook == null) {
+            // Fail, rather than hand back a watcher that will never report a
+            // click. Everything this class does depends on that one hook, so
+            // an instance without it is not a degraded watcher, it is a
+            // silent no-op - and the caller has no way to ask whether it
+            // worked. close() first, because the caller gets no object and
+            // so can never stop the pump thread itself.
+            close();
+            throw new IllegalStateException(reported
+                    ? "SetWindowsHookEx(WH_MOUSE_LL) failed with error " + installErrorCode
+                    : "The click watcher's pump thread did not report its hook within "
+                            + INSTALL_TIMEOUT_SECONDS + "s");
+        }
     }
 
     /**
@@ -110,10 +135,14 @@ public final class Win32ClickWatcher implements AutoCloseable {
     private void pump() {
         pumpThreadId = Kernel32.INSTANCE.GetCurrentThreadId();
         hook = User32.INSTANCE.SetWindowsHookEx(WH_MOUSE_LL, hookProc, null, 0);
-        installed.countDown();
         if (hook == null) {
+            // Read before countDown: the constructor reports this, and
+            // GetLastError is per-thread, so it has to be captured here.
+            installErrorCode = Kernel32.INSTANCE.GetLastError();
+            installed.countDown();
             return;
         }
+        installed.countDown();
         try {
             MSG msg = new MSG();
             int result;
@@ -183,11 +212,19 @@ public final class Win32ClickWatcher implements AutoCloseable {
         dispatch.shutdownNow();
     }
 
-    private void awaitInstalled() {
+    /**
+     * Waits for the pump thread to report whether its hook went in. Returns
+     * {@code false} if it never got that far, which the constructor treats
+     * as a failed install; {@link #close()} ignores the result and only
+     * needs the wait itself, so that {@code pumpThreadId} is published
+     * before it posts to it.
+     */
+    private boolean awaitInstalled() {
         try {
-            installed.await(1, TimeUnit.SECONDS);
+            return installed.await(INSTALL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            return false;
         }
     }
 }
