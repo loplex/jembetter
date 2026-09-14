@@ -63,6 +63,12 @@ interface does not carry. The full list of what stays backend-specific is in
   `ExecutorService.awaitTermination`'s: best-effort teardown, with whether it
   finished as a separate question.
 
+- [Advanced usage](docs/advanced-usage.md) now documents the threading
+  contract: which methods may be called from which thread, which thread each
+  callback is delivered on (none of them AWT's), and what a callback that
+  blocks costs at teardown. Several of those answers existed only as
+  behaviour before.
+
 ### Changed
 
 - `EmbedSocketX11.resize`, `setBounds`, `listen`, `embed` and `embedOpaque`

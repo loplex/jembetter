@@ -212,7 +212,54 @@ own exactly one window.
 Both sides wait up to 5 seconds by default for a window to appear before
 giving up; override that with `EmbedSocket#setWindowLookupTimeout`/
 `EmbedClient#setWindowLookupTimeout` if that's too tight (or too loose) for
-your setup.
+your setup. On the host that same budget also covers the second wait an
+embed performs — confirming the reparent actually took effect.
+
+## Threads
+
+Embedding is an AWT problem and a window-system problem at once, so it is
+worth being explicit about which thread is where.
+
+**Calling in.** Every public method can be called from any thread, with one
+exception: `EmbedSocket.open(Canvas)` reads the canvas's native peer, so the
+canvas has to be displayable by then — call it after the containing window
+is visible, on whatever thread made it so.
+
+`close()` is the one to think about, because you are not the only caller.
+A socket opened with `open(Canvas)` closes itself when that canvas becomes
+non-displayable, and AWT delivers that on its event thread — so your own
+`close()` can genuinely race the one AWT makes. Both are safe; the second is
+a no-op. `listen()` is guarded the same way and rejects a second caller with
+`IllegalStateException` rather than binding twice.
+
+A closed socket rejects `resize`, `setBounds`, `listen`, `embed` and
+`embedOpaque` with `IllegalStateException`. It does not reject `setModal`,
+`focusClient` or `detachClient`, which document themselves as no-ops when
+nothing is embedded — after a close, nothing is.
+
+**Calling out.** No callback this library invokes runs on AWT's event
+thread. If a callback touches Swing, it has to get there itself, with
+`SwingUtilities.invokeLater`.
+
+| Callback | Delivered on |
+|---|---|
+| `EmbedSocket.onClientEmbedded` | the accept loop's thread |
+| `EmbedSocket.onClientDetached` | the window-death watcher's thread |
+| `EmbedSocketX11.onFocusNext` / `onFocusPrev` | the XEmbed inbound watcher's thread |
+| `EmbedClient.onEmbedded`, `onHostDetached` | the reparent watcher's thread |
+| `EmbedClient.onResized` | the configure watcher's thread |
+| `EmbedClient.onFocusChanged` | the focus watcher's thread |
+| `EmbedClient.onModalityChanged`, `EmbedClientX11.onActivationChanged` | the control channel's reader thread |
+
+`detachClient()` releases the client without firing `onClientDetached` —
+that callback reports a detach the host did not ask for.
+
+**Callbacks must not block.** Each of those threads is one this library
+stops during `close()`, waiting a second for it and then giving up. A
+callback that blocks for longer does not hang the teardown — it just means
+the thread outlives it. `closedCleanly()` says whether that happened, and a
+warning is logged naming the thread; nothing throws, because a daemon thread
+that is slow to stop is not worth failing an application's shutdown over.
 
 ## X11-only extras
 
