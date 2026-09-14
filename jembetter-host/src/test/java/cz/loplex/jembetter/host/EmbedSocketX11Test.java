@@ -34,13 +34,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -545,6 +548,59 @@ class EmbedSocketX11Test {
             clientProcess.destroy();
             clientProcess.waitFor(5, TimeUnit.SECONDS);
         }
+    }
+
+    /**
+     * {@code listen()} guards itself with "already listening", which used to
+     * be a read of one flag followed by a write of it — two callers could
+     * both get through and bind two server channels to the same path.
+     *
+     * <p>A stress test, not a strict repro: it cannot force the interleaving,
+     * only assert the invariant survives a crowd. What it does pin down is
+     * that exactly one caller wins, whatever the scheduling.
+     */
+    @Test
+    void onlyOneOfSeveralConcurrentListenCallersStartsListening() throws Exception {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketX11Test owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+
+        socket = new EmbedSocketX11(owner);
+        socket.open(canvas);
+
+        Path socketPath = Files.createTempDirectory("jembetter-listen-race").resolve("socket");
+        int callers = 8;
+        CountDownLatch start = new CountDownLatch(1);
+        CountDownLatch done = new CountDownLatch(callers);
+        AtomicInteger started = new AtomicInteger();
+        List<Throwable> unexpected = new CopyOnWriteArrayList<>();
+        for (int i = 0; i < callers; i++) {
+            Thread caller = new Thread(() -> {
+                try {
+                    start.await();
+                    socket.listen(socketPath);
+                    started.incrementAndGet();
+                } catch (IllegalStateException e) {
+                    // "Already listening" - expected for every caller but one.
+                } catch (Throwable e) {
+                    unexpected.add(e);
+                } finally {
+                    done.countDown();
+                }
+            }, "listen-race-caller-" + i);
+            caller.setDaemon(true);
+            caller.start();
+        }
+        start.countDown();
+
+        assertTrue(done.await(10, TimeUnit.SECONDS), "the listen() callers never finished");
+        assertTrue(unexpected.isEmpty(), "a listen() caller failed with something other than IllegalStateException: "
+                + unexpected);
+        assertEquals(1, started.get(),
+                "more than one caller started listening on the same socket path");
     }
 
     /**

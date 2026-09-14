@@ -78,6 +78,14 @@ interface does not carry. The full list of what stays backend-specific is in
   its accept thread running. Those fields were not safely published, so the
   closing thread could read them as still-unset — reachable in practice
   because a `Canvas`-attached socket is closed by AWT's own event thread.
+- Two threads calling `listen()` on the same `EmbedSocket` at the same time
+  could both get past its "already listening" check and bind two server
+  channels to one path; a close landing in the middle of a `listen()` could
+  miss the channel and thread it was about to create. Both transitions now
+  happen under one lock. A `listen()` whose `bind` fails no longer leaves the
+  opened channel behind either, and a `close()` whose server channel refuses
+  to close now finishes the rest of the teardown instead of throwing out of
+  it.
 
 ### Published artifacts
 
