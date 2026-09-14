@@ -37,7 +37,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
-import java.nio.channels.Channel;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
@@ -80,9 +79,9 @@ public final class EmbedSocketX11 implements EmbedSocket {
     private static final int OPAQUE_MAX_ATTEMPTS = 100;
 
     private final Frame owner;
-    private final X11Display display = X11Display.open(null);
-    private final WindowDeathWatcher deathWatcher = new WindowDeathWatcher();
-    private final WindowConfigureWatcher configureWatcher = new WindowConfigureWatcher();
+    private final X11Display display;
+    private final WindowDeathWatcher deathWatcher;
+    private final WindowConfigureWatcher configureWatcher;
     // volatile, like every other mutable field here: open()/listen() run on
     // whatever thread the caller uses, while close() can arrive from the AWT
     // event thread via the HierarchyListener open(Canvas) attaches. Without
@@ -159,6 +158,31 @@ public final class EmbedSocketX11 implements EmbedSocket {
 
     public EmbedSocketX11(Frame owner) {
         this.owner = owner;
+        // Built here rather than in field initializers so that a failure
+        // part-way through can be undone. Each of these opens its own X11
+        // connection, and the watchers each start a thread; if the second or
+        // third throws, the ones already built are unreachable and nothing
+        // can ever close them, because the caller never gets an object to
+        // close. X11Display.open throws exactly when the server refuses
+        // another connection, which is what a server at its client limit
+        // does — so the leak would compound, every retry costing another
+        // connection and thread and moving further from ever succeeding.
+        X11Display openedDisplay = null;
+        WindowDeathWatcher openedDeathWatcher = null;
+        WindowConfigureWatcher openedConfigureWatcher = null;
+        try {
+            openedDisplay = X11Display.open(null);
+            openedDeathWatcher = new WindowDeathWatcher();
+            openedConfigureWatcher = new WindowConfigureWatcher();
+        } catch (RuntimeException | Error e) {
+            closeQuietly(openedConfigureWatcher);
+            closeQuietly(openedDeathWatcher);
+            closeQuietly(openedDisplay);
+            throw e;
+        }
+        this.display = openedDisplay;
+        this.deathWatcher = openedDeathWatcher;
+        this.configureWatcher = openedConfigureWatcher;
         owner.addWindowFocusListener(ownerFocusListener);
     }
 
@@ -904,14 +928,14 @@ public final class EmbedSocketX11 implements EmbedSocket {
         }
     }
 
-    private static void closeQuietly(Channel channel) {
-        if (channel == null) {
+    private static void closeQuietly(AutoCloseable resource) {
+        if (resource == null) {
             return;
         }
         try {
-            channel.close();
-        } catch (IOException e) {
-            // Best-effort cleanup of a channel already headed nowhere useful.
+            resource.close();
+        } catch (Exception e) {
+            // Best-effort cleanup of something already headed nowhere useful.
         }
     }
 

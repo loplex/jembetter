@@ -45,7 +45,7 @@ final class Win32EmbedCore {
 
     private final Canvas hostCanvas;
     private final long hostCanvasHwnd;
-    private final Win32ClickWatcher clickWatcher = new Win32ClickWatcher();
+    private final Win32ClickWatcher clickWatcher;
     private final ComponentListener hostCanvasResizeListener;
     private volatile long embeddedHwnd = -1;
     private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
@@ -54,7 +54,12 @@ final class Win32EmbedCore {
 
     Win32EmbedCore(Canvas hostCanvas) {
         this.hostCanvas = hostCanvas;
+        // Before the watcher, not after: extract() is the step that can fail
+        // (no native peer yet), and a watcher created first would be left
+        // running with nothing able to close it, since the caller never gets
+        // an object back.
         this.hostCanvasHwnd = CanvasNativeHandle.extract(hostCanvas);
+        this.clickWatcher = new Win32ClickWatcher();
         // Kept in a field so close() can take it off again: a listener left
         // on a canvas that outlives this core goes on resizing an HWND this
         // instance no longer manages, and holds the instance reachable for

@@ -65,6 +65,14 @@ interface does not carry. The full list of what stays backend-specific is in
   unchanged — a callback that throws still must not take a watcher thread
   down.
 
+- Constructing an `EmbedSocket` or `EmbedClient` no longer leaks what it had
+  already built when a later step fails. Each builds several resources — up
+  to four X11 connections and three threads — and a failure part-way through
+  left the earlier ones running with nothing able to close them, since the
+  caller never receives an object. `X11Display.open` fails exactly when the
+  X server refuses another connection, so retrying made the situation worse
+  each time.
+
 ### Fixed
 
 - A JVM crash (`SIGSEGV` inside Xlib) when an X11 display connection was

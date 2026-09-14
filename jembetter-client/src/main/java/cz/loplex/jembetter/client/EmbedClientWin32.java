@@ -51,10 +51,46 @@ public final class EmbedClientWin32 implements EmbedClient {
 
     private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
 
-    private final Win32ReparentWatcher reparentWatcher = new Win32ReparentWatcher();
-    private final Win32FocusWatcher focusWatcher = new Win32FocusWatcher();
-    private final Win32ConfigureWatcher configureWatcher = new Win32ConfigureWatcher();
+    private final Win32ReparentWatcher reparentWatcher;
+    private final Win32FocusWatcher focusWatcher;
+    private final Win32ConfigureWatcher configureWatcher;
     private long windowId = -1;
+
+    public EmbedClientWin32() {
+        // Built here rather than in field initializers so that a failure
+        // part-way through can be undone: each of these starts a thread, and
+        // if the second or third throws, the ones already running are
+        // unreachable and nothing can ever close them, because the caller
+        // never gets an object to close.
+        Win32ReparentWatcher openedReparentWatcher = null;
+        Win32FocusWatcher openedFocusWatcher = null;
+        Win32ConfigureWatcher openedConfigureWatcher = null;
+        try {
+            openedReparentWatcher = new Win32ReparentWatcher();
+            openedFocusWatcher = new Win32FocusWatcher();
+            openedConfigureWatcher = new Win32ConfigureWatcher();
+        } catch (RuntimeException | Error e) {
+            closeQuietly(openedConfigureWatcher);
+            closeQuietly(openedFocusWatcher);
+            closeQuietly(openedReparentWatcher);
+            throw e;
+        }
+        this.reparentWatcher = openedReparentWatcher;
+        this.focusWatcher = openedFocusWatcher;
+        this.configureWatcher = openedConfigureWatcher;
+    }
+
+    private static void closeQuietly(AutoCloseable resource) {
+        if (resource == null) {
+            return;
+        }
+        try {
+            resource.close();
+        } catch (Exception e) {
+            // Best-effort cleanup of something already headed nowhere useful.
+        }
+    }
+
     private volatile long embedderHwnd = -1;
     private volatile boolean awaitingEmbed = false;
     private volatile SocketChannel controlChannel;

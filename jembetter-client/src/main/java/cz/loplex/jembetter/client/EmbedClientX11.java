@@ -51,11 +51,55 @@ import java.util.function.Supplier;
  */
 public final class EmbedClientX11 implements EmbedClient {
 
-    private final X11Display display = X11Display.open(null);
-    private final WindowReparentWatcher reparentWatcher = new WindowReparentWatcher();
-    private final WindowConfigureWatcher configureWatcher = new WindowConfigureWatcher();
-    private final WindowFocusWatcher focusWatcher = new WindowFocusWatcher();
+    private final X11Display display;
+    private final WindowReparentWatcher reparentWatcher;
+    private final WindowConfigureWatcher configureWatcher;
+    private final WindowFocusWatcher focusWatcher;
     private long windowId = -1;
+
+    public EmbedClientX11() {
+        // Built here rather than in field initializers so that a failure
+        // part-way through can be undone. Each of these opens its own X11
+        // connection, and the watchers each start a thread; if the second or
+        // third throws, the ones already built are unreachable and nothing
+        // can ever close them, because the caller never gets an object to
+        // close. X11Display.open throws exactly when the server refuses
+        // another connection, which is what a server at its client limit
+        // does — so the leak would compound, every retry costing another
+        // connection and thread and moving further from ever succeeding.
+        X11Display openedDisplay = null;
+        WindowReparentWatcher openedReparentWatcher = null;
+        WindowConfigureWatcher openedConfigureWatcher = null;
+        WindowFocusWatcher openedFocusWatcher = null;
+        try {
+            openedDisplay = X11Display.open(null);
+            openedReparentWatcher = new WindowReparentWatcher();
+            openedConfigureWatcher = new WindowConfigureWatcher();
+            openedFocusWatcher = new WindowFocusWatcher();
+        } catch (RuntimeException | Error e) {
+            closeQuietly(openedFocusWatcher);
+            closeQuietly(openedConfigureWatcher);
+            closeQuietly(openedReparentWatcher);
+            closeQuietly(openedDisplay);
+            throw e;
+        }
+        this.display = openedDisplay;
+        this.reparentWatcher = openedReparentWatcher;
+        this.configureWatcher = openedConfigureWatcher;
+        this.focusWatcher = openedFocusWatcher;
+    }
+
+    private static void closeQuietly(AutoCloseable resource) {
+        if (resource == null) {
+            return;
+        }
+        try {
+            resource.close();
+        } catch (Exception e) {
+            // Best-effort cleanup of something already headed nowhere useful.
+        }
+    }
+
     private volatile long embedderWindowId = -1;
     private volatile boolean awaitingEmbed = false;
     private volatile Runnable onHostDetached = () -> {
