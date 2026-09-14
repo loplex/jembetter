@@ -28,6 +28,11 @@ jobs:
           java-version: "21"
           cache: maven
 
+      # Before the suite, not after: it takes about a second, and a broken
+      # cross-reference is worth knowing about without waiting out a Wine run.
+      - name: Check Markdown links
+        run: python3 build-tools/docs-links/check.py
+
       - name: Install Xvfb + openbox + xdotool
         run: sudo apt-get update && sudo apt-get install -y xvfb openbox xdotool
 
