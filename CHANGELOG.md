@@ -46,6 +46,17 @@ interface does not carry. The full list of what stays backend-specific is in
   watch on an already-embedded window, which is a `WS_CHILD` and so no longer
   enumerable as a top-level window.
 
+### Changed
+
+- `EmbedSocketX11.resize`, `setBounds`, `listen`, `embed` and `embedOpaque`
+  now throw `IllegalStateException` when the socket has been closed. They
+  used to fall through the "open() must be called first" guard — a closed
+  socket keeps its window id — and, with native calls skipped against a
+  closed connection, did nothing at all and reported nothing. The
+  `ComponentListener` `open(Canvas)` attaches is unaffected: a resize
+  notification queued before the socket closed is dropped, not thrown on
+  AWT's event thread.
+
 ### Fixed
 
 - A JVM crash (`SIGSEGV` inside Xlib) when an X11 display connection was

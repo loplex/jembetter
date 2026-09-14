@@ -231,7 +231,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
         this.hostCanvasResizeListener = new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent event) {
-                resize(hostCanvas.getWidth(), hostCanvas.getHeight());
+                resizeFromHostCanvas(hostCanvas.getWidth(), hostCanvas.getHeight());
             }
         };
         hostCanvas.addComponentListener(hostCanvasResizeListener);
@@ -269,6 +269,27 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     public void resize(int width, int height) {
         requireOpen();
+        applyResize(width, height);
+    }
+
+    /**
+     * The host canvas's own way into {@link #resize}. A resize
+     * <em>notification</em> that arrives after {@link #close()} is not a
+     * caller error the way a direct {@code resize()} call is — AWT can still
+     * have one queued from before {@code close()} took the listener off — so
+     * this drops it instead of throwing on the event thread.
+     */
+    private void resizeFromHostCanvas(int width, int height) {
+        if (closed.get()) {
+            return;
+        }
+        // Losing this check to a concurrent close() is harmless: the native
+        // calls below are skipped against a closed connection anyway. Only a
+        // caller's own resize() has to fail.
+        applyResize(width, height);
+    }
+
+    private void applyResize(int width, int height) {
         WindowGeometry.moveResize(display, windowId, 0, 0, width, height);
         applySize(width, height);
     }
@@ -838,7 +859,19 @@ public final class EmbedSocketX11 implements EmbedSocket {
         throw new IllegalStateException(timeoutMessage);
     }
 
+    /**
+     * Rejects a call that cannot do what its caller is asking for: this
+     * socket was never opened, or it has been closed. The closed case used
+     * to fall through — {@code windowId} keeps its value past {@link
+     * #close()}, so the check below never caught it, and with native calls
+     * now skipped against a closed connection the call would simply do
+     * nothing and say nothing. Asking a closed socket to move or embed is a
+     * programming error, so it says so.
+     */
     private void requireOpen() {
+        if (closed.get()) {
+            throw new IllegalStateException("This socket is closed");
+        }
         if (windowId < 0) {
             throw new IllegalStateException("open() must be called first");
         }

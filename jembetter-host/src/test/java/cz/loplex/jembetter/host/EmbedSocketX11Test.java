@@ -551,6 +551,35 @@ class EmbedSocketX11Test {
     }
 
     /**
+     * A closed socket rejects the calls that cannot mean anything any more,
+     * rather than absorbing them. This became reachable when native calls
+     * started being skipped against a closed connection: {@code windowId}
+     * survives {@code close()}, so the old "open() must be called first"
+     * guard never fired, and a {@code resize()} on a closed socket did
+     * nothing at all and reported nothing.
+     */
+    @Test
+    void aClosedSocketRejectsCallsInsteadOfSilentlyDoingNothing() {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketX11Test owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+
+        socket = new EmbedSocketX11(owner);
+        socket.open(canvas);
+        socket.close();
+
+        assertThrows(IllegalStateException.class, () -> socket.resize(120, 120),
+                "resize() on a closed socket silently did nothing");
+        assertThrows(IllegalStateException.class, () -> socket.setBounds(0, 0, 120, 120),
+                "setBounds() on a closed socket silently did nothing");
+        assertThrows(IllegalStateException.class, () -> socket.listen(Path.of("never-touched.sock")),
+                "listen() on a closed socket silently did nothing");
+    }
+
+    /**
      * {@code listen()} guards itself with "already listening", which used to
      * be a read of one flag followed by a write of it — two callers could
      * both get through and bind two server channels to the same path.
