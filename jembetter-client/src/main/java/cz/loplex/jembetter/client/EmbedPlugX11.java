@@ -39,6 +39,12 @@ final class EmbedPlugX11 implements EmbedPlug {
         client.onFocusChanged(callback);
     }
 
+
+    @Override
+    public boolean closedCleanly() {
+        return client.closedCleanly();
+    }
+
     @Override
     public void close() {
         client.close();

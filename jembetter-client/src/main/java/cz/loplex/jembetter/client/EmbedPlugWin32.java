@@ -109,6 +109,12 @@ final class EmbedPlugWin32 implements EmbedPlug {
         onFocusChanged = callback;
     }
 
+
+    @Override
+    public boolean closedCleanly() {
+        return watcher.stoppedCleanly() && focusWatcher.stoppedCleanly();
+    }
+
     @Override
     public void close() {
         watcher.close();

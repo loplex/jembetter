@@ -46,6 +46,23 @@ interface does not carry. The full list of what stays backend-specific is in
   watch on an already-embedded window, which is a `WS_CHILD` and so no longer
   enumerable as a top-level window.
 
+- Teardown now says when it gives up on one of its own background threads.
+  Every `close()` in this library waits a bounded time for the threads it
+  started and then proceeds regardless; that wait's result used to be
+  discarded at all eleven call sites, so a thread still running after its
+  owner closed was invisible from outside the process. It is now logged, and
+  `EmbedSocket`, `EmbedClient`, `EmbedHost` and `EmbedPlug` gained a
+  `closedCleanly()` that answers the same question — a `default` method, so
+  nothing implementing those interfaces has to change.
+
+  `close()` deliberately still does not throw for this. Those threads are
+  daemons, a caller cannot kill one, and every native call they could still
+  make is already guarded against a closed connection — so failing an
+  application's shutdown because the window system was slow for a second
+  would manufacture a problem rather than report one. The shape is
+  `ExecutorService.awaitTermination`'s: best-effort teardown, with whether it
+  finished as a separate question.
+
 ### Changed
 
 - `EmbedSocketX11.resize`, `setBounds`, `listen`, `embed` and `embedOpaque`

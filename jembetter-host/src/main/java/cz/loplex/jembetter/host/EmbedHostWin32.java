@@ -84,6 +84,12 @@ final class EmbedHostWin32 implements EmbedHost {
         core.requestFocus();
     }
 
+
+    @Override
+    public boolean closedCleanly() {
+        return core.stoppedCleanly();
+    }
+
     @Override
     public void close() {
         core.close();

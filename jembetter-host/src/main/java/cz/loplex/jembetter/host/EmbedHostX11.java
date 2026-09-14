@@ -50,6 +50,12 @@ final class EmbedHostX11 implements EmbedHost {
         socket.focusClient();
     }
 
+
+    @Override
+    public boolean closedCleanly() {
+        return socket.closedCleanly();
+    }
+
     @Override
     public void close() {
         socket.close();

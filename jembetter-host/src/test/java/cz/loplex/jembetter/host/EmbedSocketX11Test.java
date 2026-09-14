@@ -551,6 +551,30 @@ class EmbedSocketX11Test {
     }
 
     /**
+     * The counterpart to {@link EmbedSocketX11#close()}'s logging: a normal
+     * close stops every thread it started, and says so. Until this existed,
+     * a teardown that gave up on one of its own threads was invisible —
+     * which is what every use-after-free this class has had depended on.
+     */
+    @Test
+    void aNormalCloseStopsEveryThreadItStarted() {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketX11Test owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+
+        socket = new EmbedSocketX11(owner);
+        socket.open(canvas);
+        assertTrue(socket.closedCleanly(), "a socket that was never closed should not report an unclean close");
+
+        socket.close();
+
+        assertTrue(socket.closedCleanly(), "close() gave up on one of its own background threads");
+    }
+
+    /**
      * A closed socket rejects the calls that cannot mean anything any more,
      * rather than absorbing them. This became reachable when native calls
      * started being skipped against a closed connection: {@code windowId}

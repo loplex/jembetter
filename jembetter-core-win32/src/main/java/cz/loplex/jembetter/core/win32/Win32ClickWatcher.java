@@ -13,6 +13,7 @@ import com.sun.jna.platform.win32.WinUser.LowLevelMouseProc;
 import com.sun.jna.platform.win32.WinUser.MSG;
 import com.sun.jna.platform.win32.WinUser.MSLLHOOKSTRUCT;
 
+import cz.loplex.jembetter.common.BackgroundThread;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,6 +61,8 @@ import java.util.concurrent.TimeUnit;
 public final class Win32ClickWatcher implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(Win32ClickWatcher.class);
+
+    private volatile boolean stoppedCleanly = true;
 
     private static final int WH_MOUSE_LL = 14;
     private static final int WM_LBUTTONDOWN = 0x0201;
@@ -227,6 +230,16 @@ public final class Win32ClickWatcher implements AutoCloseable {
         }
     }
 
+
+    /**
+     * Whether {@link #close()} actually stopped this watcher's thread, or
+     * gave up on it after {@link BackgroundThread#STOP_BUDGET}. {@code true}
+     * until a close that fails to.
+     */
+    public boolean stoppedCleanly() {
+        return stoppedCleanly;
+    }
+
     @Override
     public void close() {
         running = false;
@@ -235,11 +248,7 @@ public final class Win32ClickWatcher implements AutoCloseable {
         if (threadId != 0) {
             User32.INSTANCE.PostThreadMessage(threadId, WM_QUIT, new WPARAM(0), new LPARAM(0));
         }
-        try {
-            pumpThread.join(TimeUnit.SECONDS.toMillis(1));
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        stoppedCleanly = BackgroundThread.awaitStopped(pumpThread, LOG);
         dispatch.shutdownNow();
     }
 

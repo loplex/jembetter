@@ -1,5 +1,6 @@
 package cz.loplex.jembetter.client;
 
+import cz.loplex.jembetter.common.BackgroundThread;
 import cz.loplex.jembetter.common.FocusListener;
 import cz.loplex.jembetter.common.ModalityListener;
 import cz.loplex.jembetter.common.SizeListener;
@@ -9,6 +10,9 @@ import cz.loplex.jembetter.core.win32.Win32ConfigureWatcher;
 import cz.loplex.jembetter.core.win32.Win32FocusWatcher;
 import cz.loplex.jembetter.core.win32.Win32ReparentWatcher;
 import cz.loplex.jembetter.core.win32.Win32WindowFinder;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -47,6 +51,8 @@ import java.util.function.LongConsumer;
  */
 public final class EmbedClientWin32 implements EmbedClient {
 
+    private static final Logger LOG = LoggerFactory.getLogger(EmbedClientWin32.class);
+
     private static final long POLL_SLEEP_MILLIS = 50;
 
     private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
@@ -55,6 +61,7 @@ public final class EmbedClientWin32 implements EmbedClient {
     private final Win32FocusWatcher focusWatcher;
     private final Win32ConfigureWatcher configureWatcher;
     private long windowId = -1;
+    private volatile boolean closedCleanly = true;
 
     public EmbedClientWin32() {
         // Built here rather than in field initializers so that a failure
@@ -424,16 +431,17 @@ public final class EmbedClientWin32 implements EmbedClient {
                 // Best-effort cleanup of a channel already headed nowhere useful.
             }
         }
-        Thread thread = readerThread;
-        if (thread != null) {
-            try {
-                thread.join(1000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
+        boolean readerStopped = BackgroundThread.awaitStopped(readerThread, LOG);
         reparentWatcher.close();
         focusWatcher.close();
         configureWatcher.close();
+        closedCleanly = readerStopped && reparentWatcher.stoppedCleanly()
+                && focusWatcher.stoppedCleanly() && configureWatcher.stoppedCleanly();
     }
+
+    @Override
+    public boolean closedCleanly() {
+        return closedCleanly;
+    }
+
 }

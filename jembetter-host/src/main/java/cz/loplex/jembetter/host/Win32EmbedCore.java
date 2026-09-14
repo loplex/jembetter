@@ -145,6 +145,11 @@ final class Win32EmbedCore {
         Win32Reparent.release(id, screenPosition[0], screenPosition[1]);
     }
 
+    /** Whether {@link #close()} stopped the click watcher's thread — see {@code EmbedSocket#closedCleanly()}. */
+    boolean stoppedCleanly() {
+        return clickWatcher.stoppedCleanly();
+    }
+
     void close() {
         // The host Canvas's own HWND is the parent directly (unlike
         // EmbedSocket's own X11 window, this backend has no separate socket

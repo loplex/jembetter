@@ -1,5 +1,6 @@
 package cz.loplex.jembetter.host;
 
+import cz.loplex.jembetter.common.BackgroundThread;
 import cz.loplex.jembetter.common.CanvasNativeHandle;
 import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
@@ -129,6 +130,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      * past the guard and tear the socket down twice.
      */
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    private volatile boolean closedCleanly = true;
     /**
      * Guards the {@link #listen}-to-teardown transition of {@code
      * listening}, {@code server} and {@code acceptThread} so it happens as
@@ -990,14 +992,8 @@ public final class EmbedSocketX11 implements EmbedSocket {
         // where the join below times out before the loop closes this itself.
         closeQuietly(controlChannel);
         controlChannel = null;
-        if (accept != null) {
-            try {
-                // Outside lifecycleLock on purpose - see its Javadoc.
-                accept.join(1000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
+        // Outside lifecycleLock on purpose - see its Javadoc.
+        boolean acceptStopped = BackgroundThread.awaitStopped(accept, LOG);
         // A still-embedded client's window is a genuine X11 child of
         // windowId at this point; save-set rescue only rescues it from
         // XDestroyWindow below by reparenting it back to root if that
@@ -1023,5 +1019,15 @@ public final class EmbedSocketX11 implements EmbedSocket {
             RawWindow.destroy(display, windowId);
         }
         display.close();
+        closedCleanly = acceptStopped
+                && (inbound == null || inbound.stoppedCleanly())
+                && deathWatcher.stoppedCleanly()
+                && configureWatcher.stoppedCleanly();
     }
+
+    @Override
+    public boolean closedCleanly() {
+        return closedCleanly;
+    }
+
 }

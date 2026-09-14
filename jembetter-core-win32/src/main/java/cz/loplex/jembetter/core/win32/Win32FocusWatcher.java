@@ -7,6 +7,7 @@ import com.sun.jna.platform.win32.WinUser.GUITHREADINFO;
 import com.sun.jna.ptr.IntByReference;
 import cz.loplex.jembetter.common.FocusListener;
 
+import cz.loplex.jembetter.common.BackgroundThread;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,6 +57,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class Win32FocusWatcher implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(Win32FocusWatcher.class);
+
+    private volatile boolean stoppedCleanly = true;
 
     private static final long POLL_INTERVAL_MILLIS = 50;
 
@@ -134,14 +137,20 @@ public final class Win32FocusWatcher implements AutoCloseable {
         }
     }
 
+
+    /**
+     * Whether {@link #close()} actually stopped this watcher's thread, or
+     * gave up on it after {@link BackgroundThread#STOP_BUDGET}. {@code true}
+     * until a close that fails to.
+     */
+    public boolean stoppedCleanly() {
+        return stoppedCleanly;
+    }
+
     @Override
     public void close() {
         running = false;
         thread.interrupt();
-        try {
-            thread.join(1000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        stoppedCleanly = BackgroundThread.awaitStopped(thread, LOG);
     }
 }

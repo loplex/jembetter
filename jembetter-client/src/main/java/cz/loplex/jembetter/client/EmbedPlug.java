@@ -72,4 +72,29 @@ public interface EmbedPlug extends AutoCloseable {
     /** Stops watching for host death. */
     @Override
     void close();
+
+    /**
+     * Whether the last {@link #close()} actually stopped every background
+     * thread this object owns, or gave up on one after its budget.
+     * {@code true} before any close.
+     *
+     * <p>{@code close()} does not throw when a thread outstays its welcome,
+     * and that is deliberate. Those threads are daemons, the caller cannot
+     * kill one, and every native call they could still make is guarded
+     * against a closed connection — so failing an application's shutdown
+     * because the window system was slow for a second would manufacture a
+     * problem rather than report one. This library has already made that
+     * mistake once, with a hook-install budget that was set too low and
+     * turned a slow install into a hard failure.
+     *
+     * <p>So the shape is {@link
+     * java.util.concurrent.ExecutorService#awaitTermination}'s rather than
+     * an exception's: teardown is best-effort and returns nothing, and
+     * whether it finished is a separate question, for whoever has a reason
+     * to ask it. A warning is logged either way.
+     */
+    default boolean closedCleanly() {
+        return true;
+    }
+
 }

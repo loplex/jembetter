@@ -1,5 +1,6 @@
 package cz.loplex.jembetter.host;
 
+import cz.loplex.jembetter.common.BackgroundThread;
 import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 
@@ -104,6 +105,8 @@ public final class EmbedSocketWin32 implements EmbedSocket {
      * while holding this lock would stall until the join timed out.
      */
     private final Object lifecycleLock = new Object();
+    private volatile boolean acceptStopped = true;
+    private volatile boolean readerStopped = true;
 
     public EmbedSocketWin32(Canvas hostCanvas) {
         this.core = new Win32EmbedCore(hostCanvas);
@@ -244,13 +247,7 @@ public final class EmbedSocketWin32 implements EmbedSocket {
     private void joinControlChannelReader() {
         Thread thread = controlChannelReaderThread;
         controlChannelReaderThread = null;
-        if (thread != null) {
-            try {
-                thread.join(1000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
+        readerStopped = BackgroundThread.awaitStopped(thread, LOG);
     }
 
     private static void closeQuietly(Channel channel) {
@@ -343,6 +340,11 @@ public final class EmbedSocketWin32 implements EmbedSocket {
         core.close();
     }
 
+    @Override
+    public boolean closedCleanly() {
+        return acceptStopped && readerStopped && core.stoppedCleanly();
+    }
+
     /** Same as {@link #close()}, but a still-embedded client's window is asked to close too — see {@link EmbedHost#tryDestroy()}. */
     @Override
     public void tryDestroy() {
@@ -361,13 +363,7 @@ public final class EmbedSocketWin32 implements EmbedSocket {
             accept = acceptThread;
         }
         closeQuietly(controlChannel);
-        if (accept != null) {
-            try {
-                // Outside lifecycleLock on purpose - see its Javadoc.
-                accept.join(1000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
+        // Outside lifecycleLock on purpose - see its Javadoc.
+        acceptStopped = BackgroundThread.awaitStopped(accept, LOG);
     }
 }
