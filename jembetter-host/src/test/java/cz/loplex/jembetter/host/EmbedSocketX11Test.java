@@ -548,6 +548,48 @@ class EmbedSocketX11Test {
     }
 
     /**
+     * The other half of {@link
+     * #disposingTheHostFrameWithoutClosingAutoClosesTheSocket}: the
+     * listeners that wiring installs have to come back off again. One left
+     * behind goes on calling into a socket that is already closed — the same
+     * shape as the owner {@link Frame}'s focus listener, whose callbacks
+     * used to reach a freed X11 display and crash the JVM — and holds the
+     * closed socket reachable for as long as the canvas does.
+     */
+    @Test
+    void closingTakesTheSocketsOwnListenersBackOff() {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketX11Test owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+
+        int componentListeners = canvas.getComponentListeners().length;
+        int hierarchyListeners = canvas.getHierarchyListeners().length;
+        int focusListeners = owner.getWindowFocusListeners().length;
+
+        socket = new EmbedSocketX11(owner);
+        socket.open(canvas);
+
+        assertEquals(componentListeners + 1, canvas.getComponentListeners().length,
+                "test setup: open(Canvas) should have added its resize listener");
+        assertEquals(hierarchyListeners + 1, canvas.getHierarchyListeners().length,
+                "test setup: open(Canvas) should have added its displayability listener");
+        assertEquals(focusListeners + 1, owner.getWindowFocusListeners().length,
+                "test setup: the constructor should have added the owner focus listener");
+
+        socket.close();
+
+        assertEquals(componentListeners, canvas.getComponentListeners().length,
+                "close() left its resize listener on the host canvas");
+        assertEquals(hierarchyListeners, canvas.getHierarchyListeners().length,
+                "close() left its displayability listener on the host canvas");
+        assertEquals(focusListeners, owner.getWindowFocusListeners().length,
+                "close() left its focus listener on the owner frame");
+    }
+
+    /**
      * Regression coverage for the auto-cleanup wiring added to {@link
      * EmbedSocketX11#open(Canvas)}: disposing {@code hostCanvas}'s containing
      * {@link Frame} without ever calling {@link EmbedSocketX11#close()}

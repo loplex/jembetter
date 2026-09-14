@@ -68,6 +68,11 @@ interface does not carry. The full list of what stays backend-specific is in
   no-op rather than a second teardown of the same resources. A socket opened
   on a `Canvas` can be closed by its own `HierarchyListener` and by its
   caller at the same moment.
+- An X11 or Win32 `EmbedSocket` opened on a `Canvas` now takes its own AWT
+  listeners back off that canvas when it is closed. They used to stay
+  attached for the canvas's whole life, firing resize and displayability
+  callbacks into a socket that was already torn down, and keeping that
+  socket reachable so it could never be collected.
 
 ### Published artifacts
 

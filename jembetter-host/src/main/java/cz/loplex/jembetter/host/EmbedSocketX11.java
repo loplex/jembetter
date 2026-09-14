@@ -24,7 +24,9 @@ import java.awt.Canvas;
 import java.awt.Frame;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.ComponentListener;
 import java.awt.event.HierarchyEvent;
+import java.awt.event.HierarchyListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.event.WindowFocusListener;
@@ -106,6 +108,9 @@ public final class EmbedSocketX11 implements EmbedSocket {
     };
     private volatile String expectedClientWmClass;
     private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
+    private volatile Canvas hostCanvas;
+    private volatile ComponentListener hostCanvasResizeListener;
+    private volatile HierarchyListener hostCanvasDisplayabilityListener;
     /**
      * Atomic rather than a {@code volatile boolean}: the {@link
      * java.awt.event.HierarchyListener} attached by {@link #open(Canvas)}
@@ -198,18 +203,25 @@ public final class EmbedSocketX11 implements EmbedSocket {
         long canvasWindowId = CanvasNativeHandle.extract(hostCanvas);
         windowId = RawWindow.createChild(display, canvasWindowId, hostCanvas.getWidth(), hostCanvas.getHeight());
         initInboundWatcher(hostCanvas.getWidth(), hostCanvas.getHeight());
-        hostCanvas.addComponentListener(new ComponentAdapter() {
+        // Both listeners are kept in fields so close() can take them off
+        // again: a listener left on a canvas that outlives this socket goes
+        // on firing into a torn-down socket, and holds the socket reachable
+        // for as long as the canvas lives.
+        this.hostCanvas = hostCanvas;
+        this.hostCanvasResizeListener = new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent event) {
                 resize(hostCanvas.getWidth(), hostCanvas.getHeight());
             }
-        });
-        hostCanvas.addHierarchyListener(event -> {
+        };
+        hostCanvas.addComponentListener(hostCanvasResizeListener);
+        this.hostCanvasDisplayabilityListener = event -> {
             if ((event.getChangeFlags() & HierarchyEvent.DISPLAYABILITY_CHANGED) != 0
                     && !hostCanvas.isDisplayable()) {
                 close();
             }
-        });
+        };
+        hostCanvas.addHierarchyListener(hostCanvasDisplayabilityListener);
     }
 
     private void initInboundWatcher(int width, int height) {
@@ -865,6 +877,16 @@ public final class EmbedSocketX11 implements EmbedSocket {
         // freed native Display*, crashing the JVM instead of throwing.
         // Removing it here, before anything else, closes that window.
         owner.removeWindowFocusListener(ownerFocusListener);
+        // Same reasoning for the canvas listeners, with one addition: the
+        // HierarchyListener is very likely what called this. Removing a
+        // listener from inside its own dispatch is fine - AWT iterates a
+        // snapshot - and stops a later displayability change from calling
+        // back into a socket that is already gone.
+        Canvas canvas = hostCanvas;
+        if (canvas != null) {
+            canvas.removeComponentListener(hostCanvasResizeListener);
+            canvas.removeHierarchyListener(hostCanvasDisplayabilityListener);
+        }
         listening = false;
         if (server != null) {
             try {
