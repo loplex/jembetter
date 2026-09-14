@@ -3,6 +3,7 @@ package cz.loplex.jembetter.core.x11;
 import com.sun.jna.Native;
 import com.sun.jna.NativeLong;
 import com.sun.jna.Pointer;
+import com.sun.jna.platform.unix.X11;
 import com.sun.jna.platform.unix.X11.Atom;
 import com.sun.jna.platform.unix.X11.AtomByReference;
 import com.sun.jna.platform.unix.X11.Display;
@@ -11,6 +12,7 @@ import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.NativeLongByReference;
 import com.sun.jna.ptr.PointerByReference;
 
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -66,7 +68,9 @@ public final class X11Properties {
 
     /**
      * Reads a format-8 property holding one or more NUL-separated strings,
-     * such as {@code WM_CLASS} (instance name, then class name).
+     * such as {@code WM_CLASS} (instance name, then class name), decoded
+     * according to the type the property actually turned out to have — see
+     * {@link #charsetFor}.
      */
     public static List<String> readStringList8(Display display, Window window, Atom property) {
         AtomByReference actualType = new AtomByReference();
@@ -85,13 +89,14 @@ public final class X11Properties {
         }
 
         try {
+            Charset charset = charsetFor(actualType.getValue());
             int count = (int) nitems.getValue().longValue();
             byte[] bytes = data.getByteArray(0, count);
             List<String> result = new ArrayList<>();
             int start = 0;
             for (int i = 0; i < bytes.length; i++) {
                 if (bytes[i] == 0) {
-                    result.add(new String(bytes, start, i - start, StandardCharsets.UTF_8));
+                    result.add(new String(bytes, start, i - start, charset));
                     start = i + 1;
                 }
             }
@@ -100,4 +105,29 @@ public final class X11Properties {
             X11Ext.INSTANCE.XFree(data);
         }
     }
+    /**
+     * The encoding a format-8 property's bytes are in, which ICCCM ties to
+     * the property's <em>type</em> rather than to any global convention:
+     * {@code STRING} is ISO 8859-1, {@code UTF8_STRING} is UTF-8.
+     *
+     * <p>This used to read everything as UTF-8. For {@code WM_CLASS}, whose
+     * type is {@code STRING}, that turns any byte at or above 0x80 into
+     * U+FFFD — so a class name with an accent in it silently matches
+     * nothing, and the host reports the client as never having published a
+     * window, which points at the wrong thing entirely.
+     *
+     * <p>Everything other than {@code STRING} falls back to UTF-8 rather
+     * than to a failure. That covers {@code UTF8_STRING} correctly, and it
+     * is the better guess for a toolkit that ignores the spec: writing UTF-8
+     * bytes into a {@code STRING} property is common enough in practice that
+     * treating an unrecognised type as Latin-1 would lose more than it
+     * gained.
+     */
+    private static Charset charsetFor(Atom actualType) {
+        if (actualType != null && actualType.longValue() == X11.XA_STRING.longValue()) {
+            return StandardCharsets.ISO_8859_1;
+        }
+        return StandardCharsets.UTF_8;
+    }
+
 }

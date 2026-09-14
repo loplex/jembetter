@@ -73,6 +73,13 @@ interface does not carry. The full list of what stays backend-specific is in
   X server refuses another connection, so retrying made the situation worse
   each time.
 
+- `WM_CLASS` is decoded as ISO 8859-1 rather than UTF-8, which is what
+  ICCCM ties to its `STRING` type. A class name containing a non-ASCII
+  Latin-1 byte used to decode to U+FFFD, so a host filtering on it matched
+  nothing and reported the client as never having published a window —
+  pointing at entirely the wrong thing. Properties of any other type,
+  `UTF8_STRING` included, still read as UTF-8.
+
 ### Fixed
 
 - A JVM crash (`SIGSEGV` inside Xlib) when an X11 display connection was

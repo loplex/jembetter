@@ -1,11 +1,15 @@
 package cz.loplex.jembetter.core.x11;
 
+import com.sun.jna.Memory;
+import com.sun.jna.platform.unix.X11;
+import com.sun.jna.platform.unix.X11.Window;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import java.awt.Frame;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -90,4 +94,31 @@ class WindowFinderTest {
         } while (System.nanoTime() < deadline);
         return found;
     }
+    /**
+     * {@code WM_CLASS} has X11 type {@code STRING}, which ICCCM defines as
+     * ISO 8859-1, and this used to be read as UTF-8 regardless. The
+     * e-acute below is a single byte (0xE9) in Latin-1 and is not valid
+     * UTF-8 on its own, so the old read produced U+FFFD — and a host
+     * filtering on that class name would then find nothing and report the
+     * client as never having published a window at all.
+     */
+    @Test
+    void readsAWmClassInTheEncodingItsTypeDeclares() {
+        long windowId = RawWindow.createOverrideRedirect(display, 0, 0, 10, 10);
+        try {
+            byte[] wmClass = "app\u0000caf\u00e9\u0000".getBytes(StandardCharsets.ISO_8859_1);
+            Memory data = new Memory(wmClass.length);
+            data.write(0, wmClass, 0, wmClass.length);
+            synchronized (X11Display.GLOBAL_LOCK) {
+                X11Ext.INSTANCE.XChangeProperty(display.raw(), new Window(windowId), X11.XA_WM_CLASS,
+                        X11.XA_STRING, 8, X11Ext.PropModeReplace, data, wmClass.length);
+                X11Ext.INSTANCE.XSync(display.raw(), false);
+            }
+
+            assertEquals(Optional.of("caf\u00e9"), WindowFinder.readWmClass(display, windowId));
+        } finally {
+            RawWindow.destroy(display, windowId);
+        }
+    }
+
 }
