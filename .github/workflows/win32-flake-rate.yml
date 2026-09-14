@@ -55,13 +55,13 @@ on:
         description: "false runs one JVM per test class, to test whether shared-fork state is the cause"
         required: false
         default: "true"
-  # spike_win32 is in the push list so this can be run before it reaches the
-  # default branch - workflow_dispatch reads a workflow's definition from
-  # there, so a change to this file is otherwise unrunnable until merged.
-  # win32-real-machine-checks.yml carries the same allowance for the same
-  # reason.
+  # A change to the probe itself gets measured by it. The push trigger is not
+  # what makes this workflow runnable - it is on the default branch, so
+  # workflow_dispatch reaches it against any ref - and a dispatch is the usual
+  # way in, since iterations and platforms are worth choosing rather than
+  # defaulting.
   push:
-    branches: [spike_win32]
+    branches: [main, develop]
     paths:
       - 'build-tools/win32-flake-rate/**'
       - '.github/workflows/win32-flake-rate.yml'
