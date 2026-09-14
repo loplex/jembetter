@@ -1,11 +1,16 @@
 package cz.loplex.jembetter.host;
 
+import com.sun.jna.Pointer;
+import com.sun.jna.platform.win32.User32;
+import com.sun.jna.platform.win32.WinDef.HWND;
+import com.sun.jna.platform.win32.WinUser;
 import cz.loplex.jembetter.common.CanvasNativeHandle;
 import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.win32.Win32Focus;
 import cz.loplex.jembetter.core.win32.Win32FocusWatcher;
 import cz.loplex.jembetter.core.win32.Win32Reparent;
+import cz.loplex.jembetter.core.win32.Win32WindowFinder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -18,8 +23,10 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -39,6 +46,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @Tag("windows")
 class EmbedSocketWin32Test {
+
+    private static final Duration FOCUS_TIMEOUT = Duration.ofSeconds(5);
+    private static final long FOCUS_RETRY_INTERVAL_MILLIS = 250;
+    private static final long FOCUS_POLL_INTERVAL_MILLIS = 25;
 
     private JFrame owner;
     private EmbedSocketWin32 socket;
@@ -199,6 +210,43 @@ class EmbedSocketWin32Test {
         }
     }
 
+    /**
+     * A {@link ControlMessage.Type#FOCUS_REQUEST} frame written by the client
+     * moves Win32 input focus onto its embedded window.
+     *
+     * <p>Embedding focuses the client by itself - {@code
+     * Win32EmbedCore.reparentAndWatch} grants focus to the window it has just
+     * reparented - so the frame has nothing left to prove unless focus is
+     * taken back from the client first. {@link #parkFocusOnHost} does that
+     * and waits for the watcher to confirm it, which is what makes the last
+     * assertion a statement about the marker byte rather than about the
+     * embed that preceded it.
+     *
+     * <p>Everything else here is written against Windows' foreground lock,
+     * which makes every focus grant by a process that isn't the foreground
+     * one a silent no-op (see {@link Win32Focus} for the measurements behind
+     * that). That has two consequences for a test of a focus grant:
+     *
+     * <ul>
+     *   <li>It has to <em>hold</em> the foreground before it can measure
+     *       anything, so the grant this asserts on is not disqualified before
+     *       it is made. Until {@link #takeForeground} confirmed it, a run
+     *       that started in the background reported a defect in the host
+     *       rather than a machine the assertion could not be made on.</li>
+     *   <li>A single frame gives the host a single attempt, at whatever
+     *       instant it lands. The request is one-way and best-effort by
+     *       design (see {@code EmbedSocketWin32}'s own control-channel
+     *       reader), so the test has to keep asking for as long as it is
+     *       willing to wait, rather than ask once and then wait passively -
+     *       which is what {@link #focusRequestedUntilFocused} does.</li>
+     * </ul>
+     *
+     * <p>Both were flakiness, measured: on real Windows this test failed 4 of
+     * 60 full-suite iterations as a single-shot request, the only test to
+     * fail in 5,600 executions, and never under Wine - which does not
+     * implement the foreground lock at all. It failed 0 of 60 once they were
+     * addressed.
+     */
     @Test
     void aFocusRequestMarkerByteFromTheClientFocusesTheEmbeddedWindow() throws Exception {
         Canvas canvas = newVisibleHostCanvas();
@@ -216,25 +264,36 @@ class EmbedSocketWin32Test {
         long clientHwnd = Win32TestClients.waitForOwnWindow(clientPid);
 
         // Move focus elsewhere first, so the assertion below actually proves
-        // the marker byte moved it, rather than it already having been there.
-        Win32Focus.set(CanvasNativeHandle.extract(canvas));
+        // the marker byte moved it, rather than it already having been there
+        // - and confirm that landed, which is also this process taking the
+        // foreground it needs to hold for the rest of the test. The client
+        // process just showed a top-level window of its own, so the
+        // foreground at this point belongs to it, not to this process.
+        long canvasHwnd = CanvasNativeHandle.extract(canvas);
+        assertTrue(takeForeground(canvasHwnd, FOCUS_TIMEOUT),
+                "another process held the foreground throughout, so no focus grant made from here could take effect"
+                        + foregroundDescription());
 
         try (Win32FocusWatcher focusWatcher = new Win32FocusWatcher()) {
-            CountDownLatch focused = new CountDownLatch(1);
-            focusWatcher.watch(clientHwnd, gained -> {
-                if (gained) {
-                    focused.countDown();
-                }
-            });
+            // The watcher reports transitions; this keeps the latest one, so
+            // the two waits below can ask for a state rather than for an
+            // edge - the second of them needs the client to have been seen
+            // unfocused before it means anything.
+            AtomicBoolean clientFocused = new AtomicBoolean(false);
+            focusWatcher.watch(clientHwnd, clientFocused::set);
 
             try (SocketChannel channel = Win32TestClients.connectWhenReady(socketPath, new AtomicReference<>())) {
                 PidHandshake.send(channel, clientPid);
                 assertTrue(embedded.await(5, TimeUnit.SECONDS), "client was never embedded via listen()");
 
-                ControlMessage.focusRequest().writeTo(channel);
+                assertTrue(parkFocusOnHost(canvasHwnd, clientFocused, FOCUS_TIMEOUT),
+                        "focus never left the embedded client, so what the FOCUS_REQUEST frame does could not be told"
+                                + " apart from what embedding already did"
+                                + foregroundDescription() + embeddedClientDescription(clientHwnd, canvasHwnd));
 
-                assertTrue(focused.await(5, TimeUnit.SECONDS),
-                        "the embedded window was never focused after the client wrote a FOCUS_REQUEST frame");
+                assertTrue(focusRequestedUntilFocused(channel, clientFocused, canvasHwnd, FOCUS_TIMEOUT),
+                        "the embedded window was never focused after the client wrote a FOCUS_REQUEST frame"
+                                + foregroundDescription() + embeddedClientDescription(clientHwnd, canvasHwnd));
             }
         }
     }
@@ -245,6 +304,148 @@ class EmbedSocketWin32Test {
         socket = new EmbedSocketWin32(canvas);
 
         assertDoesNotThrow(() -> socket.setModal(true), "setModal() must be a no-op when nothing is embedded");
+    }
+
+    /**
+     * Focuses {@code hwnd} until this process owns the foreground window, and
+     * reports whether it got there within {@code timeout}.
+     *
+     * <p>Retried rather than granted once and trusted: {@link Win32Focus#set}
+     * has to work around the foreground lock through {@code
+     * AttachThreadInput}, which attaches to whichever window holds the
+     * foreground at that instant - so a window on its way out, or a
+     * foreground of {@code NULL} mid-switch, costs that one attempt and
+     * nothing else. A whole test built on top of one such attempt is a
+     * measurement of that instant.
+     */
+    private static boolean takeForeground(long hwnd, Duration timeout) throws InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        do {
+            // The frame, then the canvas inside it: only a top-level window
+            // can be the foreground one, and it is the canvas that has to
+            // end up holding focus.
+            Win32Focus.set(topLevelOf(hwnd));
+            Win32Focus.set(hwnd);
+            if (foregroundIsNotAnotherProcess()) {
+                return true;
+            }
+            Thread.sleep(FOCUS_RETRY_INTERVAL_MILLIS);
+        } while (System.nanoTime() < deadline);
+        return foregroundIsNotAnotherProcess();
+    }
+
+    /** The top-level window {@code hwnd} lives in — an embedded child's is the host's own frame. */
+    private static long topLevelOf(long hwnd) {
+        HWND root = User32.INSTANCE.GetAncestor(new HWND(new Pointer(hwnd)), WinUser.GA_ROOT);
+        return root == null ? hwnd : Pointer.nativeValue(root.getPointer());
+    }
+
+    /**
+     * Takes focus off the embedded client and back onto the host canvas,
+     * and reports whether the watcher saw it leave within {@code timeout}.
+     *
+     * <p>This is the step that makes the assertion after it discriminating.
+     * Embedding grants the client focus on its own, so a watcher armed
+     * before the embed has already reported the client focused by the time
+     * any {@code FOCUS_REQUEST} frame is written - and a test that only
+     * waits for "focused" would pass identically with the frame never sent.
+     */
+    private static boolean parkFocusOnHost(long hostHwnd, AtomicBoolean clientFocused, Duration timeout)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        do {
+            Win32Focus.set(topLevelOf(hostHwnd));
+            Win32Focus.set(hostHwnd);
+            if (awaitFocusState(clientFocused, false, FOCUS_RETRY_INTERVAL_MILLIS)) {
+                return true;
+            }
+        } while (System.nanoTime() < deadline);
+        return !clientFocused.get();
+    }
+
+    /**
+     * Writes {@link ControlMessage#focusRequest()} frames until the watcher
+     * reports the client focused or {@code timeout} runs out, reclaiming the
+     * foreground for {@code hostHwnd} first whenever something else has
+     * taken it.
+     *
+     * <p>Reclaiming is not the test focusing the window it is asserting on:
+     * it points focus at the <em>host</em> canvas, which is where this test
+     * parks it to begin with. It only restores the precondition every
+     * request needs - that the grant the host is about to make comes from
+     * the foreground process. An embedded client is a {@code WS_CHILD} of
+     * that canvas, so the foreground window stays this process's own frame
+     * while the client holds focus, and a passing run never reclaims
+     * anything.
+     */
+    private static boolean focusRequestedUntilFocused(SocketChannel channel, AtomicBoolean clientFocused,
+            long hostHwnd, Duration timeout) throws IOException, InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        do {
+            if (!foregroundIsNotAnotherProcess()) {
+                Win32Focus.set(topLevelOf(hostHwnd));
+                Win32Focus.set(hostHwnd);
+            }
+            ControlMessage.focusRequest().writeTo(channel);
+            if (awaitFocusState(clientFocused, true, FOCUS_RETRY_INTERVAL_MILLIS)) {
+                return true;
+            }
+        } while (System.nanoTime() < deadline);
+        return clientFocused.get();
+    }
+
+    /** Waits up to {@code timeoutMillis} for the watcher's last report to read {@code wanted}. */
+    private static boolean awaitFocusState(AtomicBoolean state, boolean wanted, long timeoutMillis)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while (state.get() != wanted) {
+            if (System.nanoTime() > deadline) {
+                return false;
+            }
+            Thread.sleep(FOCUS_POLL_INTERVAL_MILLIS);
+        }
+        return true;
+    }
+
+    /**
+     * Whether the foreground is in a state a focus grant from here can
+     * survive — this process holding it, or no window holding it at all.
+     *
+     * <p>No foreground window is deliberately not a failure. What disqualifies
+     * this test is <em>another</em> process holding the foreground, because
+     * that is what makes a grant from here a silent no-op; with no foreground
+     * window there is no lock owner to enforce anything, and the grant lands.
+     * Treating the empty state as hostile cost a Wine run that would otherwise
+     * have passed: {@code GetForegroundWindow} returned null for the whole
+     * five seconds and the test reported a machine it could not measure on,
+     * over a machine that was fine.
+     */
+    private static boolean foregroundIsNotAnotherProcess() {
+        HWND foreground = User32.INSTANCE.GetForegroundWindow();
+        if (foreground == null) {
+            return true;
+        }
+        long hwnd = Pointer.nativeValue(foreground.getPointer());
+        return Win32WindowFinder.pidOfWindow(hwnd) == ProcessHandle.current().pid();
+    }
+
+    /** Names the window holding the foreground, so a focus failure says whose machine state it lost to. */
+    private static String foregroundDescription() {
+        HWND foreground = User32.INSTANCE.GetForegroundWindow();
+        if (foreground == null) {
+            return " (nothing held the foreground; this test is pid " + ProcessHandle.current().pid() + ")";
+        }
+        long hwnd = Pointer.nativeValue(foreground.getPointer());
+        return " (foreground: " + Win32WindowFinder.describeWindow(hwnd)
+                + " pid=" + Win32WindowFinder.pidOfWindow(hwnd)
+                + "; this test is pid " + ProcessHandle.current().pid() + ")";
+    }
+
+    /** Tells a focus failure apart from an embed that had already come undone by then. */
+    private static String embeddedClientDescription(long clientHwnd, long canvasHwnd) {
+        return " (client: " + Win32WindowFinder.describeWindow(clientHwnd)
+                + " parent=0x" + Long.toHexString(Win32Reparent.parentOf(clientHwnd))
+                + ", host canvas=0x" + Long.toHexString(canvasHwnd) + ")";
     }
 
     private static byte[] readFrame(SocketChannel channel) throws IOException, InterruptedException {
