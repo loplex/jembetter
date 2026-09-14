@@ -75,8 +75,12 @@ public final class EmbedSocketWin32 implements EmbedSocket {
 
     private final Win32EmbedCore core;
     private volatile boolean listening = false;
-    private ServerSocketChannel server;
-    private Thread acceptThread;
+    // volatile for the same reason every other mutable field here is:
+    // listen() runs on the caller's thread and close() need not, and a close
+    // that reads a stale null leaves the server channel and the accept
+    // thread running.
+    private volatile ServerSocketChannel server;
+    private volatile Thread acceptThread;
     private volatile Runnable onClientEmbedded = () -> {
     };
     private volatile SocketChannel controlChannel;

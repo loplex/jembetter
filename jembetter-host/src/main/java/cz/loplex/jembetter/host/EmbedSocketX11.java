@@ -77,14 +77,19 @@ public final class EmbedSocketX11 implements EmbedSocket {
     private final X11Display display = X11Display.open(null);
     private final WindowDeathWatcher deathWatcher = new WindowDeathWatcher();
     private final WindowConfigureWatcher configureWatcher = new WindowConfigureWatcher();
-    private XEmbedInboundWatcher inbound;
-    private long windowId = -1;
+    // volatile, like every other mutable field here: open()/listen() run on
+    // whatever thread the caller uses, while close() can arrive from the AWT
+    // event thread via the HierarchyListener open(Canvas) attaches. Without
+    // it that close can read a stale null and leave the watcher, the server
+    // channel and the accept thread running.
+    private volatile XEmbedInboundWatcher inbound;
+    private volatile long windowId = -1;
     private volatile int width = -1;
     private volatile int height = -1;
     private volatile long embeddedWindowId = -1;
     private volatile boolean listening = false;
-    private ServerSocketChannel server;
-    private Thread acceptThread;
+    private volatile ServerSocketChannel server;
+    private volatile Thread acceptThread;
     /**
      * The current {@link #listen}-embedded client's control channel — the
      * same {@link SocketChannel} the accept loop took the pid handshake on,

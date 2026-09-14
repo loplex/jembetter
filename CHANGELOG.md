@@ -73,6 +73,11 @@ interface does not carry. The full list of what stays backend-specific is in
   attached for the canvas's whole life, firing resize and displayability
   callbacks into a socket that was already torn down, and keeping that
   socket reachable so it could never be collected.
+- Closing an `EmbedSocket` from a different thread than the one that opened
+  it no longer risks leaving its background watcher, its server channel or
+  its accept thread running. Those fields were not safely published, so the
+  closing thread could read them as still-unset — reachable in practice
+  because a `Canvas`-attached socket is closed by AWT's own event thread.
 
 ### Published artifacts
 
