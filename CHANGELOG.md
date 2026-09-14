@@ -97,6 +97,17 @@ interface does not carry. The full list of what stays backend-specific is in
   pointing at entirely the wrong thing. Properties of any other type,
   `UTF8_STRING` included, still read as UTF-8.
 
+- `setWindowLookupTimeout` now also governs how long an embed waits for the
+  reparent into the socket to be confirmed, on both backends. That wait had
+  its own fixed two-second budget and no way to change it, next to a window
+  lookup that got five seconds and a setter — the wrong one of the two to
+  hardcode, since it is the one waiting on a round trip to the window
+  system. `embedOpaque(long, Duration, int)` still takes an explicit budget.
+- `WindowRelease` tells "no window manager is running" apart from "the
+  window manager has not let go yet". The first needs no wait at all and
+  never did; the second means something is wrong and is now logged instead
+  of passing as the same silent non-event.
+
 ### Fixed
 
 - A JVM crash (`SIGSEGV` inside Xlib) when an X11 display connection was

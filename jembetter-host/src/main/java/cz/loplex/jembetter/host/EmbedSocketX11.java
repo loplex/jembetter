@@ -77,7 +77,6 @@ public final class EmbedSocketX11 implements EmbedSocket {
     private static final Logger LOG = LoggerFactory.getLogger(EmbedSocketX11.class);
 
     private static final Duration OPAQUE_POLL_INTERVAL = Duration.ofMillis(20);
-    private static final int OPAQUE_MAX_ATTEMPTS = 100;
 
     private final Frame owner;
     private final X11Display display;
@@ -537,7 +536,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     @Override
     public void embedOpaque(long clientWindowId) {
-        embedOpaque(clientWindowId, OPAQUE_POLL_INTERVAL, OPAQUE_MAX_ATTEMPTS);
+        embedOpaque(clientWindowId, OPAQUE_POLL_INTERVAL, reparentConfirmAttempts());
     }
 
     /**
@@ -1028,6 +1027,25 @@ public final class EmbedSocketX11 implements EmbedSocket {
     @Override
     public boolean closedCleanly() {
         return closedCleanly;
+    }
+
+    /**
+     * How many {@link #OPAQUE_POLL_INTERVAL} polls the reparent
+     * confirmation gets, derived from {@link #setWindowLookupTimeout} rather
+     * than fixed.
+     *
+     * <p>It used to be a hardcoded 100, i.e. two seconds, sitting next to a
+     * window lookup that got five and a setter to change them. The reparent
+     * confirmation is the one of the two that waits on a round trip to the
+     * X server, so it is the more likely of the two to be slow on a loaded
+     * or emulated machine — an odd thing to be the one nobody could adjust.
+     * One knob for "how patient to be with the window system" covers both;
+     * {@link #embedOpaque(long, Duration, int)} still takes an explicit
+     * budget for a caller who wants a different answer for just this step.
+     */
+    private int reparentConfirmAttempts() {
+        long interval = Math.max(1, OPAQUE_POLL_INTERVAL.toMillis());
+        return (int) Math.max(1, windowLookupTimeout.toMillis() / interval);
     }
 
 }

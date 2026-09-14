@@ -40,7 +40,6 @@ import java.util.List;
 final class Win32EmbedCore {
 
     private static final Duration REPARENT_POLL_INTERVAL = Duration.ofMillis(20);
-    private static final int REPARENT_MAX_ATTEMPTS = 100;
     private static final long POLL_SLEEP_MILLIS = 50;
 
     private final Canvas hostCanvas;
@@ -211,8 +210,16 @@ final class Win32EmbedCore {
         }
     }
 
+    /**
+     * Polls until the reparent shows up, for as long as {@link
+     * #setWindowLookupTimeout} allows — the same budget the window lookup
+     * uses, rather than the fixed two seconds this used to have. See {@code
+     * EmbedSocketX11#reparentConfirmAttempts} for why they share one knob.
+     */
     private void waitForReparentConfirmed(long clientHwnd) {
-        for (int attempt = 0; attempt < REPARENT_MAX_ATTEMPTS; attempt++) {
+        long interval = Math.max(1, REPARENT_POLL_INTERVAL.toMillis());
+        long attempts = Math.max(1, windowLookupTimeout.toMillis() / interval);
+        for (long attempt = 0; attempt < attempts; attempt++) {
             if (Win32Reparent.parentOf(clientHwnd) == hostCanvasHwnd) {
                 return;
             }

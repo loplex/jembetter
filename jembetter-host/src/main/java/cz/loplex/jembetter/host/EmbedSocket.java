@@ -110,9 +110,16 @@ public interface EmbedSocket extends AutoCloseable {
     void setModal(boolean modal);
 
     /**
-     * Overrides how long a connecting client is given to publish its
-     * top-level window before its handshake attempt is abandoned. Defaults
-     * to 5 seconds.
+     * Overrides how long this socket waits on the window system before
+     * giving up. Defaults to 5 seconds.
+     *
+     * <p>Covers both waits an embed performs: a connecting client
+     * publishing its top-level window, and the reparent into this socket
+     * being confirmed afterwards. The second used to have its own fixed
+     * two-second budget with no way to change it, which was the wrong one
+     * to hardcode — it waits on a round trip to the window system, so it is
+     * the more likely of the two to be slow on a loaded or emulated
+     * machine.
      */
     void setWindowLookupTimeout(Duration timeout);
 
