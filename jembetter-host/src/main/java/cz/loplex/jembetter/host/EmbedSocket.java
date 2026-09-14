@@ -60,6 +60,12 @@ public interface EmbedSocket extends AutoCloseable {
     /**
      * Embeds a client process whose pid is already known, e.g. one this
      * host spawned itself — see {@link EmbedSocketX11#embed(long)}.
+     *
+     * <p>Throws {@link IllegalStateException} if a client is already
+     * embedded in this socket. A socket holds one client at a time, and a
+     * second {@code embed} used to overwrite the first silently, leaving it
+     * inside the socket with nothing tracking it. Use {@link
+     * #swapClient(long)} to replace the current client deliberately.
      */
     void embed(long clientPid);
 
@@ -68,6 +74,10 @@ public interface EmbedSocket extends AutoCloseable {
      * exactly one client connection there, embeds it, and returns — unlike
      * {@link #listen}, this does not keep accepting further clients
      * afterward.
+     *
+     * <p>Throws {@link IllegalStateException} if a client is already
+     * embedded, before binding the socket rather than after waiting for a
+     * client to connect to it.
      */
     void embed(Path rendezvousSocket);
 
@@ -78,8 +88,29 @@ public interface EmbedSocket extends AutoCloseable {
      * as {@link #setWindowLookupTimeout} allows; downcast to {@link
      * EmbedSocketX11} for the overload that takes a budget for this step
      * alone.
+     *
+     * <p>Throws {@link IllegalStateException} if a client is already
+     * embedded — see {@link #embed(long)}, and {@link
+     * #swapClientOpaque(long)} for the deliberate replacement.
      */
     void embedOpaque(long clientWindowId);
+
+    /**
+     * Releases the currently embedded client and embeds {@code clientPid}'s
+     * window in its place — {@link #detachClient()} followed by {@link
+     * #embed(long)}, as one named operation, so that replacing a client is
+     * something a caller asks for rather than something a repeated {@code
+     * embed} does by accident. The outgoing client goes back to the desktop
+     * as a live top-level window; {@link #onClientDetached} does not fire
+     * for it, exactly as for a plain {@link #detachClient()}.
+     *
+     * <p>The detach half is a no-op when nothing is embedded, so this also
+     * serves a caller that does not know whether the socket is occupied.
+     */
+    void swapClient(long clientPid);
+
+    /** Same as {@link #swapClient(long)}, but for a client window embedded the way {@link #embedOpaque(long)} embeds one. */
+    void swapClientOpaque(long clientWindowId);
 
     /**
      * Starts a background accept loop over a persistent rendezvous socket at

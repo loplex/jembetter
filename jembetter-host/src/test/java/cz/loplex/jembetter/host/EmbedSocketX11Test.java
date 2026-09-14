@@ -582,6 +582,108 @@ class EmbedSocketX11Test {
      * guard never fired, and a {@code resize()} on a closed socket did
      * nothing at all and reported nothing.
      */
+    /**
+     * A socket holds one client at a time. A second {@code embed} used to
+     * overwrite the tracked window id and leave the first client reparented
+     * inside the socket with nothing watching it: {@code detachClient()}
+     * and {@code close()} both released only the second, so the first was
+     * left to X11's save-set, which returns a reparented-in window to the
+     * root only when the owning connection itself closes — so it reappeared
+     * on the desktop at teardown.
+     *
+     * <p>The assertion that carries the regression is the one after the
+     * rejections: the socket still tracks the client it actually has, so
+     * detaching releases that one.
+     */
+    @Test
+    void aSecondEmbedIsRejectedInsteadOfAbandoningTheFirstClient() throws IOException, InterruptedException {
+        owner = new Frame("EmbedSocketX11Test owner");
+        socket = new EmbedSocketX11(owner);
+        socket.open(0, 0, 100, 100);
+
+        Path socketPath = Files.createTempFile("jembetter-host-test-", ".sock");
+        Files.delete(socketPath);
+
+        CountDownLatch embedded = new CountDownLatch(1);
+        socket.onClientEmbedded(embedded::countDown);
+        socket.listen(socketPath);
+
+        long pid = ProcessHandle.current().pid();
+        FakeClient fake = offerFakeClient(socketPath, pid);
+        client1 = fake.frame();
+        assertTrue(embedded.await(5, TimeUnit.SECONDS), "client was never embedded");
+
+        Path neverBound = socketPath.resolveSibling("jembetter-host-test-never-bound.sock");
+        assertThrows(IllegalStateException.class, () -> socket.embed(pid),
+                "a second embed() overwrote the embedded client instead of refusing");
+        assertThrows(IllegalStateException.class, () -> socket.embedOpaque(fake.windowId()),
+                "a second embedOpaque() overwrote the embedded client instead of refusing");
+        assertThrows(IllegalStateException.class, () -> socket.embed(neverBound),
+                "a second embed(Path) was accepted");
+        assertFalse(Files.exists(neverBound),
+                "embed(Path) bound its rendezvous socket before noticing a client was already embedded");
+
+        socket.detachClient();
+        try (X11Display probe = X11Display.open(null)) {
+            // Throws if the socket released some other window than the one
+            // it embedded - i.e. if a rejected call had clobbered it.
+            waitForOwnWindow(probe, pid);
+        }
+    }
+
+    /**
+     * The deliberate replacement a second {@code embed} refuses to stand in
+     * for: the outgoing client goes back to the desktop as a live top-level
+     * window, and the incoming one ends up genuinely reparented under the
+     * host canvas.
+     *
+     * <p>Two separate client processes rather than this test JVM's own
+     * frames: the swap releases the outgoing window back to root before
+     * looking the incoming one up, so with both belonging to one pid a
+     * lookup by pid could not tell them apart. Embedded opaquely so neither
+     * has to publish {@code _XEMBED_INFO} for itself.
+     */
+    @Test
+    void swapClientReplacesTheEmbeddedClientAndReleasesTheOldOne() throws IOException, InterruptedException {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketX11Test owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+        Thread.sleep(200);
+
+        socket = new EmbedSocketX11(owner);
+        socket.open(canvas);
+
+        Process outgoing = startFakeClientProcess();
+        Process incoming = startFakeClientProcess();
+        try {
+            long outgoingWindowId;
+            long incomingWindowId;
+            try (X11Display display = X11Display.open(null)) {
+                outgoingWindowId = waitForOwnWindow(display, outgoing.pid());
+                incomingWindowId = waitForOwnWindow(display, incoming.pid());
+            }
+
+            socket.embedOpaque(outgoingWindowId);
+            socket.swapClientOpaque(incomingWindowId);
+
+            long canvasWindowId = CanvasNativeHandle.extract(canvas);
+            try (X11Display display = X11Display.open(null)) {
+                assertTrue(isDescendantOf(display, incomingWindowId, canvasWindowId),
+                        "the incoming client was not reparented under the host canvas");
+                assertFalse(isDescendantOf(display, outgoingWindowId, canvasWindowId),
+                        "the outgoing client was left inside the socket instead of being released to the desktop");
+            }
+        } finally {
+            outgoing.destroy();
+            outgoing.waitFor(5, TimeUnit.SECONDS);
+            incoming.destroy();
+            incoming.waitFor(5, TimeUnit.SECONDS);
+        }
+    }
+
     @Test
     void aClosedSocketRejectsCallsInsteadOfSilentlyDoingNothing() {
         Canvas canvas = new Canvas();

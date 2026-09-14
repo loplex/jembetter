@@ -33,6 +33,32 @@ Who this breaks, and who it does not:
 interface does not carry. The full list of what stays backend-specific is in
 [X11-only extras](docs/advanced-usage.md#x11-only-extras).
 
+### Breaking: an `EmbedSocket` holds one client at a time, and says so
+
+`embed(long)`, `embed(Path)` and `embedOpaque(long)` now throw
+`IllegalStateException` when a client is already embedded. They used to
+overwrite the tracked window and leave the first client reparented inside the
+socket with nothing watching it — `detachClient()` and `close()` released only
+the second, so on X11 the first was left to the save-set and reappeared on the
+desktop at teardown, and on Win32 it went down with the host window.
+
+Replacing a client deliberately has its own name now:
+
+```java
+socket.swapClient(clientPid);        // detachClient() + embed(clientPid)
+socket.swapClientOpaque(windowId);   // detachClient() + embedOpaque(windowId)
+```
+
+Who this breaks, and who it does not:
+
+- **Implementing `EmbedSocket` yourself** — source-incompatible, for the same
+  reason as the change above: two methods were added to the interface.
+- **Embedding once per socket, or re-embedding after a detach** — unaffected.
+  That includes `listen()`'s own accept loop, which detaches before it accepts
+  the next client.
+- **Calling `embed` a second time to swap clients** — that call now throws.
+  Change it to `swapClient`, or call `detachClient()` first.
+
 ### Added
 
 - A Win32 backend, alongside the existing X11 one, dispatched on `os.name` by

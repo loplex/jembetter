@@ -39,6 +39,22 @@ open — a client crashing or being voluntarily released via
 `socket.detachClient()` doesn't require restarting the host. Call
 `socket.close()` to shut it down.
 
+**One client at a time, one `open()` per socket.** `embed`, `embed(Path)` and
+`embedOpaque` throw `IllegalStateException` when a client is already embedded,
+rather than overwriting the one that is there and leaving it inside the socket
+with nothing tracking it. To replace a client deliberately, say so:
+
+```java
+socket.swapClient(clientPid);        // detachClient() + embed(clientPid)
+socket.swapClientOpaque(windowId);   // detachClient() + embedOpaque(windowId)
+```
+
+Both release the outgoing client back to the desktop as a live top-level
+window, and neither fires `onClientDetached` — that callback reports a detach
+the host did not ask for. The detach half is a no-op when nothing is embedded,
+so a caller that doesn't know whether the socket is occupied can use these
+unconditionally.
+
 `socket.tryDestroy()` is `close()`'s destroying counterpart: a still-embedded
 client's window is destroyed rather than released back as a live top-level
 window. Use it when the embedded client is a private renderer process never
@@ -236,6 +252,11 @@ A closed socket rejects `resize`, `setBounds`, `listen`, `embed` and
 `embedOpaque` with `IllegalStateException`. It does not reject `setModal`,
 `focusClient` or `detachClient`, which document themselves as no-ops when
 nothing is embedded — after a close, nothing is.
+
+The one-client guard above reads the same state the call is about to change,
+so it reports the ordinary sequential mistake rather than arbitrating between
+two threads embedding into one socket at the same time — which nothing else on
+the embed path is prepared for either. Embed from one thread at a time.
 
 **Calling out.** No callback this library invokes runs on AWT's event
 thread. If a callback touches Swing, it has to get there itself, with

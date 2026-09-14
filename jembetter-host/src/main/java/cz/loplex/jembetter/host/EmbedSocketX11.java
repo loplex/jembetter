@@ -487,6 +487,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
     @Override
     public void embed(long clientPid) {
         requireOpen();
+        requireNoClient();
         long clientWindowId = resolveClientWindow(clientPid);
         // watchForSizeContest before the reparent, not after - see its
         // Javadoc for why the ordering itself is the fix.
@@ -515,6 +516,9 @@ public final class EmbedSocketX11 implements EmbedSocket {
     @Override
     public void embed(Path rendezvousSocket) {
         requireOpen();
+        // Before binding, not after: a socket that already holds a client
+        // should say so now rather than after waiting for one to connect.
+        requireNoClient();
         try {
             Files.deleteIfExists(rendezvousSocket);
             try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
@@ -560,6 +564,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     public void embedOpaque(long clientWindowId, Duration pollInterval, int maxAttempts) {
         requireOpen();
+        requireNoClient();
         display.ifOpen(raw -> XEmbedInfoProperty.write(raw, clientWindowId,
                 new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED)));
         // watchForSizeContest before the reparent, not after - see its
@@ -576,6 +581,33 @@ public final class EmbedSocketX11 implements EmbedSocket {
         sendActivated(owner.isFocused());
         deathWatcher.watch(clientWindowId, this::handleClientDetached);
         inbound.watchButtonPress(clientWindowId);
+    }
+
+    /**
+     * Releases the currently embedded client and embeds {@code clientPid}'s
+     * window in its place — {@link #detachClient()} followed by {@link
+     * #embed(long)}, as one named operation. This is the swap {@link
+     * #embed(long)} refuses to be mistaken for: the outgoing client goes
+     * back to the desktop as a live top-level window, rather than being
+     * left untracked inside this socket.
+     *
+     * <p>The detach is a no-op when nothing is embedded, so this is also
+     * the call to make when the caller does not know or care whether the
+     * socket is currently occupied.
+     */
+    @Override
+    public void swapClient(long clientPid) {
+        requireOpen();
+        detachClient();
+        embed(clientPid);
+    }
+
+    /** Same as {@link #swapClient(long)}, but for a client window embedded the way {@link #embedOpaque(long)} embeds one. */
+    @Override
+    public void swapClientOpaque(long clientWindowId) {
+        requireOpen();
+        detachClient();
+        embedOpaque(clientWindowId);
     }
 
     private void waitForReparentConfirmed(long clientWindowId, Duration pollInterval, int maxAttempts) {
@@ -900,6 +932,28 @@ public final class EmbedSocketX11 implements EmbedSocket {
      * nothing and say nothing. Asking a closed socket to move or embed is a
      * programming error, so it says so.
      */
+    /**
+     * Rejects an embed into a socket that already holds a client. Without
+     * this, a second {@link #embed(long)} or {@link #embedOpaque(long)}
+     * overwrote {@code embeddedWindowId} and left the first client
+     * reparented inside this socket with nothing tracking it any more: the
+     * later {@link #detachClient()} released only the second, {@link
+     * #close()} detached only the second, and the first was left for X11's
+     * save-set to rescue — which it only does by reparenting the window
+     * back to root when this connection itself closes, so the abandoned
+     * client reappeared on the desktop at teardown.
+     *
+     * <p>Replacing one client with another is a reasonable thing to want,
+     * and it now has its own name rather than being spelled as a second
+     * {@code embed}: {@link #swapClient(long)}.
+     */
+    private void requireNoClient() {
+        if (embeddedWindowId >= 0) {
+            throw new IllegalStateException("A client is already embedded in this socket; call detachClient() first, "
+                    + "or swapClient(long)/swapClientOpaque(long) to replace it in one step");
+        }
+    }
+
     private void requireOpen() {
         if (closed.get()) {
             throw new IllegalStateException("This socket is closed");

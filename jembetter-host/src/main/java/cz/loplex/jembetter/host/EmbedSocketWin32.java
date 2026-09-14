@@ -130,6 +130,18 @@ public final class EmbedSocketWin32 implements EmbedSocket {
         core.embedOpaque(clientWindowId);
     }
 
+    /** Releases the currently embedded client and embeds {@code clientPid}'s in its place — see {@link EmbedSocket#swapClient(long)}. */
+    @Override
+    public void swapClient(long clientPid) {
+        core.swapClient(clientPid);
+    }
+
+    /** Same as {@link #swapClient(long)}, but for a window embedded the way {@link #embedOpaque(long)} embeds one. */
+    @Override
+    public void swapClientOpaque(long clientWindowId) {
+        core.swapClientOpaque(clientWindowId);
+    }
+
     /** Parity shim — see {@link EmbedSocket#setWindowLookupTimeout}. */
     @Override
     public void setWindowLookupTimeout(Duration timeout) {
