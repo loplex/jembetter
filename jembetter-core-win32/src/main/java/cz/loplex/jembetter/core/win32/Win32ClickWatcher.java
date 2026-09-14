@@ -159,19 +159,50 @@ public final class Win32ClickWatcher implements AutoCloseable {
         }
     }
 
+    /**
+     * Runs on the pump thread, for every low-level mouse event the system
+     * generates, and does as little as it possibly can.
+     *
+     * <p>Windows silently removes a low-level hook whose callback overruns
+     * {@code LowLevelHooksTimeout} — no notification, no error, and no API
+     * to ask afterwards whether the hook is still installed. A watcher whose
+     * hook was removed goes permanently, silently dead, which is the same
+     * failure the constructor now refuses to hand back at install time and
+     * the one thing that cannot be detected once running. So the only real
+     * defence is to never come close to the limit: this reads two ints and
+     * hands them off. No Win32 call, no per-watched-window work, nothing
+     * that scales with anything.
+     */
     private LRESULT onMouseEvent(int nCode, WPARAM wParam, MSLLHOOKSTRUCT info) {
         if (nCode >= HC_ACTION && wParam.intValue() == WM_LBUTTONDOWN && info != null) {
             int x = info.pt.x;
             int y = info.pt.y;
-            for (Map.Entry<Long, Runnable> entry : callbacks.entrySet()) {
+            dispatch.execute(() -> notifyWatchersAt(x, y));
+        }
+        // info is checked for null here too, not only above: an exception
+        // thrown out of a JNA callback has nowhere to go, and a null here
+        // would have been a NullPointerException on the hook thread.
+        LPARAM lParam = info == null ? new LPARAM(0) : new LPARAM(Pointer.nativeValue(info.getPointer()));
+        return User32.INSTANCE.CallNextHookEx(hook, nCode, wParam, lParam);
+    }
+
+    /**
+     * The half of a click that needs Win32 calls — which window was under
+     * the pointer — moved off the hook thread onto the dispatch thread. A
+     * rect read a moment after the click rather than during it is the same
+     * answer for any window that is not being dragged at that instant.
+     */
+    private void notifyWatchersAt(int x, int y) {
+        for (Map.Entry<Long, Runnable> entry : callbacks.entrySet()) {
+            try {
                 if (contains(entry.getKey(), x, y)) {
-                    Runnable callback = entry.getValue();
-                    dispatch.execute(() -> runQuietly(callback));
+                    runQuietly(entry.getValue());
                 }
+            } catch (RuntimeException e) {
+                // One unreadable window must not hide a click from the rest.
+                LOG.warn("Testing whether a click landed inside window {} failed", entry.getKey(), e);
             }
         }
-        LPARAM lParam = new LPARAM(Pointer.nativeValue(info.getPointer()));
-        return User32.INSTANCE.CallNextHookEx(hook, nCode, wParam, lParam);
     }
 
     private static boolean contains(long hwnd, int screenX, int screenY) {
