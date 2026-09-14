@@ -3,6 +3,7 @@ package cz.loplex.jembetter.client;
 import cz.loplex.jembetter.common.FocusListener;
 
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.function.LongConsumer;
 
 /**
@@ -21,6 +22,10 @@ final class EmbedPlugX11 implements EmbedPlug {
 
     @Override
     public void announce(Path hostSocket, String wmClass) {
+        // Checked here rather than left to offer(): the delegate's parameter
+        // has a different name, and an NPE should name the one the caller
+        // actually passed.
+        Objects.requireNonNull(hostSocket, "hostSocket");
         client.offer(hostSocket, wmClass);
     }
 

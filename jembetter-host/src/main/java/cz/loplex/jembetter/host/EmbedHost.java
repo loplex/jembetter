@@ -4,6 +4,7 @@ import cz.loplex.jembetter.common.Platform;
 
 import java.awt.Canvas;
 import java.nio.file.Path;
+import java.util.Objects;
 
 /**
  * Simplified 1:1 host-side facade dispatched by {@code os.name} to either an
@@ -31,6 +32,11 @@ import java.nio.file.Path;
  * operation regardless of which method is called — so both do the exact
  * same poll-verified {@code SetParent} there. Confirmed by a real-machine
  * spike; see {@code jembetter-core-win32}'s package-info.
+ *
+ * <p><strong>Null is not a valid argument</strong> to anything here: every
+ * method rejects one with a {@link NullPointerException} naming the
+ * parameter, at the call that made the mistake rather than later from a
+ * background thread.
  */
 public interface EmbedHost extends AutoCloseable {
 
@@ -48,6 +54,7 @@ public interface EmbedHost extends AutoCloseable {
      * java.desktop/sun.awt.windows=ALL-UNNAMED}).
      */
     static EmbedHost create(Canvas hostCanvas) {
+        Objects.requireNonNull(hostCanvas, "hostCanvas");
         return Platform.isWindows() ? new EmbedHostWin32(hostCanvas) : new EmbedHostX11(hostCanvas);
     }
 

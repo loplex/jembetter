@@ -18,6 +18,13 @@ import java.util.function.LongConsumer;
  * top-level window findable/watchable and wait for the host to act. {@code
  * wmClass} disambiguation (see {@link #announce(String)}) has no Win32
  * equivalent — {@link EmbedPlugWin32} requires it to be {@code null}.
+ *
+ * <p><strong>Null is not a valid argument</strong> to anything here, with
+ * one exception: every method rejects one with a {@link
+ * NullPointerException} naming the parameter, at the call that made the
+ * mistake rather than later from a background thread. The exception is
+ * {@code wmClass}, where null is the ordinary value for a process that owns
+ * a single top-level window.
  */
 public interface EmbedPlug extends AutoCloseable {
 

@@ -18,6 +18,7 @@ import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Objects;
 
 /**
  * {@link EmbedSocket}'s Win32 implementation — the advanced-API counterpart
@@ -109,6 +110,7 @@ public final class EmbedSocketWin32 implements EmbedSocket {
     private volatile boolean readerStopped = true;
 
     public EmbedSocketWin32(Canvas hostCanvas) {
+        Objects.requireNonNull(hostCanvas, "hostCanvas");
         this.core = new Win32EmbedCore(hostCanvas);
     }
 
@@ -158,6 +160,7 @@ public final class EmbedSocketWin32 implements EmbedSocket {
      */
     @Override
     public void listen(Path socketPath) {
+        Objects.requireNonNull(socketPath, "socketPath");
         synchronized (lifecycleLock) {
             if (listening) {
                 throw new IllegalStateException("Already listening");
@@ -298,7 +301,7 @@ public final class EmbedSocketWin32 implements EmbedSocket {
      */
     @Override
     public void onClientEmbedded(Runnable callback) {
-        onClientEmbedded = callback;
+        onClientEmbedded = Objects.requireNonNull(callback, "callback");
     }
 
     /** Registers a callback invoked when the embedded client's process exits or crashes — does not fire for {@link #detachClient()}. */

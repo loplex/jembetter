@@ -23,6 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * The Win32 embed/detach/focus/watch mechanics shared by {@link
@@ -52,7 +53,7 @@ final class Win32EmbedCore {
     };
 
     Win32EmbedCore(Canvas hostCanvas) {
-        this.hostCanvas = hostCanvas;
+        this.hostCanvas = Objects.requireNonNull(hostCanvas, "hostCanvas");
         // Before the watcher, not after: extract() is the step that can fail
         // (no native peer yet), and a watcher created first would be left
         // running with nothing able to close it, since the caller never gets
@@ -82,6 +83,7 @@ final class Win32EmbedCore {
     }
 
     void embed(Path rendezvousSocket) {
+        Objects.requireNonNull(rendezvousSocket, "rendezvousSocket");
         // Before binding, not after: a core that already holds a client
         // should say so now rather than after waiting for one to connect.
         requireNoClient();
@@ -139,7 +141,7 @@ final class Win32EmbedCore {
     }
 
     void onDetached(Runnable callback) {
-        onDetached = callback;
+        onDetached = Objects.requireNonNull(callback, "callback");
     }
 
     /** Whether a client is currently embedded — for {@link EmbedSocketWin32}'s accept loop to poll for a detach (voluntary or via death). */
@@ -269,7 +271,7 @@ final class Win32EmbedCore {
 
     /** Parity shim for {@code EmbedSocketX11#setWindowLookupTimeout} — see {@link EmbedSocket#setWindowLookupTimeout}. */
     void setWindowLookupTimeout(Duration timeout) {
-        windowLookupTimeout = timeout;
+        windowLookupTimeout = Objects.requireNonNull(timeout, "timeout");
     }
 
     private long resolveClientWindow(long clientPid) {

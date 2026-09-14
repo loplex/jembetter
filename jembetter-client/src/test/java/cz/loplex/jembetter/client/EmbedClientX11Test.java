@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -62,6 +63,31 @@ class EmbedClientX11Test {
     @Test
     void factoryReturnsTheX11ImplementationOnThisPlatform() {
         client = assertInstanceOf(EmbedClientX11.class, EmbedClient.create());
+    }
+
+    /**
+     * Null is a caller mistake, and it used to surface from whichever
+     * background thread eventually read the field it was stored in, long
+     * after the call that passed it. {@code announce(null)} stays valid: it
+     * is the documented value for a process that owns a single top-level
+     * window, so it is asserted here rather than left for a later sweep to
+     * tidy away.
+     */
+    @Test
+    void nullArgumentsAreRejectedAtTheCallThatPassedThem() {
+        client = new EmbedClientX11();
+
+        assertThrows(NullPointerException.class, () -> client.onEmbedded(null), "a null callback was stored");
+        assertThrows(NullPointerException.class, () -> client.onHostDetached(null), "a null callback was stored");
+        assertThrows(NullPointerException.class, () -> client.onFocusChanged(null), "a null callback was stored");
+        assertThrows(NullPointerException.class, () -> client.onResized(null), "a null callback was stored");
+        assertThrows(NullPointerException.class, () -> client.onModalityChanged(null), "a null callback was stored");
+        assertThrows(NullPointerException.class, () -> client.onActivationChanged(null), "a null callback was stored");
+        assertThrows(NullPointerException.class, () -> client.setWindowLookupTimeout(null),
+                "a null timeout was stored, to fail inside a later window lookup");
+        assertThrows(NullPointerException.class, () -> client.offer(null), "a null host socket path was accepted");
+        assertThrows(NullPointerException.class, () -> client.offer(null, "AnyClass"),
+                "a null host socket path was accepted");
     }
 
     @Test

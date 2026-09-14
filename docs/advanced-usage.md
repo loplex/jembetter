@@ -232,6 +232,21 @@ giving up; override that with `EmbedSocket#setWindowLookupTimeout`/
 your setup. On the host that same budget also covers the second wait an
 embed performs — confirming the reparent actually took effect.
 
+## Null arguments
+
+Every public method on `EmbedHost`, `EmbedSocket`, `EmbedPlug` and
+`EmbedClient` rejects a null argument with a `NullPointerException` naming the
+parameter, at the call that passed it. The point is where the failure lands: a
+null callback stored and read later fails on a background thread, where this
+library catches a throwing callback and logs it as a misbehaving one — the
+wrong diagnosis for a mistake made two calls earlier and somewhere else.
+
+`wmClass` is the exception. Null is its meaningful value — this process owns a
+single top-level window, so there is nothing to disambiguate — in
+`EmbedClient#announce(String)`, `EmbedClient#offer(Path, String)`,
+`EmbedPlug#announce(String)`, `EmbedPlug#announce(Path, String)` and
+`EmbedSocketX11#expectClientWindowClass`.
+
 ## Threads
 
 Embedding is an AWT problem and a window-system problem at once, so it is

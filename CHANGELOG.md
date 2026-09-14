@@ -100,6 +100,16 @@ Who this breaks, and who it does not:
 
 ### Changed
 
+- Every public method on `EmbedHost`, `EmbedSocket`, `EmbedPlug` and
+  `EmbedClient` now rejects a null argument with a `NullPointerException`
+  naming the parameter. There were none before, so a null went on to fail
+  somewhere else entirely: a null `setWindowLookupTimeout` only surfaced from
+  `Duration.toMillis()` inside a later `embed()`, and a null callback from the
+  background thread that eventually read the field, where a callback failure
+  is caught and logged as "a misbehaving callback" — which it was not. The
+  `wmClass` arguments are the exception, and keep their documented meaning:
+  null says this process owns a single top-level window.
+
 - `EmbedSocketX11.resize`, `setBounds`, `listen`, `embed` and `embedOpaque`
   now throw `IllegalStateException` when the socket has been closed. They
   used to fall through the "open() must be called first" guard — a closed

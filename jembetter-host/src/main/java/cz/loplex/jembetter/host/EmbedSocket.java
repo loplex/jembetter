@@ -8,6 +8,7 @@ import java.awt.Frame;
 import java.awt.Window;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Objects;
 
 /**
  * The advanced, multi-client host-side API — the backend-portable type a
@@ -31,6 +32,13 @@ import java.time.Duration;
  * <p><b>{@link #embedOpaque(long)} and {@link #embed(long)} are the same
  * operation on the Win32 backend</b> — see {@link EmbedHost} for why (Win32
  * has no {@code _XEMBED_INFO} equivalent).
+ *
+ * <p><strong>Null is not a valid argument</strong> to anything here: every
+ * method rejects one with a {@link NullPointerException} naming the
+ * parameter, at the call that made the mistake rather than later from a
+ * background thread. The one place null means something is {@link
+ * EmbedSocketX11#expectClientWindowClass}, where it says this client owns a
+ * single top-level window.
  */
 public interface EmbedSocket extends AutoCloseable {
 
@@ -44,6 +52,7 @@ public interface EmbedSocket extends AutoCloseable {
      * already be displayable — see {@link EmbedHost#create}).
      */
     static EmbedSocket create(Canvas hostCanvas) {
+        Objects.requireNonNull(hostCanvas, "hostCanvas");
         if (Platform.isWindows()) {
             return new EmbedSocketWin32(hostCanvas);
         }

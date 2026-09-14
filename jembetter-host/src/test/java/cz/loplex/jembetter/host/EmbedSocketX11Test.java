@@ -709,6 +709,42 @@ class EmbedSocketX11Test {
                 "a second open(int, int, int, int) was accepted");
     }
 
+    /**
+     * Null is a caller mistake, and it used to surface somewhere else
+     * entirely: a null timeout only failed inside a later {@code embed()},
+     * from {@code Duration.toMillis()}; a null callback failed on the accept
+     * thread, where the library catches it and logs "a misbehaving callback"
+     * — which it is not, the mistake was two calls earlier and elsewhere.
+     *
+     * <p>{@code expectClientWindowClass} is at the end deliberately: null is
+     * the documented, meaningful value there, and this pins that down so a
+     * later sweep cannot take it along with the rest.
+     */
+    @Test
+    void nullArgumentsAreRejectedAtTheCallThatPassedThem() {
+        owner = new Frame("EmbedSocketX11Test owner");
+        socket = new EmbedSocketX11(owner);
+        socket.open(0, 0, 100, 100);
+
+        assertThrows(NullPointerException.class, () -> new EmbedSocketX11(null), "a null owner Frame was accepted");
+        assertThrows(NullPointerException.class, () -> EmbedSocket.create(null), "a null host canvas was accepted");
+        assertThrows(NullPointerException.class, () -> socket.open((Canvas) null),
+                "a null host canvas was accepted");
+        assertThrows(NullPointerException.class, () -> socket.setWindowLookupTimeout(null),
+                "a null timeout was stored, to fail inside a later embed()");
+        assertThrows(NullPointerException.class, () -> socket.onClientEmbedded(null),
+                "a null callback was stored, to fail on the accept thread");
+        assertThrows(NullPointerException.class, () -> socket.onClientDetached(null),
+                "a null callback was stored, to fail on the death watcher's thread");
+        assertThrows(NullPointerException.class, () -> socket.onFocusNext(null), "a null callback was stored");
+        assertThrows(NullPointerException.class, () -> socket.onFocusPrev(null), "a null callback was stored");
+        assertThrows(NullPointerException.class, () -> socket.listen(null), "a null socket path was accepted");
+        assertThrows(NullPointerException.class, () -> socket.embed((Path) null),
+                "a null rendezvous socket path was accepted");
+
+        socket.expectClientWindowClass(null);
+    }
+
     @Test
     void aClosedSocketRejectsCallsInsteadOfSilentlyDoingNothing() {
         Canvas canvas = new Canvas();

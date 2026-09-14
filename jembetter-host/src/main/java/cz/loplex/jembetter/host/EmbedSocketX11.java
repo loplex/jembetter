@@ -44,6 +44,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntFunction;
 import java.util.function.Predicate;
@@ -158,7 +159,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
     };
 
     public EmbedSocketX11(Frame owner) {
-        this.owner = owner;
+        this.owner = Objects.requireNonNull(owner, "owner");
         // Built here rather than in field initializers so that a failure
         // part-way through can be undone. Each of these opens its own X11
         // connection, and the watchers each start a thread; if the second or
@@ -251,6 +252,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      * here).
      */
     public void open(Canvas hostCanvas) {
+        Objects.requireNonNull(hostCanvas, "hostCanvas");
         requireNotOpen();
         long canvasWindowId = CanvasNativeHandle.extract(hostCanvas);
         windowId = RawWindow.createChild(display, canvasWindowId, hostCanvas.getWidth(), hostCanvas.getHeight());
@@ -395,6 +397,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     @Override
     public void listen(Path socketPath) {
+        Objects.requireNonNull(socketPath, "socketPath");
         requireOpen();
         synchronized (lifecycleLock) {
             if (listening) {
@@ -517,6 +520,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     @Override
     public void embed(Path rendezvousSocket) {
+        Objects.requireNonNull(rendezvousSocket, "rendezvousSocket");
         requireOpen();
         // Before binding, not after: a socket that already holds a client
         // should say so now rather than after waiting for one to connect.
@@ -565,6 +569,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      * ClientMessages despite not being relied on to.
      */
     public void embedOpaque(long clientWindowId, Duration pollInterval, int maxAttempts) {
+        Objects.requireNonNull(pollInterval, "pollInterval");
         requireOpen();
         requireNoClient();
         display.ifOpen(raw -> XEmbedInfoProperty.write(raw, clientWindowId,
@@ -643,7 +648,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     @Override
     public void onClientEmbedded(Runnable callback) {
-        onClientEmbedded = callback;
+        onClientEmbedded = Objects.requireNonNull(callback, "callback");
     }
 
     /**
@@ -653,7 +658,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     @Override
     public void onClientDetached(Runnable callback) {
-        onClientDetached = callback;
+        onClientDetached = Objects.requireNonNull(callback, "callback");
     }
 
     /**
@@ -722,12 +727,12 @@ public final class EmbedSocketX11 implements EmbedSocket {
      * Runs on {@link XEmbedInboundWatcher}'s own background thread.
      */
     public void onFocusNext(Runnable callback) {
-        onFocusNext = callback;
+        onFocusNext = Objects.requireNonNull(callback, "callback");
     }
 
     /** Same as {@link #onFocusNext}, but for the tab chain exhausted going backward (XEMBED_FOCUS_PREV). */
     public void onFocusPrev(Runnable callback) {
-        onFocusPrev = callback;
+        onFocusPrev = Objects.requireNonNull(callback, "callback");
     }
 
     /**
@@ -738,6 +743,11 @@ public final class EmbedSocketX11 implements EmbedSocket {
      * window at once; a single-window client resolves unambiguously without
      * this. Applies to every client accepted from here on, including
      * re-embeds after a detach.
+     *
+     * <p>{@code null} is the meaningful value for that single-window case,
+     * and the one argument this class does not reject as null — it clears a
+     * class set earlier, going back to matching whatever single window a
+     * client publishes.
      */
     public void expectClientWindowClass(String wmClass) {
         expectedClientWmClass = wmClass;
@@ -750,7 +760,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     @Override
     public void setWindowLookupTimeout(Duration timeout) {
-        windowLookupTimeout = timeout;
+        windowLookupTimeout = Objects.requireNonNull(timeout, "timeout");
     }
 
     /**
