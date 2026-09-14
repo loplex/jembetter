@@ -1,6 +1,5 @@
 package cz.loplex.jembetter.core.x11;
 
-import com.sun.jna.platform.unix.X11.Display;
 import com.sun.jna.platform.unix.X11.Window;
 
 /**
@@ -42,13 +41,12 @@ public final class WindowRelease {
      * either way, just without this method's guarantee against a race.
      */
     public static void release(X11Display display, long windowId) {
-        Display raw = display.raw();
         Window window = new Window(windowId);
-        synchronized (X11Display.GLOBAL_LOCK) {
+        display.ifOpen(raw -> {
             int screen = X11Ext.INSTANCE.XDefaultScreen(raw);
             X11Ext.INSTANCE.XWithdrawWindow(raw, window, screen);
             X11Ext.INSTANCE.XSync(raw, false);
-        }
+        });
         waitForRootParent(display, windowId);
     }
 

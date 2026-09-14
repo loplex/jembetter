@@ -8,8 +8,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -79,6 +81,47 @@ class X11DisplayCloseTest {
         caller.join(TimeUnit.SECONDS.toMillis(5));
         assertFalse(caller.isAlive(), "the calling thread never left ifOpen");
         assertFalse(ran.get(), "an ifOpen action ran after the connection it was handed had been closed");
+    }
+
+    @Test
+    void ifOpenWithAFallbackReturnsItRatherThanCallingIntoAClosedConnection() {
+        X11Display open = X11Display.open(null);
+        assertEquals("ran", open.ifOpen(raw -> "ran", "connection closed"));
+        open.close();
+
+        assertEquals("connection closed", open.ifOpen(raw -> "ran", "connection closed"));
+    }
+
+    @Test
+    void requireOpenThrowsRatherThanCallingIntoAClosedConnection() {
+        X11Display open = X11Display.open(null);
+        assertEquals("ran", open.requireOpen(raw -> "ran"));
+        open.close();
+
+        assertThrows(IllegalStateException.class, () -> open.requireOpen(raw -> "ran"));
+    }
+
+    /**
+     * The package-wide contract, rather than the accessor in isolation: a
+     * command is skipped and a query fails, both against a connection that
+     * is already gone.
+     *
+     * <p>Only the query half of this is a strict assertion. A regression on
+     * the command half would call into freed memory, and what that does is
+     * undefined — usually a crash that takes the whole fork down, sometimes
+     * nothing at all. It is here to pin the intended behavior, not as the
+     * detector; {@link #anIfOpenParkedOnTheLockWhenTheConnectionClosesNeverRuns}
+     * is that.
+     */
+    @Test
+    void afterCloseACommandIsSkippedAndAQueryFails() {
+        X11Display display = X11Display.open(null);
+        long windowId = RawWindow.createOverrideRedirect(display, 0, 0, 10, 10);
+        display.close();
+
+        WindowGeometry.raise(display, windowId);
+
+        assertThrows(IllegalStateException.class, () -> WindowTree.parentOf(display, windowId));
     }
 
     @Test

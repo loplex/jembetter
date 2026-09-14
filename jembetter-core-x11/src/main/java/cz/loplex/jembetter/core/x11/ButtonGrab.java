@@ -2,7 +2,6 @@ package cz.loplex.jembetter.core.x11;
 
 import com.sun.jna.NativeLong;
 import com.sun.jna.platform.unix.X11.Cursor;
-import com.sun.jna.platform.unix.X11.Display;
 import com.sun.jna.platform.unix.X11.Window;
 
 /**
@@ -26,23 +25,21 @@ public final class ButtonGrab {
      * to keyboard grabs).
      */
     public static void install(X11Display display, long windowId) {
-        Display raw = display.raw();
         Window window = new Window(windowId);
-        synchronized (X11Display.GLOBAL_LOCK) {
+        display.ifOpen(raw -> {
             X11Ext.INSTANCE.XGrabButton(raw, X11Ext.AnyButton, X11Ext.AnyModifier, window, 0,
                     X11Ext.ButtonPressMask, X11Ext.GrabModeSync, X11Ext.GrabModeAsync, Window.None, Cursor.None);
             X11Ext.INSTANCE.XFlush(raw);
-        }
+        });
     }
 
     /** Undoes {@link #install}. */
     public static void uninstall(X11Display display, long windowId) {
-        Display raw = display.raw();
         Window window = new Window(windowId);
-        synchronized (X11Display.GLOBAL_LOCK) {
+        display.ifOpen(raw -> {
             X11Ext.INSTANCE.XUngrabButton(raw, X11Ext.AnyButton, X11Ext.AnyModifier, window);
             X11Ext.INSTANCE.XFlush(raw);
-        }
+        });
     }
 
     /**
@@ -53,10 +50,9 @@ public final class ButtonGrab {
      * hangs until it is.
      */
     public static void replay(X11Display display) {
-        Display raw = display.raw();
-        synchronized (X11Display.GLOBAL_LOCK) {
+        display.ifOpen(raw -> {
             X11Ext.INSTANCE.XAllowEvents(raw, X11Ext.ReplayPointer, new NativeLong(X11Ext.CurrentTime));
             X11Ext.INSTANCE.XFlush(raw);
-        }
+        });
     }
 }

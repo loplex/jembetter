@@ -2,7 +2,6 @@ package cz.loplex.jembetter.core.x11;
 
 import com.sun.jna.platform.unix.X11;
 import com.sun.jna.platform.unix.X11.Atom;
-import com.sun.jna.platform.unix.X11.Display;
 import com.sun.jna.platform.unix.X11.Window;
 
 import java.util.ArrayList;
@@ -28,8 +27,7 @@ public final class WindowFinder {
     }
 
     public static List<Long> findTopLevelWindowsByPid(X11Display display, long pid) {
-        Display raw = display.raw();
-        synchronized (X11Display.GLOBAL_LOCK) {
+        return display.requireOpen(raw -> {
             Atom netClientList = X11Ext.INSTANCE.XInternAtom(raw, "_NET_CLIENT_LIST", false);
             Atom netWmPid = X11Ext.INSTANCE.XInternAtom(raw, "_NET_WM_PID", false);
 
@@ -43,7 +41,7 @@ public final class WindowFinder {
                 }
             }
             return matches;
-        }
+        });
     }
 
     /**
@@ -68,10 +66,8 @@ public final class WindowFinder {
      * instance name, which this deliberately ignores).
      */
     public static Optional<String> readWmClass(X11Display display, long windowId) {
-        List<String> parts;
-        synchronized (X11Display.GLOBAL_LOCK) {
-            parts = X11Properties.readStringList8(display.raw(), new Window(windowId), X11.XA_WM_CLASS);
-        }
+        List<String> parts = display.requireOpen(
+                raw -> X11Properties.readStringList8(raw, new Window(windowId), X11.XA_WM_CLASS));
         return parts.size() < 2 ? Optional.empty() : Optional.of(parts.get(1));
     }
 }

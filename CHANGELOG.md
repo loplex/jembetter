@@ -48,15 +48,22 @@ interface does not carry. The full list of what stays backend-specific is in
 
 ### Fixed
 
-- A JVM crash (`SIGSEGV` inside Xlib) when an X11 host's owner window gained
-  or lost focus at the moment its `EmbedSocket` was being closed. The focus
-  callback could be waiting for the lock that guards every native call at the
-  instant the display connection was freed underneath it, and then made its
-  call against freed memory — a process-level crash rather than an exception
-  the host could catch. Native calls that can race a teardown now go through
-  `X11Display.ifOpen`, which checks the connection is still open and makes
-  the call as one indivisible step, and closing a connection twice is now a
-  no-op instead of a double free.
+- A JVM crash (`SIGSEGV` inside Xlib) when an X11 display connection was
+  closed while another thread was still using it. A native call against a
+  freed connection takes the process down rather than throwing something a
+  host could catch.
+
+  The case that produced the crash report was a host's owner window gaining
+  or losing focus at the instant its `EmbedSocket` was closed, but the same
+  race was reachable from every background watcher this library runs: each
+  closes its connection after a bounded join, so its event loop could still
+  be running when the connection was freed underneath it.
+
+  Every native call in `jembetter-core-x11` now goes through an open-checked
+  accessor on `X11Display`, which tests the connection and makes the call as
+  one indivisible step. Commands (moving a window, setting focus) are
+  skipped once the connection is gone; queries, which have no honest value
+  to fall back on, throw `IllegalStateException` instead.
 
 ### Published artifacts
 

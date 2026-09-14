@@ -1,6 +1,5 @@
 package cz.loplex.jembetter.core.x11;
 
-import com.sun.jna.platform.unix.X11.Display;
 import com.sun.jna.platform.unix.X11.Window;
 import com.sun.jna.platform.unix.X11.WindowByReference;
 import com.sun.jna.platform.unix.X11.XWindowAttributes;
@@ -21,27 +20,26 @@ public final class WindowTree {
 
     /** {@code windowId}'s current parent window id, per {@code XQueryTree}. */
     public static long parentOf(X11Display display, long windowId) {
-        Display raw = display.raw();
         WindowByReference rootReturn = new WindowByReference();
         WindowByReference parentReturn = new WindowByReference();
         PointerByReference childrenReturn = new PointerByReference();
         IntByReference nchildrenReturn = new IntByReference();
-        synchronized (X11Display.GLOBAL_LOCK) {
+        return display.requireOpen(raw -> {
             X11Ext.INSTANCE.XQueryTree(raw, new Window(windowId), rootReturn, parentReturn, childrenReturn,
                     nchildrenReturn);
             if (childrenReturn.getValue() != null) {
                 X11Ext.INSTANCE.XFree(childrenReturn.getValue());
             }
-        }
-        return parentReturn.getValue().longValue();
+            return parentReturn.getValue().longValue();
+        });
     }
 
     /** Whether {@code windowId} is currently mapped (viewable), per {@code XGetWindowAttributes}'s {@code map_state}. */
     public static boolean isMapped(X11Display display, long windowId) {
         XWindowAttributes attributes = new XWindowAttributes();
-        synchronized (X11Display.GLOBAL_LOCK) {
-            X11Ext.INSTANCE.XGetWindowAttributes(display.raw(), new Window(windowId), attributes);
-        }
-        return attributes.map_state == X11Ext.IsViewable;
+        return display.requireOpen(raw -> {
+            X11Ext.INSTANCE.XGetWindowAttributes(raw, new Window(windowId), attributes);
+            return attributes.map_state == X11Ext.IsViewable;
+        });
     }
 }

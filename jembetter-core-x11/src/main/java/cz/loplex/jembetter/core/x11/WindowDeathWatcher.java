@@ -36,8 +36,8 @@ public final class WindowDeathWatcher implements AutoCloseable {
     /** Starts watching {@code windowId}; {@code onDestroyed} runs on the watcher's own thread. */
     public void watch(long windowId, LongConsumer onDestroyed) {
         callbacks.put(windowId, onDestroyed);
-        synchronized (X11Display.GLOBAL_LOCK) {
-            X11Ext.INSTANCE.XSelectInput(display.raw(), new Window(windowId),
+        display.ifOpen(raw -> {
+            X11Ext.INSTANCE.XSelectInput(raw, new Window(windowId),
                     new NativeLong(X11Ext.StructureNotifyMask));
             // XSync, not XFlush: XFlush only empties the output buffer, so
             // watch() could return before the server had processed the
@@ -49,8 +49,8 @@ public final class WindowDeathWatcher implements AutoCloseable {
             // once the server has processed the request, which is what callers
             // already assume watch() guarantees. It costs one round trip, held
             // under GLOBAL_LOCK, on a path that runs once per watched window.
-            X11Ext.INSTANCE.XSync(display.raw(), false);
-        }
+            X11Ext.INSTANCE.XSync(raw, false);
+        });
     }
 
     public void unwatch(long windowId) {
@@ -60,10 +60,8 @@ public final class WindowDeathWatcher implements AutoCloseable {
     private void loop() {
         XEvent event = new XEvent();
         while (running) {
-            boolean pending;
-            synchronized (X11Display.GLOBAL_LOCK) {
-                pending = X11Ext.INSTANCE.XCheckTypedEvent(display.raw(), X11Ext.DestroyNotify, event);
-            }
+            boolean pending = display.ifOpen(
+                    raw -> X11Ext.INSTANCE.XCheckTypedEvent(raw, X11Ext.DestroyNotify, event), false);
             if (pending) {
                 dispatch(event);
             } else {
@@ -96,6 +94,17 @@ public final class WindowDeathWatcher implements AutoCloseable {
         }
     }
 
+    /**
+     * Stops the background thread and closes this watcher's connection.
+     *
+     * <p>The join is deliberately bounded: a callback this watcher invoked
+     * can block for as long as it likes, and a watcher must not hold its
+     * owner's teardown hostage. So the event loop can still be running when
+     * the connection is freed here, which is why every native call it makes
+     * goes through {@link X11Display#ifOpen(java.util.function.Function,
+     * Object)} rather than taking {@code GLOBAL_LOCK} directly — see {@link
+     * X11Display} for what happens otherwise.
+     */
     @Override
     public void close() {
         running = false;
