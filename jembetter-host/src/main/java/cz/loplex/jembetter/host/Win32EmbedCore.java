@@ -85,6 +85,7 @@ final class Win32EmbedCore {
             Files.deleteIfExists(rendezvousSocket);
             try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
                 server.bind(UnixDomainSocketAddress.of(rendezvousSocket));
+                RendezvousSocket.restrictToOwner(rendezvousSocket);
                 try (SocketChannel accepted = server.accept()) {
                     embed(PidHandshake.receive(accepted));
                 }

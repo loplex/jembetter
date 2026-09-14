@@ -74,9 +74,10 @@ public interface EmbedSocket extends AutoCloseable {
     /**
      * Embeds a client window whose id is already known, without relying on
      * the client's own cooperation — see {@link
-     * EmbedSocketX11#embedOpaque(long, Duration, int)}. Uses a fixed,
-     * generous poll budget internally; downcast to {@link EmbedSocketX11}
-     * for the tuning overload.
+     * EmbedSocketX11#embedOpaque(long, Duration, int)}. Polls for as long
+     * as {@link #setWindowLookupTimeout} allows; downcast to {@link
+     * EmbedSocketX11} for the overload that takes a budget for this step
+     * alone.
      */
     void embedOpaque(long clientWindowId);
 
@@ -85,6 +86,16 @@ public interface EmbedSocket extends AutoCloseable {
      * {@code socketPath}, embedding each connecting client in turn and,
      * once it detaches, going back to accepting the next one — see {@link
      * EmbedSocketX11#listen}.
+     *
+     * <p><strong>{@code socketPath} is a trust boundary.</strong> A client's
+     * whole handshake is the process id it announces, and nothing proves the
+     * process on the other end is that pid — whatever connects gets a window
+     * of its choosing reparented into this host. The socket is narrowed to
+     * its owner as soon as it is bound, which settles the cross-user case,
+     * but any process of the same user that can reach the path can still
+     * connect. Put it somewhere only trusted processes can: a directory the
+     * owner alone may enter is the robust form, and it also closes the brief
+     * gap between {@code bind} and the permission change.
      */
     void listen(Path socketPath);
 

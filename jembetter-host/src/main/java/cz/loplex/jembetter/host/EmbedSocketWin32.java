@@ -154,6 +154,7 @@ public final class EmbedSocketWin32 implements EmbedSocket {
                 Files.deleteIfExists(socketPath);
                 server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
                 server.bind(UnixDomainSocketAddress.of(socketPath));
+                RendezvousSocket.restrictToOwner(socketPath);
             } catch (IOException e) {
                 // A channel that was opened but never bound is this method's
                 // to clean up; leaving it behind would hold the file

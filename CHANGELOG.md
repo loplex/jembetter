@@ -108,6 +108,14 @@ interface does not carry. The full list of what stays backend-specific is in
   never did; the second means something is wrong and is now logged instead
   of passing as the same silent non-event.
 
+- A rendezvous socket is narrowed to its owner as soon as it is bound, so no
+  other user's process can connect to it. A client's whole handshake is the
+  process id it announces, and nothing proves the process on the other end is
+  that pid, so who can reach the socket is what the guarantee rests on —
+  which `EmbedSocket#listen` now says out loud. Where the filesystem has no
+  POSIX modes (any Windows host) the socket's directory is the only lever,
+  and the caller's choice of path is the whole story.
+
 ### Fixed
 
 - A JVM crash (`SIGSEGV` inside Xlib) when an X11 display connection was

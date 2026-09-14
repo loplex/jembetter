@@ -402,6 +402,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
                 Files.deleteIfExists(socketPath);
                 server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
                 server.bind(UnixDomainSocketAddress.of(socketPath));
+                RendezvousSocket.restrictToOwner(socketPath);
             } catch (IOException e) {
                 // A channel that was opened but never bound is this method's
                 // to clean up; leaving it behind would hold the file
@@ -518,6 +519,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
             Files.deleteIfExists(rendezvousSocket);
             try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
                 server.bind(UnixDomainSocketAddress.of(rendezvousSocket));
+                RendezvousSocket.restrictToOwner(rendezvousSocket);
                 try (SocketChannel accepted = server.accept()) {
                     embed(PidHandshake.receive(accepted));
                 }
