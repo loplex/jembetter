@@ -38,6 +38,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntFunction;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -105,7 +106,14 @@ public final class EmbedSocketX11 implements EmbedSocket {
     };
     private volatile String expectedClientWmClass;
     private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
-    private volatile boolean closed = false;
+    /**
+     * Atomic rather than a {@code volatile boolean}: the {@link
+     * java.awt.event.HierarchyListener} attached by {@link #open(Canvas)}
+     * closes this socket from the AWT event thread, and a caller can close
+     * it from its own at the same moment. A read-then-set would let both
+     * past the guard and tear the socket down twice.
+     */
+    private final AtomicBoolean closed = new AtomicBoolean(false);
 
     private final WindowFocusListener ownerFocusListener = new WindowAdapter() {
         @Override
@@ -847,10 +855,9 @@ public final class EmbedSocketX11 implements EmbedSocket {
     }
 
     private void closeImpl(boolean destroyClient) {
-        if (closed) {
+        if (!closed.compareAndSet(false, true)) {
             return;
         }
-        closed = true;
         // owner.dispose() posts window (de)activation events onto the AWT
         // EventQueue asynchronously, and in a reuseForks Surefire run that
         // queue's thread outlives any one test method - a stale listener

@@ -64,6 +64,10 @@ interface does not carry. The full list of what stays backend-specific is in
   one indivisible step. Commands (moving a window, setting focus) are
   skipped once the connection is gone; queries, which have no honest value
   to fall back on, throw `IllegalStateException` instead.
+- Closing an X11 `EmbedSocket`, or an `X11Display` itself, twice is now a
+  no-op rather than a second teardown of the same resources. A socket opened
+  on a `Canvas` can be closed by its own `HierarchyListener` and by its
+  caller at the same moment.
 
 ### Published artifacts
 
