@@ -6,6 +6,9 @@ import com.sun.jna.platform.unix.X11.XEvent;
 import com.sun.jna.platform.unix.X11.XFocusChangeEvent;
 import cz.loplex.jembetter.common.FocusListener;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -40,6 +43,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * connections aren't safe to share across threads without XInitThreads.
  */
 public final class WindowFocusWatcher implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(WindowFocusWatcher.class);
 
     private final X11Display display;
     private final Thread thread;
@@ -118,7 +123,7 @@ public final class WindowFocusWatcher implements AutoCloseable {
             callback.focusChanged(focused);
         } catch (RuntimeException e) {
             // A misbehaving callback must not take the watcher thread down.
-            e.printStackTrace(System.err);
+            LOG.warn("A window-focus callback threw", e);
         }
     }
 

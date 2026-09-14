@@ -7,6 +7,9 @@ import com.sun.jna.platform.win32.WinUser.GUITHREADINFO;
 import com.sun.jna.ptr.IntByReference;
 import cz.loplex.jembetter.common.FocusListener;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -51,6 +54,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * Windows callback under an OS-imposed time budget).
  */
 public final class Win32FocusWatcher implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(Win32FocusWatcher.class);
 
     private static final long POLL_INTERVAL_MILLIS = 50;
 
@@ -116,7 +121,7 @@ public final class Win32FocusWatcher implements AutoCloseable {
             callback.focusChanged(focused);
         } catch (RuntimeException e) {
             // A misbehaving callback must not take the watcher thread down.
-            e.printStackTrace(System.err);
+            LOG.warn("A window-focus callback threw", e);
         }
     }
 

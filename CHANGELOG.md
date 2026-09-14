@@ -57,6 +57,14 @@ interface does not carry. The full list of what stays backend-specific is in
   notification queued before the socket closed is dropped, not thrown on
   AWT's event thread.
 
+- Everything this library reports about a failure now goes through slf4j,
+  which it already depended on, instead of `printStackTrace(System.err)`.
+  There were 14 of those, in every watcher and both accept loops, against a
+  single class that used the logger. A host embedding this had no way to
+  route, level or silence any of it. What is logged and what is swallowed is
+  unchanged — a callback that throws still must not take a watcher thread
+  down.
+
 ### Fixed
 
 - A JVM crash (`SIGSEGV` inside Xlib) when an X11 display connection was

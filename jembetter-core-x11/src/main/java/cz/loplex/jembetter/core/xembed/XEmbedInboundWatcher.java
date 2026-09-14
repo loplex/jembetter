@@ -10,6 +10,9 @@ import cz.loplex.jembetter.core.x11.ButtonGrab;
 import cz.loplex.jembetter.core.x11.X11Display;
 import cz.loplex.jembetter.core.x11.X11Ext;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.function.BiConsumer;
 import java.util.function.LongConsumer;
 
@@ -41,6 +44,8 @@ import java.util.function.LongConsumer;
  * for {@code XInitThreads} to have been called first.
  */
 public final class XEmbedInboundWatcher implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(XEmbedInboundWatcher.class);
 
     private final X11Display display;
     private final Window embedderWindow;
@@ -172,7 +177,7 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
             onClientMessage.accept(XEmbedMessage.fromOpcode(opcode), detail);
         } catch (RuntimeException e) {
             // A misbehaving handler must not take the watcher thread down.
-            e.printStackTrace(System.err);
+            LOG.warn("An inbound _XEMBED ClientMessage handler threw", e);
         }
     }
 
@@ -185,7 +190,7 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
         try {
             onEmbeddedInfoChanged.accept(windowId);
         } catch (RuntimeException e) {
-            e.printStackTrace(System.err);
+            LOG.warn("An _XEMBED_INFO PropertyNotify handler threw", e);
         }
     }
 
@@ -202,7 +207,7 @@ public final class XEmbedInboundWatcher implements AutoCloseable {
             onButtonPress.run();
         } catch (RuntimeException e) {
             // A misbehaving handler must not take the watcher thread down.
-            e.printStackTrace(System.err);
+            LOG.warn("A button-press handler threw", e);
         } finally {
             ButtonGrab.replay(display);
         }

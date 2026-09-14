@@ -13,6 +13,9 @@ import com.sun.jna.platform.win32.WinUser.LowLevelMouseProc;
 import com.sun.jna.platform.win32.WinUser.MSG;
 import com.sun.jna.platform.win32.WinUser.MSLLHOOKSTRUCT;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -55,6 +58,8 @@ import java.util.concurrent.TimeUnit;
  * can't be exercised there).
  */
 public final class Win32ClickWatcher implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(Win32ClickWatcher.class);
 
     private static final int WH_MOUSE_LL = 14;
     private static final int WM_LBUTTONDOWN = 0x0201;
@@ -158,7 +163,7 @@ public final class Win32ClickWatcher implements AutoCloseable {
             callback.run();
         } catch (RuntimeException e) {
             // A misbehaving callback must not take the dispatch thread down.
-            e.printStackTrace(System.err);
+            LOG.warn("A click callback threw", e);
         }
     }
 

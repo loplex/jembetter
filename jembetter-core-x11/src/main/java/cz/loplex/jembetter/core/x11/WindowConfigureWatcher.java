@@ -6,6 +6,9 @@ import com.sun.jna.platform.unix.X11.XConfigureEvent;
 import com.sun.jna.platform.unix.X11.XEvent;
 import cz.loplex.jembetter.common.SizeListener;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -24,6 +27,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * connections aren't safe to share across threads without XInitThreads.
  */
 public final class WindowConfigureWatcher implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(WindowConfigureWatcher.class);
 
     private final X11Display display;
     private final Thread thread;
@@ -84,7 +89,7 @@ public final class WindowConfigureWatcher implements AutoCloseable {
                 callback.resized(event.xconfigure.width, event.xconfigure.height);
             } catch (RuntimeException e) {
                 // A misbehaving callback must not take the watcher thread down.
-                e.printStackTrace(System.err);
+                LOG.warn("A window-resized callback threw", e);
             }
         }
     }

@@ -4,6 +4,9 @@ import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef.HWND;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongConsumer;
@@ -31,6 +34,8 @@ import java.util.function.LongConsumer;
  * EmbedPlugWin32} uses it for, which doesn't flip that fast.
  */
 public final class Win32ReparentWatcher implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(Win32ReparentWatcher.class);
 
     private static final long POLL_INTERVAL_MILLIS = 50;
 
@@ -122,7 +127,7 @@ public final class Win32ReparentWatcher implements AutoCloseable {
             notification.run();
         } catch (RuntimeException e) {
             // A misbehaving callback must not take the watcher thread down.
-            e.printStackTrace(System.err);
+            LOG.warn("A window-reparented callback threw", e);
         }
     }
 

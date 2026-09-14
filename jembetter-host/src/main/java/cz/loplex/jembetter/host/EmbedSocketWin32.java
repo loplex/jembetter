@@ -3,6 +3,9 @@ package cz.loplex.jembetter.host;
 import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.awt.Canvas;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -73,6 +76,8 @@ import java.time.Duration;
  * IllegalStateException} for that case).
  */
 public final class EmbedSocketWin32 implements EmbedSocket {
+
+    private static final Logger LOG = LoggerFactory.getLogger(EmbedSocketWin32.class);
 
     private final Win32EmbedCore core;
     private volatile boolean listening = false;
@@ -183,7 +188,7 @@ public final class EmbedSocketWin32 implements EmbedSocket {
                     // loop down; the socket keeps listening for the next
                     // client.
                     closeQuietly(accepted);
-                    e.printStackTrace(System.err);
+                    LOG.warn("A client's pid handshake failed; still listening for the next client", e);
                     continue;
                 }
                 // Kept open, unlike embed(Path)'s one-shot handshake: this is

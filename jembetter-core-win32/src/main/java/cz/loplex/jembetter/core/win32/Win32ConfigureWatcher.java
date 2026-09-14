@@ -6,6 +6,9 @@ import com.sun.jna.platform.win32.WinDef.HWND;
 import com.sun.jna.platform.win32.WinDef.RECT;
 import cz.loplex.jembetter.common.SizeListener;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -27,6 +30,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * watchers do.
  */
 public final class Win32ConfigureWatcher implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(Win32ConfigureWatcher.class);
 
     private static final long POLL_INTERVAL_MILLIS = 50;
 
@@ -69,7 +74,7 @@ public final class Win32ConfigureWatcher implements AutoCloseable {
                 callback.resized((int) current[0], (int) current[1]);
             } catch (RuntimeException e) {
                 // A misbehaving callback must not take the watcher thread down.
-                e.printStackTrace(System.err);
+                LOG.warn("A window-resized callback threw", e);
             }
         }
     }

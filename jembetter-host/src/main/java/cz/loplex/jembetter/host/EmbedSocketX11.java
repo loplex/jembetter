@@ -20,6 +20,9 @@ import cz.loplex.jembetter.core.xembed.XEmbedInfoProperty;
 import cz.loplex.jembetter.core.xembed.XEmbedMessage;
 import cz.loplex.jembetter.core.xembed.XEmbedMessages;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.awt.Canvas;
 import java.awt.Frame;
 import java.awt.event.ComponentAdapter;
@@ -70,6 +73,8 @@ import java.util.function.Supplier;
  * window a genuine X11 child of the placeholder itself.
  */
 public final class EmbedSocketX11 implements EmbedSocket {
+
+    private static final Logger LOG = LoggerFactory.getLogger(EmbedSocketX11.class);
 
     private static final Duration OPAQUE_POLL_INTERVAL = Duration.ofMillis(20);
     private static final int OPAQUE_MAX_ATTEMPTS = 100;
@@ -410,7 +415,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
                     // loop down; the socket keeps listening for the next
                     // client.
                     closeQuietly(accepted);
-                    e.printStackTrace(System.err);
+                    LOG.warn("A client's pid handshake failed; still listening for the next client", e);
                     continue;
                 }
                 // Kept open, unlike embed(Path)'s one-shot handshake: this is
@@ -426,7 +431,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
                 } catch (RuntimeException e) {
                     closeQuietly(accepted);
                     controlChannel = null;
-                    e.printStackTrace(System.err);
+                    LOG.warn("Embedding an accepted client failed; still listening for the next client", e);
                     continue;
                 }
                 onClientEmbedded.run();
