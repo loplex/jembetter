@@ -49,6 +49,9 @@ socket.swapClient(clientPid);        // detachClient() + embed(clientPid)
 socket.swapClientOpaque(windowId);   // detachClient() + embedOpaque(windowId)
 ```
 
+`EmbedSocketX11#open` likewise rejects a second call rather than leaking the
+first socket window and its watcher thread.
+
 Who this breaks, and who it does not:
 
 - **Implementing `EmbedSocket` yourself** — source-incompatible, for the same

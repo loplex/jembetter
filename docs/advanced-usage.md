@@ -53,7 +53,8 @@ Both release the outgoing client back to the desktop as a live top-level
 window, and neither fires `onClientDetached` — that callback reports a detach
 the host did not ask for. The detach half is a no-op when nothing is embedded,
 so a caller that doesn't know whether the socket is occupied can use these
-unconditionally.
+unconditionally. `EmbedSocketX11#open` likewise refuses a second call instead
+of leaking the first socket window and its watcher thread.
 
 `socket.tryDestroy()` is `close()`'s destroying counterpart: a still-embedded
 client's window is destroyed rather than released back as a live top-level
@@ -253,10 +254,11 @@ A closed socket rejects `resize`, `setBounds`, `listen`, `embed` and
 `focusClient` or `detachClient`, which document themselves as no-ops when
 nothing is embedded — after a close, nothing is.
 
-The one-client guard above reads the same state the call is about to change,
-so it reports the ordinary sequential mistake rather than arbitrating between
-two threads embedding into one socket at the same time — which nothing else on
-the embed path is prepared for either. Embed from one thread at a time.
+The one-client and one-`open()` guards above read the same state the call is
+about to change, so they report the ordinary sequential mistake rather than
+arbitrating between two threads embedding into one socket at the same time —
+which nothing else on the embed path is prepared for either. Embed from one
+thread at a time.
 
 **Calling out.** No callback this library invokes runs on AWT's event
 thread. If a callback touches Swing, it has to get there itself, with

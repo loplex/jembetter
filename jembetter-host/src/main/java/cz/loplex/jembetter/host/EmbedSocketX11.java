@@ -189,6 +189,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
 
     /** Creates the underlying X11 window at the given screen bounds and starts watching it for inbound XEmbed messages. */
     public void open(int x, int y, int width, int height) {
+        requireNotOpen();
         windowId = RawWindow.createOverrideRedirect(display, x, y, width, height);
         initInboundWatcher(width, height);
     }
@@ -250,6 +251,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      * here).
      */
     public void open(Canvas hostCanvas) {
+        requireNotOpen();
         long canvasWindowId = CanvasNativeHandle.extract(hostCanvas);
         windowId = RawWindow.createChild(display, canvasWindowId, hostCanvas.getWidth(), hostCanvas.getHeight());
         initInboundWatcher(hostCanvas.getWidth(), hostCanvas.getHeight());
@@ -951,6 +953,24 @@ public final class EmbedSocketX11 implements EmbedSocket {
         if (embeddedWindowId >= 0) {
             throw new IllegalStateException("A client is already embedded in this socket; call detachClient() first, "
                     + "or swapClient(long)/swapClientOpaque(long) to replace it in one step");
+        }
+    }
+
+    /**
+     * Rejects a second {@code open}. Without this, the second call
+     * overwrote {@code windowId} — leaking the first X11 window — and built
+     * a second {@link XEmbedInboundWatcher} over the first, leaking its
+     * thread and leaving it polling a window nobody would use again.
+     *
+     * <p>{@code windowId} keeps its value past {@link #close()}, so this
+     * also catches an attempt to reopen a closed socket, which is not
+     * something this type supports: the X11 connection the window was
+     * created on is gone. That case reports itself as closed rather than as
+     * open, since that is the more useful half of the truth.
+     */
+    private void requireNotOpen() {
+        if (windowId >= 0) {
+            throw new IllegalStateException(closed.get() ? "This socket is closed" : "This socket is already open");
         }
     }
 

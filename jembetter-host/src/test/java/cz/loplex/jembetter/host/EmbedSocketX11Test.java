@@ -684,6 +684,31 @@ class EmbedSocketX11Test {
         }
     }
 
+    /**
+     * A second {@code open} used to overwrite {@code windowId}, leaking the
+     * first X11 window, and build a second inbound watcher over it - leaking
+     * that thread and leaving the first one polling a window nobody would
+     * ever use again.
+     */
+    @Test
+    void aSecondOpenIsRejectedInsteadOfLeakingTheFirstWindow() throws InterruptedException {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketX11Test owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+        Thread.sleep(200);
+
+        socket = new EmbedSocketX11(owner);
+        socket.open(canvas);
+
+        assertThrows(IllegalStateException.class, () -> socket.open(canvas),
+                "a second open(Canvas) was accepted");
+        assertThrows(IllegalStateException.class, () -> socket.open(0, 0, 120, 120),
+                "a second open(int, int, int, int) was accepted");
+    }
+
     @Test
     void aClosedSocketRejectsCallsInsteadOfSilentlyDoingNothing() {
         Canvas canvas = new Canvas();
