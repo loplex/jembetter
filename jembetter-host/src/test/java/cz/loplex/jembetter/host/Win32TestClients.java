@@ -32,8 +32,20 @@ final class Win32TestClients {
         return processBuilder.start();
     }
 
+    /**
+     * Waits for a fake client's own top-level window, for as long as a second
+     * JVM plausibly needs to start and publish one.
+     *
+     * <p>The wait is generous on purpose. It is not asserting anything about
+     * how fast a window appears - a test that cares measures that itself -
+     * it is only keeping a cold JVM start from being reported as a missing
+     * window. Five seconds was not enough: one run in ten under Wine timed
+     * out on the first, cold iteration of a class, and the diagnostic it
+     * printed showed the window present and visible, having arrived just
+     * after the deadline.
+     */
     static long waitForOwnWindow(long pid) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
         do {
             List<Long> found = Win32WindowFinder.findApplicationWindowsByPid(pid);
             if (!found.isEmpty()) {
