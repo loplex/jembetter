@@ -46,6 +46,18 @@ interface does not carry. The full list of what stays backend-specific is in
   watch on an already-embedded window, which is a `WS_CHILD` and so no longer
   enumerable as a top-level window.
 
+### Fixed
+
+- A JVM crash (`SIGSEGV` inside Xlib) when an X11 host's owner window gained
+  or lost focus at the moment its `EmbedSocket` was being closed. The focus
+  callback could be waiting for the lock that guards every native call at the
+  instant the display connection was freed underneath it, and then made its
+  call against freed memory — a process-level crash rather than an exception
+  the host could catch. Native calls that can race a teardown now go through
+  `X11Display.ifOpen`, which checks the connection is still open and makes
+  the call as one indivisible step, and closing a connection twice is now a
+  no-op instead of a double free.
+
 ### Published artifacts
 
 Five modules, all under the `cz.loplex` group id:

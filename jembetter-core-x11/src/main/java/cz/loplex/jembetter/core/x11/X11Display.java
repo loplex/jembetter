@@ -3,6 +3,8 @@ package cz.loplex.jembetter.core.x11;
 import com.sun.jna.platform.unix.X11.Display;
 import com.sun.jna.platform.unix.X11.Window;
 
+import java.util.function.Consumer;
+
 /**
  * Owns a connection to an X11 display, opened via {@code XOpenDisplay}.
  *
@@ -31,7 +33,10 @@ import com.sun.jna.platform.unix.X11.Window;
  * to call {@link cz.loplex.jembetter.core.xembed.XEmbedMessages} or
  * {@link cz.loplex.jembetter.core.xembed.XEmbedInfoProperty}, which take a
  * raw {@code Display} since they're also used against a caller's own
- * single-threaded connection in tests) must do the same at the call site.
+ * single-threaded connection in tests) must do the same at the call site —
+ * or, when the connection can be closed out from under that call, go
+ * through {@link #ifOpen} instead, which takes the lock and checks the
+ * connection is still open as one indivisible step.
  * This only serializes Xlib calls jembetter itself makes against each
  * other; it cannot serialize against whatever AWT's own X11 backend is
  * doing concurrently on its own connection, which is outside this
@@ -45,6 +50,8 @@ public final class X11Display implements AutoCloseable {
     private static volatile boolean threadsInitialized = false;
 
     private final Display display;
+    /** Guarded by {@link #GLOBAL_LOCK} — the same lock every native call takes, which is what makes {@link #ifOpen} work. */
+    private boolean closed = false;
 
     private X11Display(Display display) {
         this.display = display;
@@ -78,9 +85,40 @@ public final class X11Display implements AutoCloseable {
         }
     }
 
+    /**
+     * Runs {@code action} against this connection's native {@code Display*}
+     * under {@link #GLOBAL_LOCK}, or does nothing at all if the connection
+     * has already been {@link #close() closed}.
+     *
+     * <p>This is how a caller that reaches for {@link #raw()} from a thread
+     * that may still be running when another thread closes the connection —
+     * an AWT listener callback, a watcher loop, a public method racing a
+     * teardown — must make its native call. Unregistering such a callback
+     * before closing is not enough on its own: one that has already started
+     * keeps running, and since it takes the same lock {@code close()} does,
+     * it can be parked on that monitor at the very moment the {@code
+     * Display*} is freed and then call into freed memory. That is a JVM
+     * crash inside native Xlib, not a catchable exception. Checking the flag
+     * under the lock that guards the call leaves only two possible
+     * orderings: the whole call runs before the close, or it does not run.
+     */
+    public void ifOpen(Consumer<Display> action) {
+        synchronized (GLOBAL_LOCK) {
+            if (closed) {
+                return;
+            }
+            action.accept(display);
+        }
+    }
+
+    /** Closes the connection. Idempotent, and every later {@link #ifOpen} is a no-op. */
     @Override
     public void close() {
         synchronized (GLOBAL_LOCK) {
+            if (closed) {
+                return;
+            }
+            closed = true;
             X11Ext.INSTANCE.XCloseDisplay(display);
         }
     }

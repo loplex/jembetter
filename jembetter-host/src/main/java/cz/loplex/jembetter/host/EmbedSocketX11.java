@@ -1,6 +1,5 @@
 package cz.loplex.jembetter.host;
 
-import com.sun.jna.platform.unix.X11.Display;
 import cz.loplex.jembetter.common.CanvasNativeHandle;
 import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
@@ -39,7 +38,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
-import java.util.Optional;
 import java.util.function.IntFunction;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -398,10 +396,8 @@ public final class EmbedSocketX11 implements EmbedSocket {
         Reparenting.reparent(display, clientWindowId, windowId, 0, 0);
         embeddedWindowId = clientWindowId;
         followSizeIntoEmbeddedWindow();
-        synchronized (X11Display.GLOBAL_LOCK) {
-            XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
-                    XEmbedInfo.PROTOCOL_VERSION);
-        }
+        display.ifOpen(raw -> XEmbedMessages.send(raw, clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
+                XEmbedInfo.PROTOCOL_VERSION));
         InputFocus.set(display, clientWindowId);
         sendActivated(owner.isFocused());
         deathWatcher.watch(clientWindowId, this::handleClientDetached);
@@ -464,10 +460,8 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     public void embedOpaque(long clientWindowId, Duration pollInterval, int maxAttempts) {
         requireOpen();
-        synchronized (X11Display.GLOBAL_LOCK) {
-            XEmbedInfoProperty.write(display.raw(), clientWindowId,
-                    new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
-        }
+        display.ifOpen(raw -> XEmbedInfoProperty.write(raw, clientWindowId,
+                new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED)));
         // watchForSizeContest before the reparent, not after - see its
         // Javadoc for why the ordering itself is the fix.
         watchForSizeContest(clientWindowId);
@@ -476,10 +470,8 @@ public final class EmbedSocketX11 implements EmbedSocket {
         embeddedWindowId = clientWindowId;
         followSizeIntoEmbeddedWindow();
         waitForReparentConfirmed(clientWindowId, pollInterval, maxAttempts);
-        synchronized (X11Display.GLOBAL_LOCK) {
-            XEmbedMessages.send(display.raw(), clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
-                    XEmbedInfo.PROTOCOL_VERSION);
-        }
+        display.ifOpen(raw -> XEmbedMessages.send(raw, clientWindowId, XEmbedMessage.EMBEDDED_NOTIFY, 0, windowId,
+                XEmbedInfo.PROTOCOL_VERSION));
         InputFocus.set(display, clientWindowId);
         sendActivated(owner.isFocused());
         deathWatcher.watch(clientWindowId, this::handleClientDetached);
@@ -648,10 +640,8 @@ public final class EmbedSocketX11 implements EmbedSocket {
         if (id < 0) {
             return;
         }
-        synchronized (X11Display.GLOBAL_LOCK) {
-            XEmbedMessages.send(display.raw(), id, modal ? XEmbedMessage.MODALITY_ON : XEmbedMessage.MODALITY_OFF, 0,
-                    0, 0);
-        }
+        display.ifOpen(raw -> XEmbedMessages.send(raw, id, modal ? XEmbedMessage.MODALITY_ON
+                : XEmbedMessage.MODALITY_OFF, 0, 0, 0));
         sendControlMessage(ControlMessage.of(ControlMessage.Type.MODALITY, modal));
     }
 
@@ -702,17 +692,15 @@ public final class EmbedSocketX11 implements EmbedSocket {
             return;
         }
         InputFocus.set(display, id);
-        synchronized (X11Display.GLOBAL_LOCK) {
-            XEmbedMessages.send(display.raw(), id, XEmbedMessage.FOCUS_IN, XEmbedFocus.CURRENT, 0, 0);
-        }
+        display.ifOpen(raw -> XEmbedMessages.send(raw, id, XEmbedMessage.FOCUS_IN, XEmbedFocus.CURRENT, 0, 0));
     }
 
     private void handleEmbeddedInfoChanged(long clientWindowId) {
-        Optional<XEmbedInfoProperty.Value> info;
-        synchronized (X11Display.GLOBAL_LOCK) {
-            info = XEmbedInfoProperty.read(display.raw(), clientWindowId);
-        }
-        info.ifPresent(value -> WindowGeometry.setMapped(display, clientWindowId, value.mapped()));
+        // Read and act on the result inside the same ifOpen: this runs on
+        // the inbound watcher's thread, which close() only joins with a
+        // timeout, so the connection must not be freed between the two.
+        display.ifOpen(raw -> XEmbedInfoProperty.read(raw, clientWindowId)
+                .ifPresent(value -> WindowGeometry.setMapped(display, clientWindowId, value.mapped())));
     }
 
     private void handleClientDetached(long detachedWindowId) {
@@ -738,8 +726,10 @@ public final class EmbedSocketX11 implements EmbedSocket {
         if (id < 0) {
             return;
         }
-        Display raw = display.raw();
-        synchronized (X11Display.GLOBAL_LOCK) {
+        // ifOpen rather than a bare GLOBAL_LOCK block: this runs on the AWT
+        // event thread, and close() removing the listener cannot stop a
+        // callback that has already started - see X11Display#ifOpen.
+        display.ifOpen(raw -> {
             if (active) {
                 XEmbedMessages.send(raw, id, XEmbedMessage.FOCUS_IN, XEmbedFocus.CURRENT, 0, 0);
                 XEmbedMessages.send(raw, id, XEmbedMessage.WINDOW_ACTIVATE, 0, 0, 0);
@@ -747,7 +737,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
                 XEmbedMessages.send(raw, id, XEmbedMessage.FOCUS_OUT, 0, 0, 0);
                 XEmbedMessages.send(raw, id, XEmbedMessage.WINDOW_DEACTIVATE, 0, 0, 0);
             }
-        }
+        });
         sendControlMessage(ControlMessage.of(ControlMessage.Type.ACTIVATION, active));
     }
 
