@@ -200,8 +200,9 @@ public final class EmbedSocketWin32 implements EmbedSocket {
                     }
                     throw new UncheckedIOException(e);
                 }
+                long clientPid;
                 try {
-                    core.embed(PidHandshake.receive(accepted));
+                    clientPid = PidHandshake.receive(accepted);
                 } catch (RuntimeException e) {
                     // A failed/aborted handshake must not take the accept
                     // loop down; the socket keeps listening for the next
@@ -212,13 +213,31 @@ public final class EmbedSocketWin32 implements EmbedSocket {
                 }
                 // Kept open, unlike embed(Path)'s one-shot handshake: this is
                 // this client's control channel for the rest of its embed,
-                // e.g. for setModal(boolean) to write into. Closed once this
-                // client detaches, below.
+                // e.g. for setModal(boolean) to write into. Set before
+                // embed(), as on the X11 backend: the embed is what the client
+                // sees, and it reacts to it - so assigning afterwards leaves an
+                // interval in which the client considers itself embedded while
+                // setModal is still taking its "no channel" early return and
+                // dropping the frame. Measured at about one run in seven by
+                // win32-real-machine-checks/SocketClientWin32Check, whose
+                // modality step reported on=false off=true: the MODALITY=true
+                // written on seeing the client embedded was silently dropped,
+                // and the MODALITY=false five seconds later landed. Closed once
+                // this client detaches, below.
                 controlChannel = accepted;
                 controlChannelReaderThread = new Thread(() -> readControlChannel(accepted),
                         "jembetter-win32-embed-socket-control-reader");
                 controlChannelReaderThread.setDaemon(true);
                 controlChannelReaderThread.start();
+                try {
+                    core.embed(clientPid);
+                } catch (RuntimeException e) {
+                    closeQuietly(accepted);
+                    controlChannel = null;
+                    joinControlChannelReader();
+                    LOG.warn("Embedding an accepted client failed; still listening for the next client", e);
+                    continue;
+                }
                 onClientEmbedded.run();
                 awaitDetach();
                 closeQuietly(controlChannel);
