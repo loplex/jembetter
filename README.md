@@ -156,6 +156,28 @@ registry arrived that way. Choose the ref deliberately — what lands in the
 registry names the commit it was built from, and nothing re-resolves that
 afterwards.
 
+### Which commit a jar came from
+
+Every published jar's manifest carries it, so an artifact on its own answers
+the question:
+
+```sh
+unzip -p jembetter-host-0.2.0-SNAPSHOT.jar META-INF/MANIFEST.MF | grep SCM-
+```
+
+```
+SCM-Revision: <the full 40-character commit id>
+SCM-Dirty: false
+```
+
+`SCM-Dirty: true` means the working tree had uncommitted changes when that jar
+was built, so the revision names a commit the jar does not exactly match — a
+hand-built artifact, not one from CI. A jar built outside a git repository at
+all, from an unpacked sources jar say, reports `unknown` for both.
+
+Artifacts published before this was added carry neither field. The one
+snapshot in that position is tagged `0.1.0-SNAPSHOT`.
+
 Release versions on GitHub Packages are immutable: a given version uploads
 exactly once, and a re-upload is rejected with HTTP 409. A botched release has
 to be superseded by a new version, not replaced. `-SNAPSHOT` versions are

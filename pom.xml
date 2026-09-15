@@ -189,8 +189,70 @@
                      give two modules the same name and clash on the module
                      path. -->
                 <Automatic-Module-Name>${automatic.module.name}</Automatic-Module-Name>
+                <!-- Which commit this jar was built from, and whether the tree
+                     was clean when it was. Nothing else in a published
+                     artifact says: Implementation-Version is the version
+                     string, true of every build of that version, so tracing a
+                     published snapshot back to its commit meant reading the
+                     publish workflow's run history - which lives off the clone
+                     and expires.
+
+                     SCM-Revision is the spelling Maven's Reproducible Builds
+                     effort settled on. The JAR specification reserves no name
+                     for this, so it is a convention rather than a standard.
+
+                     Deliberately no Build-Timestamp beside it: a timestamp
+                     makes two builds of one commit differ, which is the thing
+                     reproducible-build guidance exists to prevent.
+
+                     Built outside a git repository - from an unpacked sources
+                     jar, say - both values come out empty rather than failing
+                     the build. -->
+                <SCM-Revision>${git.commit.id}</SCM-Revision>
+                <SCM-Dirty>${git.dirty}</SCM-Dirty>
               </manifestEntries>
             </archive>
+          </configuration>
+        </plugin>
+        <!-- Resolves the two git.* properties the manifest above interpolates.
+
+             A plugin rather than a property passed in by CI, because README's
+             "Publishing" section documents a by-hand `mvn deploy` as a
+             supported route, and that route would carry whatever the property
+             defaulted to - an artifact confidently naming the wrong commit is
+             worse than one naming none.
+
+             Note there is deliberately no fallback declared in <properties>
+             for these two names. A property declared there is not overwritten
+             by what the plugin injects, so declaring one silently wins and
+             every jar ships that fallback instead of a revision. -->
+        <plugin>
+          <groupId>io.github.git-commit-id</groupId>
+          <artifactId>git-commit-id-maven-plugin</artifactId>
+          <version>9.0.1</version>
+          <configuration>
+            <!-- A source tree with no .git - an unpacked sources jar, a
+                 release tarball - still builds; the manifest entries come out
+                 empty. No dotGitDirectory is set: the plugin walks up from the
+                 module to find the reactor's own .git, so every module
+                 resolves the same repository without being told where it is. -->
+            <failOnNoGitDirectory>false</failOnNoGitDirectory>
+            <!-- Never reach for a remote: the plugin has options that would,
+                 and a build must not depend on network reachability. -->
+            <offline>true</offline>
+            <!-- The manifest is the only consumer, so no git.properties file
+                 goes into the jar beside it. -->
+            <generateGitPropertiesFile>false</generateGitPropertiesFile>
+            <!-- The plugin computes several dozen properties by default,
+                 some of which shell out to `git describe`. Two are used.
+
+                 git.commit.id, not git.commit.id.full - the latter exists only
+                 under commitIdGenerationMode=full, and naming a property that
+                 is never set publishes an empty field rather than failing. -->
+            <includeOnlyProperties>
+              <includeOnlyProperty>^git\.commit\.id$</includeOnlyProperty>
+              <includeOnlyProperty>^git\.dirty$</includeOnlyProperty>
+            </includeOnlyProperties>
           </configuration>
         </plugin>
       </plugins>
@@ -202,6 +264,21 @@
         the local repo (~/.m2) or from GitHub Packages (see
         <distributionManagement> above) has real IDE source/doc lookup.
       -->
+      <plugin>
+        <groupId>io.github.git-commit-id</groupId>
+        <artifactId>git-commit-id-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>resolve-scm-revision</id>
+            <!-- initialize, so the properties exist long before package
+                 interpolates them into the manifest. -->
+            <phase>initialize</phase>
+            <goals>
+              <goal>revision</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-source-plugin</artifactId>
@@ -230,6 +307,29 @@
   </build>
 
   <profiles>
+    <!-- Built outside a git repository - an unpacked sources jar, a release
+         tarball - nothing resolves the two git.* properties the jar manifest
+         interpolates, and they would come out empty. Name them here instead,
+         so the manifest says "unknown" rather than carrying a blank field.
+
+         It has to be a profile rather than a plain <properties> entry: a
+         property declared there is NOT overwritten by what
+         git-commit-id-maven-plugin injects, so it would win in every build and
+         no jar would ever carry a revision. Gated on the repository being
+         absent, it only ever applies when there is nothing to lose. -->
+    <profile>
+      <id>no-git-metadata</id>
+      <activation>
+        <file>
+          <missing>${maven.multiModuleProjectDirectory}/.git</missing>
+        </file>
+      </activation>
+      <properties>
+        <git.commit.id>unknown</git.commit.id>
+        <git.dirty>unknown</git.dirty>
+      </properties>
+    </profile>
+
     <!-- The Xvfb/openbox wrapper only makes sense on Linux/X11 - Windows has
          no DISPLAY, no Xvfb, and can't launch a shebang script as the forked
          test JVM's executable in the first place (CreateProcess needs a real

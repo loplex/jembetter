@@ -67,6 +67,12 @@ to begin with.
   link inside a fence is usually an example; a SHA inside one is usually real
   output naming a real commit, and it goes stale the same way.
 
+  This costs something, and the cost is worth naming: documentation showing
+  sample output cannot paste a realistic id, invented or not, since the rule
+  reads the shape and never asks whether it resolves. Write the placeholder as
+  a placeholder — `<the full 40-character commit id>` — which reads better in
+  a manual anyway.
+
 ## One residual dependency
 
 The range `origin/main..HEAD` still needs enough history to find the merge
