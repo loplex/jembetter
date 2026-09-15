@@ -5,6 +5,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
 
+import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -14,6 +15,8 @@ import static cz.loplex.jembetter.core.win32.Win32TestWindows.createVisibleTopLe
 import static cz.loplex.jembetter.core.win32.Win32TestWindows.destroyWindow;
 import static cz.loplex.jembetter.core.win32.Win32TestWindows.rectOf;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -117,5 +120,47 @@ class Win32ClickWatcherTest {
         assertTrue(hits.get() >= (int) (burst * 0.8),
                 "only " + hits.get() + "/" + burst + " clicks reached the callback - the "
                         + "WH_MOUSE_LL hook was likely dropped for overrunning LowLevelHooksTimeout");
+    }
+
+    /**
+     * A budget that runs out is reported as a budget, not as a failed hook.
+     *
+     * <p>The two want opposite responses — one means wait longer, the other
+     * means the hook is not going to install — and until 2026-09-15 they
+     * produced the same {@link IllegalStateException} from the same branch.
+     * That mattered in practice: the 5 s default failed 2 of 4 full runs of
+     * {@code jembetter-host} on a machine ninety minutes into running test
+     * suites, and read as a defect rather than as a slow machine.
+     *
+     * <p>Skipped rather than failed if the hook installs inside a budget this
+     * small, which is possible if unlikely: this asserts on which message a
+     * timeout produces, so a run that did not time out has nothing to say.
+     */
+    @Test
+    void aBudgetThatRunsOutIsReportedAsABudgetRatherThanAFailedHook() {
+        IllegalStateException thrown = null;
+        try {
+            new Win32ClickWatcher(Duration.ZERO).close();
+        } catch (IllegalStateException e) {
+            thrown = e;
+        }
+        assumeTrue(thrown != null, "the hook installed within a zero budget; nothing to assert on");
+        String message = thrown.getMessage();
+        assertTrue(message.contains("did not report its hook"),
+                () -> "a budget running out should say so; got: " + message);
+        assertFalse(message.contains("failed with error"),
+                () -> "a budget running out was reported as SetWindowsHookEx failing; got: " + message);
+    }
+
+    /** The install budget is an argument, so it is rejected at the call that got it wrong. */
+    @Test
+    void aNullInstallTimeoutIsRejected() {
+        assertThrows(NullPointerException.class, () -> new Win32ClickWatcher(null));
+    }
+
+    /** A generous budget behaves exactly as the no-argument constructor does. */
+    @Test
+    void anExplicitBudgetInstallsTheHookTheSameWay() {
+        assertDoesNotThrow(() -> new Win32ClickWatcher(Duration.ofSeconds(30)).close());
     }
 }

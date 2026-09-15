@@ -17,7 +17,9 @@ import cz.loplex.jembetter.common.BackgroundThread;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -69,16 +71,21 @@ public final class Win32ClickWatcher implements AutoCloseable {
     private static final int WM_QUIT = 0x0012;
     private static final int HC_ACTION = 0;
     /**
-     * How long the constructor waits for the pump thread to report its hook.
-     * Generous on purpose, and matched to the 5s the rest of the library
-     * allows for "the window system should answer promptly but might not":
-     * under Wine, {@code SetWindowsHookEx} has been measured taking over a
-     * second to return while several test forks are running. The wait exists
-     * to close a startup race, not to time the call, so the budget has to
-     * cover the slowest environment this runs in — a value that is too
-     * small does not report a problem, it manufactures one.
+     * How long {@link #Win32ClickWatcher()} waits for the pump thread to
+     * report its hook. Matched to the 5s the rest of the library allows for
+     * "the window system should answer promptly but might not": under Wine,
+     * {@code SetWindowsHookEx} has been measured taking over a second to
+     * return while several test forks are running. The wait exists to close a
+     * startup race, not to time the call, so the budget has to cover the
+     * slowest environment this runs in — a value that is too small does not
+     * report a problem, it manufactures one.
+     *
+     * <p>It has been too small at least once: 5s failed 2 of 4 full runs of
+     * {@code jembetter-host} on a machine ninety minutes into running test
+     * suites. Use {@link #Win32ClickWatcher(Duration)} where that is the
+     * normal condition rather than raising this for everyone.
      */
-    private static final int INSTALL_TIMEOUT_SECONDS = 5;
+    public static final Duration DEFAULT_INSTALL_TIMEOUT = Duration.ofSeconds(5);
 
     private final Map<Long, Runnable> callbacks = new ConcurrentHashMap<>();
     private final ExecutorService dispatch =
@@ -89,6 +96,8 @@ public final class Win32ClickWatcher implements AutoCloseable {
             });
     private final Thread pumpThread;
     private final CountDownLatch installed = new CountDownLatch(1);
+    /** Kept so close() waits on the same budget the constructor did, not a second guess at one. */
+    private final Duration installTimeout;
 
     // Strong reference: JNA collects an unreferenced callback, which crashes
     // the process the next time Windows invokes the hook.
@@ -99,27 +108,62 @@ public final class Win32ClickWatcher implements AutoCloseable {
     private volatile int pumpThreadId;
     private volatile boolean running = true;
 
+    /** A watcher with the {@linkplain #DEFAULT_INSTALL_TIMEOUT default install budget}. */
     public Win32ClickWatcher() {
+        this(DEFAULT_INSTALL_TIMEOUT);
+    }
+
+    /**
+     * A watcher that waits up to {@code installTimeout} for its hook.
+     *
+     * <p>Worth setting when this runs somewhere the default does not cover —
+     * a loaded CI machine, or several Wine forks at once, where {@code
+     * SetWindowsHookEx} has been measured taking over a second to return.
+     * Measured 2026-09-15 on a machine that had been running test suites for
+     * ninety minutes: 2 of 4 full runs of {@code jembetter-host} failed
+     * construction at the 5 s default, against 0 of 40 full-suite iterations
+     * on CI.
+     *
+     * @throws IllegalStateException if the hook could not be installed, or
+     *         was not installed inside the budget — the two are distinct, and
+     *         the message says which
+     */
+    public Win32ClickWatcher(Duration installTimeout) {
+        Objects.requireNonNull(installTimeout, "installTimeout");
+        this.installTimeout = installTimeout;
         this.pumpThread = new Thread(this::pump, "jembetter-win32-click-watcher");
         pumpThread.setDaemon(true);
         pumpThread.start();
         // The watcher isn't functional until the hook is actually installed
         // on the pump thread; block here so a click right after construction
         // can't race past a not-yet-installed hook.
-        boolean reported = awaitInstalled();
-        if (!reported || hook == null) {
-            // Fail, rather than hand back a watcher that will never report a
-            // click. Everything this class does depends on that one hook, so
-            // an instance without it is not a degraded watcher, it is a
-            // silent no-op - and the caller has no way to ask whether it
-            // worked. close() first, because the caller gets no object and
-            // so can never stop the pump thread itself.
-            close();
-            throw new IllegalStateException(reported
-                    ? "SetWindowsHookEx(WH_MOUSE_LL) failed with error " + installErrorCode
-                    : "The click watcher's pump thread did not report its hook within "
-                            + INSTALL_TIMEOUT_SECONDS + "s");
+        boolean reported = awaitInstalled(installTimeout);
+        if (reported && hook != null) {
+            return;
         }
+        // Fail, rather than hand back a watcher that will never report a
+        // click. Everything this class does depends on that one hook, so an
+        // instance without it is not a degraded watcher, it is a silent no-op
+        // - and the caller has no way to ask whether it worked. close()
+        // first, because the caller gets no object and so can never stop the
+        // pump thread itself.
+        close();
+        if (reported) {
+            // The pump thread got an answer and it was "no". A real failure:
+            // retrying or waiting longer changes nothing.
+            throw new IllegalStateException(
+                    "SetWindowsHookEx(WH_MOUSE_LL) failed with error " + installErrorCode);
+        }
+        // The pump thread has not answered yet - which is not the same thing,
+        // and saying so matters, because the two want opposite responses. The
+        // call may well be about to succeed; what ran out is the budget. The
+        // message names it as a budget and says how to raise it, so a slow
+        // machine does not read as a broken one.
+        throw new IllegalStateException(
+                "The click watcher's pump thread did not report its hook within " + installTimeout
+                        + ". SetWindowsHookEx has not failed - it has not answered yet, and this budget "
+                        + "ran out first. On a loaded machine that is the expected outcome rather than a "
+                        + "defect; construct with a longer Duration if this is one.");
     }
 
     /**
@@ -243,7 +287,10 @@ public final class Win32ClickWatcher implements AutoCloseable {
     @Override
     public void close() {
         running = false;
-        awaitInstalled();
+        // The pump thread publishes its id before it reports, so this is what
+        // makes PostThreadMessage below reach a thread that exists. Same budget
+        // the constructor used: a close is not the place to pick a different one.
+        awaitInstalled(installTimeout);
         int threadId = pumpThreadId;
         if (threadId != 0) {
             User32.INSTANCE.PostThreadMessage(threadId, WM_QUIT, new WPARAM(0), new LPARAM(0));
@@ -259,9 +306,10 @@ public final class Win32ClickWatcher implements AutoCloseable {
      * needs the wait itself, so that {@code pumpThreadId} is published
      * before it posts to it.
      */
-    private boolean awaitInstalled() {
+    /** Whether the pump thread reported an outcome - either one - inside {@code budget}. */
+    private boolean awaitInstalled(Duration budget) {
         try {
-            return installed.await(INSTALL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            return installed.await(budget.toNanos(), TimeUnit.NANOSECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
