@@ -1,17 +1,21 @@
 # commit-refs
 
-Resolves every commit SHA mentioned in a commit message, and fails if one of
-them would not resolve for somebody who clones this repository.
+Resolves every commit SHA written into tracked content — commit messages and
+the text of tracked files alike — and fails if one of them would not resolve
+for somebody who clones this repository.
 
     build-tools/commit-refs/check.py [<range>]      # default: origin/main..HEAD
 
 Linux CI runs it on every push, next to the Markdown link check, which does the
 same job for the other cross-reference surface.
 
-## Why a commit message needs checking at all
+## Why this needs checking at all
 
 A commit message is tracked content, it makes cross-references, and until this
-existed nothing resolved them. The argument is the one
+existed nothing resolved them. Neither did anything resolve a SHA written into
+the *body* of a tracked file, which is the same reference with the same failure
+mode: this checker's own README carried two of them until 2026-09-15, and they
+were found by an ad-hoc grep rather than by any check. The argument is the one
 [docs-links](../docs-links/README.md) already makes: a pointer written as prose
 cannot be checked by anything, so it rots silently.
 
@@ -49,6 +53,20 @@ Two consequences:
   has already been pushed is reachable, so the other order answers that first
   and reports nothing — leaving the verdict silent on every branch where the
   reference is about to be rewritten, which is the only place it matters.
+
+## Two surfaces, one question
+
+Commit messages are walked over the range under test. Tracked files are walked
+at `HEAD`, through `git grep -I`, which skips binary content: a reference that
+is stale now is stale regardless of which commit wrote it, so there is no range
+to apply. Both feed the same three verdicts.
+
+A SHA inside a fenced code block in a tracked file is **not** exempt, unlike
+the Markdown link check, which ignores fences. A link in a fence is usually an
+example; a SHA in a fence is usually real output naming a real commit, and one
+that stops resolving is worth the same report as any other. Invented example
+SHAs resolve to no commit and are reported — which has not come up, and would
+be answered by inventing one that is not 7–40 hex digits.
 
 ## What it deliberately does not check
 
