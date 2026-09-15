@@ -485,14 +485,29 @@ public final class EmbedClientWin32 implements EmbedClient {
     private void readLoop() {
         SocketChannel channel = controlChannel;
         try {
-            ControlMessage message;
-            while ((message = ControlMessage.readFrom(channel)) != null) {
+            while (true) {
+                ControlMessage message;
+                try {
+                    message = ControlMessage.readFrom(channel);
+                } catch (IllegalArgumentException e) {
+                    // Skipped rather than fatal, for the reason EmbedClientX11's
+                    // own reader records: the frame is a fixed two bytes and has
+                    // already been consumed, so a type this build does not know
+                    // cannot desynchronise the stream - while letting it out
+                    // would end this thread and lose every later frame silently.
+                    LOG.debug("Ignoring an unrecognised control frame", e);
+                    continue;
+                }
+                if (message == null) {
+                    return;
+                }
                 switch (message.type()) {
                     case MODALITY -> onModalityChanged.modalityChanged(message.flag());
                     case EMBEDDED -> handleEmbeddedFrame();
                     default -> {
-                        // FOCUS_REQUEST is client->host and never arrives here;
-                        // any future host->client type not yet handled is ignored.
+                        // FOCUS_REQUEST is client->host and never arrives here.
+                        // A known-but-unhandled type lands here; an unknown one
+                        // is skipped above, before it can reach a switch.
                     }
                 }
             }

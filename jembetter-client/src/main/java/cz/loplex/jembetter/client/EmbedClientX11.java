@@ -378,15 +378,34 @@ public final class EmbedClientX11 implements EmbedClient {
     private void readControlChannel() {
         SocketChannel channel = controlChannel;
         try {
-            ControlMessage message;
-            while ((message = ControlMessage.readFrom(channel)) != null) {
+            while (true) {
+                ControlMessage message;
+                try {
+                    message = ControlMessage.readFrom(channel);
+                } catch (IllegalArgumentException e) {
+                    // A host that has learned a frame type this build does not
+                    // know - the case a client older than its host is in, which
+                    // is what adding a type creates. Skipping is safe because
+                    // the framing is a fixed two bytes: readFrom has already
+                    // consumed the whole frame before decoding it, so the
+                    // stream cannot be left mid-frame and there is no length to
+                    // misread. Letting it out instead would end this thread and
+                    // take modality, activation and every later frame with it,
+                    // in a daemon thread nobody joins.
+                    LOG.debug("Ignoring an unrecognised control frame", e);
+                    continue;
+                }
+                if (message == null) {
+                    return;
+                }
                 switch (message.type()) {
                     case MODALITY -> onModalityChanged.modalityChanged(message.flag());
                     case ACTIVATION -> onActivationChanged.activationChanged(message.flag());
                     case EMBEDDED -> handleEmbeddedFrame();
                     default -> {
-                        // FOCUS_REQUEST is client->host and never arrives here;
-                        // any future host->client type not yet handled is ignored.
+                        // FOCUS_REQUEST is client->host and never arrives here.
+                        // A known-but-unhandled type lands here; an unknown one
+                        // is skipped above, before it can reach a switch.
                     }
                 }
             }

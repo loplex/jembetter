@@ -262,12 +262,30 @@ public final class EmbedSocketWin32 implements EmbedSocket {
      * jembetter-client.EmbedClientWin32#requestFocus()}) gives the currently
      * embedded client input focus, the same as {@link #focusClient()}. Any
      * other frame type is ignored — nothing else flows in this direction on
-     * this backend today.
+     * this backend today, and a type this build does not recognise at all is
+     * skipped rather than ending this reader.
      */
     private void readControlChannel(SocketChannel channel) {
         try {
-            ControlMessage message;
-            while ((message = ControlMessage.readFrom(channel)) != null) {
+            while (true) {
+                ControlMessage message;
+                try {
+                    message = ControlMessage.readFrom(channel);
+                } catch (IllegalArgumentException e) {
+                    // The client-to-host direction of the same exposure
+                    // EmbedClientX11's reader records: a client newer than this
+                    // host sends a frame type that is not in this build. The
+                    // fixed two-byte framing means readFrom consumed the whole
+                    // frame before decoding, so skipping it leaves the stream
+                    // where the next frame starts. Letting it out would end this
+                    // reader and lose the client's focus requests for the rest
+                    // of the embed.
+                    LOG.debug("Ignoring an unrecognised control frame from the client", e);
+                    continue;
+                }
+                if (message == null) {
+                    return;
+                }
                 if (message.type() == ControlMessage.Type.FOCUS_REQUEST) {
                     core.requestFocus();
                 }
