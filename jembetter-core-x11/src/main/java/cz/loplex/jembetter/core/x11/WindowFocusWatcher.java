@@ -57,10 +57,20 @@ public final class WindowFocusWatcher implements AutoCloseable {
     /** Starts watching {@code windowId}; {@code onFocusChanged} runs on the watcher's own thread with the new focus state. */
     public void watch(long windowId, FocusListener onFocusChanged) {
         callbacks.put(windowId, onFocusChanged);
-        synchronized (X11Display.GLOBAL_LOCK) {
-            X11Ext.INSTANCE.XSelectInput(display.raw(), new Window(windowId), new NativeLong(X11Ext.FocusChangeMask));
-            X11Ext.INSTANCE.XFlush(display.raw());
-        }
+        display.ifOpen(raw -> {
+            X11Ext.INSTANCE.XSelectInput(raw, new Window(windowId), new NativeLong(X11Ext.FocusChangeMask));
+            // XSync, not XFlush: XFlush only empties the output buffer, so
+            // watch() could return before the server had processed the
+            // XSelectInput above. Each watcher owns a separate connection from
+            // its caller's, so the caller's very next request - destroying or
+            // reparenting this window - could reach the server first, and
+            // XSelectInput is not retroactive: the FocusIn/FocusOut it was
+            // registered for would simply never be sent. XSync returns only
+            // once the server has processed the request, which is what callers
+            // already assume watch() guarantees. It costs one round trip, held
+            // under GLOBAL_LOCK, on a path that runs once per watched window.
+            X11Ext.INSTANCE.XSync(raw, false);
+        });
     }
 
     public void unwatch(long windowId) {
@@ -71,14 +81,14 @@ public final class WindowFocusWatcher implements AutoCloseable {
     private void loop() {
         XEvent event = new XEvent();
         while (running) {
-            boolean gotFocusIn;
-            boolean gotFocusOut = false;
-            synchronized (X11Display.GLOBAL_LOCK) {
-                gotFocusIn = X11Ext.INSTANCE.XCheckTypedEvent(display.raw(), X11Ext.FocusIn, event);
-                if (!gotFocusIn) {
-                    gotFocusOut = X11Ext.INSTANCE.XCheckTypedEvent(display.raw(), X11Ext.FocusOut, event);
-                }
-            }
+            // Two critical sections rather than one: only this thread ever
+            // reads from this connection, so nothing can consume an event
+            // between them, and neither check can be allowed to run against a
+            // connection close() has already freed.
+            boolean gotFocusIn = display.ifOpen(
+                    raw -> X11Ext.INSTANCE.XCheckTypedEvent(raw, X11Ext.FocusIn, event), false);
+            boolean gotFocusOut = !gotFocusIn && display.ifOpen(
+                    raw -> X11Ext.INSTANCE.XCheckTypedEvent(raw, X11Ext.FocusOut, event), false);
             if (gotFocusIn) {
                 dispatch(event, true);
             } else if (gotFocusOut) {
@@ -130,6 +140,17 @@ public final class WindowFocusWatcher implements AutoCloseable {
         }
     }
 
+    /**
+     * Stops the background thread and closes this watcher's connection.
+     *
+     * <p>The join is deliberately bounded: a callback this watcher invoked
+     * can block for as long as it likes, and a watcher must not hold its
+     * owner's teardown hostage. So the event loop can still be running when
+     * the connection is freed here, which is why every native call it makes
+     * goes through {@link X11Display#ifOpen(java.util.function.Function,
+     * Object)} rather than taking {@code GLOBAL_LOCK} directly — see {@link
+     * X11Display} for what happens otherwise.
+     */
     @Override
     public void close() {
         running = false;

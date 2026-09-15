@@ -1,7 +1,6 @@
 package cz.loplex.jembetter.core.x11;
 
 import com.sun.jna.NativeLong;
-import com.sun.jna.platform.unix.X11.Display;
 import com.sun.jna.platform.unix.X11.Window;
 
 /**
@@ -23,12 +22,10 @@ public final class RawWindow {
 
     /** Creates, maps and raises an override-redirect window at the given screen bounds. */
     public static long createOverrideRedirect(X11Display display, int x, int y, int width, int height) {
-        Display raw = display.raw();
-
         RawWindowAttributes attributes = new RawWindowAttributes();
         attributes.override_redirect = 1;
 
-        synchronized (X11Display.GLOBAL_LOCK) {
+        return display.requireOpen(raw -> {
             Window window = X11Ext.INSTANCE.XCreateWindow(raw, display.defaultRootWindow(), x, y,
                     Math.max(1, width), Math.max(1, height), 0, X11Ext.CopyFromParent, X11Ext.InputOutput, null,
                     new NativeLong(X11Ext.CWOverrideRedirect), attributes);
@@ -36,7 +33,7 @@ public final class RawWindow {
             X11Ext.INSTANCE.XRaiseWindow(raw, window);
             X11Ext.INSTANCE.XFlush(raw);
             return window.longValue();
-        }
+        });
     }
 
     /**
@@ -61,23 +58,20 @@ public final class RawWindow {
      * {@code ComponentListener}).
      */
     public static long createChild(X11Display display, long parentWindowId, int width, int height) {
-        Display raw = display.raw();
-
-        synchronized (X11Display.GLOBAL_LOCK) {
+        return display.requireOpen(raw -> {
             Window window = X11Ext.INSTANCE.XCreateWindow(raw, new Window(parentWindowId), 0, 0, Math.max(1, width),
                     Math.max(1, height), 0, X11Ext.CopyFromParent, X11Ext.InputOutput, null, new NativeLong(0),
                     null);
             X11Ext.INSTANCE.XMapWindow(raw, window);
             X11Ext.INSTANCE.XFlush(raw);
             return window.longValue();
-        }
+        });
     }
 
     public static void destroy(X11Display display, long windowId) {
-        Display raw = display.raw();
-        synchronized (X11Display.GLOBAL_LOCK) {
+        display.ifOpen(raw -> {
             X11Ext.INSTANCE.XDestroyWindow(raw, new Window(windowId));
             X11Ext.INSTANCE.XFlush(raw);
-        }
+        });
     }
 }

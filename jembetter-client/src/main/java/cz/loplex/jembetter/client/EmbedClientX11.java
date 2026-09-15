@@ -214,9 +214,7 @@ public final class EmbedClientX11 implements EmbedClient {
     public void requestFocus() {
         long id = embedderWindowId;
         if (id >= 0) {
-            synchronized (X11Display.GLOBAL_LOCK) {
-                XEmbedMessages.send(display.raw(), id, XEmbedMessage.REQUEST_FOCUS, 0, 0, 0);
-            }
+            display.ifOpen(raw -> XEmbedMessages.send(raw, id, XEmbedMessage.REQUEST_FOCUS, 0, 0, 0));
         }
     }
 
@@ -349,10 +347,8 @@ public final class EmbedClientX11 implements EmbedClient {
         long pid = ProcessHandle.current().pid();
         windowId = waitForOwnWindow(pid, wmClass);
 
-        synchronized (X11Display.GLOBAL_LOCK) {
-            XEmbedInfoProperty.write(display.raw(), windowId,
-                    new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED));
-        }
+        display.ifOpen(raw -> XEmbedInfoProperty.write(raw, windowId,
+                new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED)));
 
         awaitingEmbed = true;
         reparentWatcher.watch(windowId, this::handleReparented);

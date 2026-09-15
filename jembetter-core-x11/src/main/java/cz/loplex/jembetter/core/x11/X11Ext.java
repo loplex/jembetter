@@ -58,6 +58,14 @@ public interface X11Ext extends X11 {
 
     int XSetInputFocus(Display display, Window focus, int revertTo, NativeLong time);
 
+    /**
+     * Owner of a selection, or {@code None}. Used here for the ICCCM
+     * manager selection {@code WM_S<screen>}, which is how a window manager
+     * announces itself: no owner means no window manager is running, which
+     * is a different situation from one that is simply slow to respond.
+     */
+    Window XGetSelectionOwner(Display display, Atom selection);
+
     int XGetInputFocus(Display display, WindowByReference focusReturn, IntByReference revertToReturn);
 
     /**

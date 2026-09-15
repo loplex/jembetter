@@ -46,6 +46,25 @@ interface does not carry. The full list of what stays backend-specific is in
   watch on an already-embedded window, which is a `WS_CHILD` and so no longer
   enumerable as a top-level window.
 
+### Fixed
+
+- A JVM crash (`SIGSEGV` inside Xlib) when an X11 display connection was
+  closed while another thread was still using it. A native call against a
+  freed connection takes the process down rather than throwing something a
+  host could catch.
+
+  The case that produced the crash report was a host's owner window gaining
+  or losing focus at the instant its `EmbedSocket` was closed, but the same
+  race was reachable from every background watcher this library runs: each
+  closes its connection after a bounded join, so its event loop could still
+  be running when the connection was freed underneath it.
+
+  Every native call in `jembetter-core-x11` now goes through an open-checked
+  accessor on `X11Display`, which tests the connection and makes the call as
+  one indivisible step. Commands (moving a window, setting focus) are
+  skipped once the connection is gone; queries, which have no honest value
+  to fall back on, throw `IllegalStateException` instead.
+
 ### Published artifacts
 
 Five modules, all under the `cz.loplex` group id:

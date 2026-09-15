@@ -1,6 +1,5 @@
 package cz.loplex.jembetter.core.x11;
 
-import com.sun.jna.platform.unix.X11.Display;
 import com.sun.jna.platform.unix.X11.Window;
 
 /**
@@ -14,10 +13,9 @@ public final class Reparenting {
     }
 
     public static void reparent(X11Display display, long childWindowId, long newParentWindowId, int x, int y) {
-        Display raw = display.raw();
         Window child = new Window(childWindowId);
         Window parent = new Window(newParentWindowId);
-        synchronized (X11Display.GLOBAL_LOCK) {
+        display.ifOpen(raw -> {
             X11Ext.INSTANCE.XReparentWindow(raw, child, parent, x, y);
             // Adding the (foreign-owned) child to this connection's save-set is
             // what lets the child survive this connection closing later: instead
@@ -31,7 +29,7 @@ public final class Reparenting {
             // this returns, which needs the server to have actually processed
             // the reparent/map, not just have them written to the wire.
             X11Ext.INSTANCE.XSync(raw, false);
-        }
+        });
     }
 
     /**
@@ -43,14 +41,13 @@ public final class Reparenting {
      * newParentWindowId} and maps it.
      */
     public static void release(X11Display display, long childWindowId, long newParentWindowId, int x, int y) {
-        Display raw = display.raw();
         Window child = new Window(childWindowId);
         Window parent = new Window(newParentWindowId);
-        synchronized (X11Display.GLOBAL_LOCK) {
+        display.ifOpen(raw -> {
             X11Ext.INSTANCE.XRemoveFromSaveSet(raw, child);
             X11Ext.INSTANCE.XReparentWindow(raw, child, parent, x, y);
             X11Ext.INSTANCE.XMapWindow(raw, child);
             X11Ext.INSTANCE.XSync(raw, false);
-        }
+        });
     }
 }
