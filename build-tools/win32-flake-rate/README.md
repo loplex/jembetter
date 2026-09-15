@@ -21,14 +21,26 @@ separates them.
 
 ## Running it
 
-`Win32 flake rate`, manually via `workflow_dispatch`:
+Two routes. The workflow measures both platforms and is the one that can reach
+a verdict; the script by hand measures Wine alone, and is the one nothing
+caps.
 
-| Input         | Meaning                                                        | Default                |
-|---------------|----------------------------------------------------------------|------------------------|
-| `test`        | Surefire `-Dtest` selector; empty runs the whole suite          | `EmbedClientWin32Test` |
-| `iterations`  | Iterations per platform                                         | `10`                   |
-| `platforms`   | `both`, `wine`, or `windows`                                    | `both`                 |
-| `reuse-forks` | `false` runs one JVM per test class                             | `true`                 |
+### From CI, via `workflow_dispatch`
+
+The `Win32 flake rate` workflow:
+
+| Input         | Meaning                                                | Default              |
+|---------------|--------------------------------------------------------|----------------------|
+| `test`        | Surefire `-Dtest` selector; empty runs the whole suite  | *(empty)*            |
+| `iterations`  | Iterations per platform                                 | `10`                 |
+| `platforms`   | `both`, `wine`, or `windows`                            | `both`               |
+| `reuse-forks` | `false` runs one JVM per test class                     | `true`               |
+
+`test` defaults to empty on purpose, so an unsupplied selector measures the
+same thing a push does. It once defaulted to a test class name instead, and a
+dispatch with the field cleared measured that one class while the verdict
+read "Clean on both" — a true statement about one class that reads as a clean
+whole suite.
 
 Samples after the first are cheap — only the first iteration compiles.
 
@@ -39,12 +51,52 @@ test isolation rather than to the code under test. The real-machine checks in
 [`win32-real-machine-checks`](../win32-real-machine-checks/README.md) run one
 check per process for the same reason.
 
+### Locally, by hand
+
+`probe.sh` is an ordinary script and needs no CI. Run it from the repository
+root — it drives `mvn` and writes per-iteration logs to `logs/` there, a path
+`.gitignore` already carries for this:
+
+```sh
+build-tools/win32-flake-rate/probe.sh "" 40                 # whole suite
+build-tools/win32-flake-rate/probe.sh EmbedClientWin32Test 10
+```
+
+The same tables land on stdout, and `logs/iteration-N.log` keeps each
+iteration's full Maven output. `FORK_TIMEOUT_SECONDS`, `RUN_TIMEOUT_SECONDS`
+and `REUSE_FORKS`, documented at the top of the script, are the knobs the
+workflow sets for itself rather than exposing as dispatch inputs.
+
+Two differences from the dispatch, both worth knowing before choosing this
+route:
+
+- **It measures Wine only.** `probe.ps1` is the real-Windows half and wants a
+  Windows machine. Without both halves there is no cross-platform comparison,
+  so a local run can establish that a test is flaky but cannot on its own
+  justify `@Tag("wine-incompatible")` — see [Reading the
+  result](#reading-the-result) for why that verdict needs the other platform.
+- **Nothing caps it.** Both measuring jobs carry `timeout-minutes: 90`, and a
+  whole-suite Wine run of 40 iterations has been observed to need most of
+  that. Wine costs roughly four times as much per iteration as real Windows
+  does, so the Wine job is the one that runs out of room first. A local run
+  has no ceiling, which makes it the route for an iteration count the job
+  cannot fit.
+
 ## Reading the result
 
 The per-test table gives each failing test's rate. The per-iteration table adds
-exit code and wall-clock duration, which is worth reading before hunting for a
-logic bug: failures that cluster in slow iterations point at load sensitivity
-instead. Full logs are attached as artifacts, and so is any
+exit code, wall-clock duration and how many tests ran, each worth reading
+before hunting for a logic bug: failures that cluster in slow iterations point
+at load sensitivity instead, and a tests column of zero means the run measured
+nothing at all.
+
+That last one is the failure mode to know about. A `-Dtest` selector matching
+no class exits 0 under `-Dsurefire.failIfNoSpecifiedTests=false`, so every
+iteration passes, no test is tallied, and the verdict would otherwise read
+"clean on both" - the strongest result the tool can print, over a run that
+tested nothing. Each half now marks such an iteration `<no tests ran>`,
+annotates the job, and reports its test count to the verdict, which refuses to
+conclude anything when either platform's count is zero. Full logs are attached as artifacts, and so is any
 `hs_err_pid*.log` a crashed fork left behind: the probe moves those into
 the same place after each iteration, named for the iteration that produced
 them.
@@ -59,6 +111,35 @@ The verdict job then compares the platforms:
   fault whatever Wine reports. The job fails on this, so the tag cannot end up
   looking justified by a run that did not justify it.
 - **Clean on both** — nothing to exclude.
+- **Nothing was measured** — one of the probes ran no tests, so none of the
+  above applies. Fix the selector and run it again.
+
+Either of the first two splits further on whether the failures were hangs. A
+wedged fork is not a behavioural difference, so a Wine-only run of hangs does
+not justify a tag, and a real-Windows run of hangs points at
+`RUN_TIMEOUT_SECONDS`, the wrapper and the runner's load rather than at the
+test. The verdict says which case it is; [Hangs](#hangs) is what to read next.
+
+### The two probes must agree on what they count
+
+`probe.sh` and `probe.ps1` are separate implementations of one measurement, and
+the verdict compares their numbers directly. A number that counts different
+things on each platform is not comparable, so the four each writes to
+`$GITHUB_OUTPUT` have to mean the same thing on both:
+
+| output | what it counts |
+|---|---|
+| `iterations` | iterations requested, not iterations completed |
+| `failed` | iterations whose Maven exit code was non-zero |
+| `hung` | iterations ended by *either* cap, counted once even if both fired |
+| `tests` | test methods run, summed over Surefire's per-class lines |
+
+`hung` is a breakdown of `failed`, not a category beside it: a hung iteration
+always exits non-zero, so it is counted in both. It was briefly not comparable
+— the PowerShell probe counted the inner and outer caps separately, so an
+iteration that hit both counted twice and the tally could exceed `iterations`.
+Both probes now set a per-iteration flag instead. Keep the two rules in step
+when either changes.
 
 ## Hangs
 

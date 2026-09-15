@@ -55,13 +55,13 @@ on:
         description: "false runs one JVM per test class, to test whether shared-fork state is the cause"
         required: false
         default: "true"
-  # spike_win32 is in the push list so this can be run before it reaches the
-  # default branch - workflow_dispatch reads a workflow's definition from
-  # there, so a change to this file is otherwise unrunnable until merged.
-  # win32-real-machine-checks.yml carries the same allowance for the same
-  # reason.
+  # A change to the probe itself gets measured by it. The push trigger is not
+  # what makes this workflow runnable - it is on the default branch, so
+  # workflow_dispatch reaches it against any ref - and a dispatch is the usual
+  # way in, since iterations and platforms are worth choosing rather than
+  # defaulting.
   push:
-    branches: [spike_win32]
+    branches: [main, develop]
     paths:
       - 'build-tools/win32-flake-rate/**'
       - '.github/workflows/win32-flake-rate.yml'
@@ -92,6 +92,8 @@ jobs:
     outputs:
       iterations: ${{ steps.probe.outputs.iterations }}
       failed: ${{ steps.probe.outputs.failed }}
+      hung: ${{ steps.probe.outputs.hung }}
+      tests: ${{ steps.probe.outputs.tests }}
     steps:
       - uses: actions/checkout@v4
 
@@ -160,6 +162,8 @@ jobs:
     outputs:
       iterations: ${{ steps.probe.outputs.iterations }}
       failed: ${{ steps.probe.outputs.failed }}
+      hung: ${{ steps.probe.outputs.hung }}
+      tests: ${{ steps.probe.outputs.tests }}
     steps:
       - uses: actions/checkout@v4
 
@@ -204,6 +208,15 @@ jobs:
           wine_failed='${{ needs.wine.outputs.failed }}'
           win_total='${{ needs.windows.outputs.iterations }}'
           win_failed='${{ needs.windows.outputs.failed }}'
+          wine_tests='${{ needs.wine.outputs.tests }}'
+          win_tests='${{ needs.windows.outputs.tests }}'
+          # Both probes count a hang as a failure too, so these are a breakdown
+          # of the column beside them, not an extra category. They are here
+          # because "not clean" has two causes that want opposite responses: a
+          # test or the code under it is wrong, or a fork wedged and the outer
+          # cap ended the iteration. The conclusions below say which.
+          wine_hung='${{ needs.wine.outputs.hung }}'
+          win_hung='${{ needs.windows.outputs.hung }}'
 
           set +x
 
@@ -215,10 +228,24 @@ jobs:
 
           say "## Verdict"
           say ""
-          say "| Platform | failed | of |"
-          say "|---|---:|---:|"
-          say "| Real Windows | ${win_failed:-?} | ${win_total:-?} |"
-          say "| Wine (Linux) | ${wine_failed:-?} | ${wine_total:-?} |"
+          say "| Platform | failed | of which hung | of |"
+          say "|---|---:|---:|---:|"
+          say "| Real Windows | ${win_failed:-?} | ${win_hung:-?} | ${win_total:-?} |"
+          say "| Wine (Linux) | ${wine_failed:-?} | ${wine_hung:-?} | ${wine_total:-?} |"
+          say ""
+
+          # Before anything is concluded from those zeros: a probe that ran no
+          # test reports none failed, which is indistinguishable here from a
+          # clean measurement and reads as the strongest possible result. It
+          # has happened - a -Dtest selector matching no class exits 0 under
+          # -Dsurefire.failIfNoSpecifiedTests=false - and the only outward sign
+          # was that the run finished in a quarter of the usual time.
+          if [ "${wine_tests:-0}" -eq 0 ] || [ "${win_tests:-0}" -eq 0 ]; then
+            say "**Nothing was measured.** Tests run: ${win_tests:-0} on real Windows, ${wine_tests:-0} under Wine. A selector matching no class leaves every iteration passing, so no conclusion below would mean anything. Check the \`test\` input."
+            echo "::error title=Verdict void::A probe ran no tests (Windows ${win_tests:-0}, Wine ${wine_tests:-0}) - nothing was measured"
+            exit 1
+          fi
+          say "Tests run per platform: ${win_tests} on real Windows, ${wine_tests} under Wine."
           say ""
 
           if [ -z "$wine_failed" ] || [ -z "$win_failed" ]; then
@@ -228,11 +255,21 @@ jobs:
           fi
 
           if [ "$win_failed" -eq 0 ] && [ "$wine_failed" -gt 0 ]; then
-            say "**Clean on real Windows, not under Wine.** This is what a genuine Wine limitation looks like, and what justifies \`@Tag(\"wine-incompatible\")\` on the tests named in the per-test tables above. Record what Wine does differently next to the tag, not just that it failed."
-            echo "::notice title=Wine limitation::Clean on real Windows ($win_total runs), $wine_failed of $wine_total failed under Wine"
+            if [ "${wine_hung:-0}" -eq "$wine_failed" ]; then
+              say "**Clean on real Windows, and every Wine failure was a hang.** A wedged fork is not a behavioural difference, so this does not justify \`@Tag(\"wine-incompatible\")\` - the tag is a claim about what Wine does differently, and an iteration that never finished made no such claim. Read the Hangs section of the probe README before concluding anything about the tests named above."
+              echo "::notice title=Wine hung, did not misbehave::Clean on real Windows ($win_total runs); all $wine_failed Wine failures were hangs"
+            else
+              say "**Clean on real Windows, not under Wine.** This is what a genuine Wine limitation looks like, and what justifies \`@Tag(\"wine-incompatible\")\` on the tests named in the per-test tables above. Record what Wine does differently next to the tag, not just that it failed."
+              echo "::notice title=Wine limitation::Clean on real Windows ($win_total runs), $wine_failed of $wine_total failed under Wine ($wine_hung hung)"
+            fi
           elif [ "$win_failed" -gt 0 ]; then
-            say "**Not clean on real Windows either.** Whatever the Wine numbers say, the test or the code under it is at fault - \`@Tag(\"wine-incompatible\")\` would hide a real defect here."
-            echo "::error title=Not clean on real Windows::$win_failed of $win_total iterations failed on windows-latest; see that job's per-test table"
+            if [ "${win_hung:-0}" -eq "$win_failed" ]; then
+              say "**Not clean on real Windows, and every failure there was a hang.** No test reported a failure - the fork wedged and a cap ended the iteration. That is a different defect from a wrong assertion and wants \`RUN_TIMEOUT_SECONDS\`, the wrapper and the runner's load looked at first, not the test. Still not something to exclude from Wine."
+              echo "::error title=Real Windows hung::$win_failed of $win_total iterations on windows-latest hung rather than failed a test"
+            else
+              say "**Not clean on real Windows either.** Whatever the Wine numbers say, the test or the code under it is at fault - \`@Tag(\"wine-incompatible\")\` would hide a real defect here."
+              echo "::error title=Not clean on real Windows::$win_failed of $win_total iterations failed on windows-latest ($win_hung hung); see that job's per-test table"
+            fi
             exit 1
           else
             say "**Clean on both.** Nothing to exclude."

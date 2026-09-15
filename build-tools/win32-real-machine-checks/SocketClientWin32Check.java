@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 
@@ -85,6 +86,14 @@ final class SocketClientWin32Check {
         boolean qReembed;
 
         try (EmbedSocketWin32 socket = new EmbedSocketWin32(canvas)) {
+            // The host's own embed signal, which the client's EMBEDDED line is
+            // not a substitute for: the client fires onEmbedded off the
+            // reparent, and listen()'s accept loop only assigns the control
+            // channel afterwards. Anything written into that channel between
+            // the two is dropped by setModal's documented early return. See
+            // step (2).
+            CountDownLatch hostSawEmbed = new CountDownLatch(1);
+            socket.onClientEmbedded(hostSawEmbed::countDown);
             socket.listen(socketPath);
 
             Process child = startClient(javaBin, classpath, socketPath);
@@ -102,7 +111,15 @@ final class SocketClientWin32Check {
                     + Long.toHexString(reportedParent) + " (want 0x" + Long.toHexString(canvasHwnd)
                     + ") => " + qEmbed);
 
-            // (2) modality, both directions
+            // (2) modality, both directions.
+            //
+            // Waiting for the host here, not just for the client's line above.
+            // Sending on the client's line cost this check 2 of 15 runs on
+            // 2026-09-14, always as on=false off=true: the true was written
+            // before the control channel existed and silently dropped, and the
+            // false five seconds later landed on the channel by then assigned.
+            boolean hostReady = hostSawEmbed.await(8, TimeUnit.SECONDS);
+            System.out.println("SOCKETCLIENT: host's own onClientEmbedded fired => " + hostReady);
             socket.setModal(true);
             qModalOn = awaitLine("MODALITY=true", 0, 5000) != null;
             socket.setModal(false);

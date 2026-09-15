@@ -56,6 +56,8 @@ New-Item -ItemType Directory -Force -Path logs | Out-Null
 $rows = @()
 $failed = 0
 $hung = 0
+$totalTests = 0
+$barren = 0
 $tally = @{}
 
 for ($i = 1; $i -le $Iterations; $i++) {
@@ -94,19 +96,28 @@ for ($i = 1; $i -le $Iterations; $i++) {
                ForEach-Object { $_.Matches[0].Groups[1].Value } |
                Sort-Object -Unique
 
+    # Either cap ending an iteration counts as one hang, and an iteration that
+    # hits both counts once - it used to count twice here, which could put the
+    # tally above the iteration count. The count has to mean the same thing as
+    # the one probe.sh produces, because the verdict job compares the two
+    # platforms and a number that counts different endings on each is not
+    # comparable. Keep this rule and probe.sh's in step.
+    $hungThisIter = $false
+
     # A capped fork reports "There was a timeout in the fork" and names no
     # test, so without this a hung iteration would show a failing exit code
     # beside an empty failure list - precisely the blank the cap exists to
     # capture.
     if (Select-String -Path $log -Pattern 'There was a timeout in the fork' -Quiet) {
         $names = @($names) + '<fork timeout>' | Where-Object { $_ }
-        $hung++
+        $hungThisIter = $true
     }
     # The outer cap fired: Maven was killed before reporting anything.
     if ($killed) {
         $names = @($names) + "<killed at ${runTimeout}s>" | Where-Object { $_ }
-        $hung++
+        $hungThisIter = $true
     }
+    if ($hungThisIter) { $hung++ }
     # A crashed fork names no test either, and unlike a fork timeout it says
     # so in Maven's own words rather than Surefire's.
     if (Select-String -Path $log -Pattern 'The forked VM terminated without properly saying goodbye' -Quiet) {
@@ -129,10 +140,23 @@ for ($i = 1; $i -le $Iterations; $i++) {
                 -Destination "logs/iteration-$i-$($_.Name)"
             Write-Host "collected $($_.Name) from $($_.DirectoryName)"
         }
-    # A failing iteration in which no test ran at all means Maven itself did
-    # not get going - a bad argument, a broken workspace. Saying so separates
-    # it from "tests ran and passed", which is what an empty list reads as.
-    if ($code -ne 0 -and -not (Select-String -Path $log -Pattern 'Tests run:' -Quiet)) {
+    # How many tests actually ran, summed over Surefire's per-class summary
+    # lines. Carried into the table below because "did this measure anything"
+    # is otherwise invisible: a selector matching no class exits 0 under
+    # -Dsurefire.failIfNoSpecifiedTests=false, so every iteration passes, the
+    # verdict reads "clean on both", and nothing on the page says that nothing
+    # ran. It has happened, and what gave it away was the job's duration.
+    $testsRun = (Select-String -Path $log -Pattern 'Tests run: (\d+),.* -- in ' |
+                   ForEach-Object { [int]$_.Matches[0].Groups[1].Value } |
+                   Measure-Object -Sum).Sum
+    if (-not $testsRun) { $testsRun = 0 }
+
+    # An iteration that ran no test is a failed measurement whatever Maven's
+    # exit code says - a bad selector and a broken workspace are both worth
+    # hearing about, and only one of them reddens the exit code.
+    $totalTests += $testsRun
+    if ($testsRun -eq 0) {
+        $barren++
         $names = @($names) + '<no tests ran>' | Where-Object { $_ }
     }
     # Last resort. A failing iteration that named nothing would otherwise be
@@ -147,7 +171,8 @@ for ($i = 1; $i -le $Iterations; $i++) {
     }
     $joined = $(if ($names) { $names -join ', ' } else { '-' })
     $rows += [pscustomobject][ordered]@{
-        iteration = $i; exit = $code; seconds = "${seconds}s"; failedTests = $joined
+        iteration = $i; exit = $code; seconds = "${seconds}s"; tests = $testsRun
+        failedTests = $joined
     }
 
     # The failing test's name alone does not say why it failed, and chasing
@@ -201,8 +226,15 @@ if ($failed -gt 0) {
     Write-Host "::warning title=Windows: $failed of $Iterations iterations failed::This job is green by design - the rate is the result. See its tables, and the Verdict job for what it means."
 }
 
+# Louder than a table row, because this one invalidates the whole measurement
+# rather than describing it: iterations that ran no test pass, so they leave
+# the failure count at zero and the verdict reads clean.
+if ($barren -gt 0) {
+    Write-Host "::error title=Windows: $barren of $Iterations iterations ran no tests::Nothing was measured. Check the -Dtest selector before reading anything else on this page."
+}
+
 if ($env:GITHUB_OUTPUT) {
-    "iterations=$Iterations", "failed=$failed", "hung=$hung" |
+    "iterations=$Iterations", "failed=$failed", "hung=$hung", "tests=$totalTests" |
         Out-File -FilePath $env:GITHUB_OUTPUT -Append
 }
 
