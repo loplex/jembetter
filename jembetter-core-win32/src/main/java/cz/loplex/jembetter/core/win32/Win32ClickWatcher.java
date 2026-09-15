@@ -65,6 +65,17 @@ public final class Win32ClickWatcher implements AutoCloseable {
     private static final int WM_LBUTTONDOWN = 0x0201;
     private static final int WM_QUIT = 0x0012;
     private static final int HC_ACTION = 0;
+    /**
+     * How long the constructor waits for the pump thread to report its hook.
+     * Generous on purpose, and matched to the 5s the rest of the library
+     * allows for "the window system should answer promptly but might not":
+     * under Wine, {@code SetWindowsHookEx} has been measured taking over a
+     * second to return while several test forks are running. The wait exists
+     * to close a startup race, not to time the call, so the budget has to
+     * cover the slowest environment this runs in — a value that is too
+     * small does not report a problem, it manufactures one.
+     */
+    private static final int INSTALL_TIMEOUT_SECONDS = 5;
 
     private final Map<Long, Runnable> callbacks = new ConcurrentHashMap<>();
     private final ExecutorService dispatch =
@@ -81,6 +92,7 @@ public final class Win32ClickWatcher implements AutoCloseable {
     private final LowLevelMouseProc hookProc = this::onMouseEvent;
 
     private volatile HHOOK hook;
+    private volatile int installErrorCode;
     private volatile int pumpThreadId;
     private volatile boolean running = true;
 
@@ -91,7 +103,20 @@ public final class Win32ClickWatcher implements AutoCloseable {
         // The watcher isn't functional until the hook is actually installed
         // on the pump thread; block here so a click right after construction
         // can't race past a not-yet-installed hook.
-        awaitInstalled();
+        boolean reported = awaitInstalled();
+        if (!reported || hook == null) {
+            // Fail, rather than hand back a watcher that will never report a
+            // click. Everything this class does depends on that one hook, so
+            // an instance without it is not a degraded watcher, it is a
+            // silent no-op - and the caller has no way to ask whether it
+            // worked. close() first, because the caller gets no object and
+            // so can never stop the pump thread itself.
+            close();
+            throw new IllegalStateException(reported
+                    ? "SetWindowsHookEx(WH_MOUSE_LL) failed with error " + installErrorCode
+                    : "The click watcher's pump thread did not report its hook within "
+                            + INSTALL_TIMEOUT_SECONDS + "s");
+        }
     }
 
     /**
@@ -110,10 +135,14 @@ public final class Win32ClickWatcher implements AutoCloseable {
     private void pump() {
         pumpThreadId = Kernel32.INSTANCE.GetCurrentThreadId();
         hook = User32.INSTANCE.SetWindowsHookEx(WH_MOUSE_LL, hookProc, null, 0);
-        installed.countDown();
         if (hook == null) {
+            // Read before countDown: the constructor reports this, and
+            // GetLastError is per-thread, so it has to be captured here.
+            installErrorCode = Kernel32.INSTANCE.GetLastError();
+            installed.countDown();
             return;
         }
+        installed.countDown();
         try {
             MSG msg = new MSG();
             int result;
@@ -130,19 +159,50 @@ public final class Win32ClickWatcher implements AutoCloseable {
         }
     }
 
+    /**
+     * Runs on the pump thread, for every low-level mouse event the system
+     * generates, and does as little as it possibly can.
+     *
+     * <p>Windows silently removes a low-level hook whose callback overruns
+     * {@code LowLevelHooksTimeout} — no notification, no error, and no API
+     * to ask afterwards whether the hook is still installed. A watcher whose
+     * hook was removed goes permanently, silently dead, which is the same
+     * failure the constructor now refuses to hand back at install time and
+     * the one thing that cannot be detected once running. So the only real
+     * defence is to never come close to the limit: this reads two ints and
+     * hands them off. No Win32 call, no per-watched-window work, nothing
+     * that scales with anything.
+     */
     private LRESULT onMouseEvent(int nCode, WPARAM wParam, MSLLHOOKSTRUCT info) {
         if (nCode >= HC_ACTION && wParam.intValue() == WM_LBUTTONDOWN && info != null) {
             int x = info.pt.x;
             int y = info.pt.y;
-            for (Map.Entry<Long, Runnable> entry : callbacks.entrySet()) {
+            dispatch.execute(() -> notifyWatchersAt(x, y));
+        }
+        // info is checked for null here too, not only above: an exception
+        // thrown out of a JNA callback has nowhere to go, and a null here
+        // would have been a NullPointerException on the hook thread.
+        LPARAM lParam = info == null ? new LPARAM(0) : new LPARAM(Pointer.nativeValue(info.getPointer()));
+        return User32.INSTANCE.CallNextHookEx(hook, nCode, wParam, lParam);
+    }
+
+    /**
+     * The half of a click that needs Win32 calls — which window was under
+     * the pointer — moved off the hook thread onto the dispatch thread. A
+     * rect read a moment after the click rather than during it is the same
+     * answer for any window that is not being dragged at that instant.
+     */
+    private void notifyWatchersAt(int x, int y) {
+        for (Map.Entry<Long, Runnable> entry : callbacks.entrySet()) {
+            try {
                 if (contains(entry.getKey(), x, y)) {
-                    Runnable callback = entry.getValue();
-                    dispatch.execute(() -> runQuietly(callback));
+                    runQuietly(entry.getValue());
                 }
+            } catch (RuntimeException e) {
+                // One unreadable window must not hide a click from the rest.
+                LOG.warn("Testing whether a click landed inside window {} failed", entry.getKey(), e);
             }
         }
-        LPARAM lParam = new LPARAM(Pointer.nativeValue(info.getPointer()));
-        return User32.INSTANCE.CallNextHookEx(hook, nCode, wParam, lParam);
     }
 
     private static boolean contains(long hwnd, int screenX, int screenY) {
@@ -183,11 +243,19 @@ public final class Win32ClickWatcher implements AutoCloseable {
         dispatch.shutdownNow();
     }
 
-    private void awaitInstalled() {
+    /**
+     * Waits for the pump thread to report whether its hook went in. Returns
+     * {@code false} if it never got that far, which the constructor treats
+     * as a failed install; {@link #close()} ignores the result and only
+     * needs the wait itself, so that {@code pumpThreadId} is published
+     * before it posts to it.
+     */
+    private boolean awaitInstalled() {
         try {
-            installed.await(1, TimeUnit.SECONDS);
+            return installed.await(INSTALL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            return false;
         }
     }
 }
