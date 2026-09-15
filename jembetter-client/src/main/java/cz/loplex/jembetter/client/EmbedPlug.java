@@ -56,6 +56,17 @@ public interface EmbedPlug extends AutoCloseable {
      * Registers a callback invoked once this window has been reparented
      * into an embedder, with the embedder's window id — see {@link
      * EmbedClient#onEmbedded}.
+     *
+     * <p><strong>Fires once per {@link #announce}.</strong> This facade
+     * closes its handshake channel as soon as it has sent the pid, so it
+     * never has the control channel that tells {@link EmbedClient} which
+     * later reparent is an embed — it has only the reparent itself, and a
+     * window manager or desktop shell reparents an ordinary top-level window
+     * into a decoration frame of its own. Accepting just the first reparent
+     * is what keeps that from being reported as an embed, and the cost is
+     * that a re-embed after a host detach is not reported either. Use {@link
+     * EmbedClient#offer(Path)} for a client that needs to be told about more
+     * than its first embed.
      */
     void onEmbedded(LongConsumer callback);
 
