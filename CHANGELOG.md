@@ -9,9 +9,14 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 No version has been released yet — no `v*` tag exists and
 [release.yml](.github/workflows/release.yml) deploys on one. The notes below
-are therefore written against the `0.1.0-SNAPSHOT` builds published to this
-project's GitHub Packages registry, which is the only thing anyone can be
+describe what changed since the `0.1.0-SNAPSHOT` builds published to this
+project's GitHub Packages registry, which is what a reader is most likely
 upgrading from.
+
+Those changes are carried by the `0.2.0-SNAPSHOT` builds published to the same
+registry on 2026-09-15, which are the first to record in their manifests the
+commit they were built from — see "Which commit a jar came from" in
+[README.md](README.md#which-commit-a-jar-came-from).
 
 ### Breaking: `watchOwnWindow(long)` is now on the `EmbedClient` interface
 
