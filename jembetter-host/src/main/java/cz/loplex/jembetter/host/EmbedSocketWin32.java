@@ -18,6 +18,7 @@ import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Objects;
 
 /**
  * {@link EmbedSocket}'s Win32 implementation — the advanced-API counterpart
@@ -109,6 +110,7 @@ public final class EmbedSocketWin32 implements EmbedSocket {
     private volatile boolean readerStopped = true;
 
     public EmbedSocketWin32(Canvas hostCanvas) {
+        Objects.requireNonNull(hostCanvas, "hostCanvas");
         this.core = new Win32EmbedCore(hostCanvas);
     }
 
@@ -130,6 +132,18 @@ public final class EmbedSocketWin32 implements EmbedSocket {
         core.embedOpaque(clientWindowId);
     }
 
+    /** Releases the currently embedded client and embeds {@code clientPid}'s in its place — see {@link EmbedSocket#swapClient(long)}. */
+    @Override
+    public void swapClient(long clientPid) {
+        core.swapClient(clientPid);
+    }
+
+    /** Same as {@link #swapClient(long)}, but for a window embedded the way {@link #embedOpaque(long)} embeds one. */
+    @Override
+    public void swapClientOpaque(long clientWindowId) {
+        core.swapClientOpaque(clientWindowId);
+    }
+
     /** Parity shim — see {@link EmbedSocket#setWindowLookupTimeout}. */
     @Override
     public void setWindowLookupTimeout(Duration timeout) {
@@ -146,6 +160,7 @@ public final class EmbedSocketWin32 implements EmbedSocket {
      */
     @Override
     public void listen(Path socketPath) {
+        Objects.requireNonNull(socketPath, "socketPath");
         synchronized (lifecycleLock) {
             if (listening) {
                 throw new IllegalStateException("Already listening");
@@ -154,6 +169,7 @@ public final class EmbedSocketWin32 implements EmbedSocket {
                 Files.deleteIfExists(socketPath);
                 server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
                 server.bind(UnixDomainSocketAddress.of(socketPath));
+                RendezvousSocket.restrictToOwner(socketPath);
             } catch (IOException e) {
                 // A channel that was opened but never bound is this method's
                 // to clean up; leaving it behind would hold the file
@@ -285,7 +301,7 @@ public final class EmbedSocketWin32 implements EmbedSocket {
      */
     @Override
     public void onClientEmbedded(Runnable callback) {
-        onClientEmbedded = callback;
+        onClientEmbedded = Objects.requireNonNull(callback, "callback");
     }
 
     /** Registers a callback invoked when the embedded client's process exits or crashes — does not fire for {@link #detachClient()}. */

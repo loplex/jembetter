@@ -8,6 +8,7 @@ import java.awt.Frame;
 import java.awt.Window;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Objects;
 
 /**
  * The advanced, multi-client host-side API — the backend-portable type a
@@ -31,6 +32,13 @@ import java.time.Duration;
  * <p><b>{@link #embedOpaque(long)} and {@link #embed(long)} are the same
  * operation on the Win32 backend</b> — see {@link EmbedHost} for why (Win32
  * has no {@code _XEMBED_INFO} equivalent).
+ *
+ * <p><strong>Null is not a valid argument</strong> to anything here: every
+ * method rejects one with a {@link NullPointerException} naming the
+ * parameter, at the call that made the mistake rather than later from a
+ * background thread. The one place null means something is {@link
+ * EmbedSocketX11#expectClientWindowClass}, where it says this client owns a
+ * single top-level window.
  */
 public interface EmbedSocket extends AutoCloseable {
 
@@ -44,6 +52,7 @@ public interface EmbedSocket extends AutoCloseable {
      * already be displayable — see {@link EmbedHost#create}).
      */
     static EmbedSocket create(Canvas hostCanvas) {
+        Objects.requireNonNull(hostCanvas, "hostCanvas");
         if (Platform.isWindows()) {
             return new EmbedSocketWin32(hostCanvas);
         }
@@ -60,6 +69,12 @@ public interface EmbedSocket extends AutoCloseable {
     /**
      * Embeds a client process whose pid is already known, e.g. one this
      * host spawned itself — see {@link EmbedSocketX11#embed(long)}.
+     *
+     * <p>Throws {@link IllegalStateException} if a client is already
+     * embedded in this socket. A socket holds one client at a time, and a
+     * second {@code embed} used to overwrite the first silently, leaving it
+     * inside the socket with nothing tracking it. Use {@link
+     * #swapClient(long)} to replace the current client deliberately.
      */
     void embed(long clientPid);
 
@@ -68,23 +83,59 @@ public interface EmbedSocket extends AutoCloseable {
      * exactly one client connection there, embeds it, and returns — unlike
      * {@link #listen}, this does not keep accepting further clients
      * afterward.
+     *
+     * <p>Throws {@link IllegalStateException} if a client is already
+     * embedded, before binding the socket rather than after waiting for a
+     * client to connect to it.
      */
     void embed(Path rendezvousSocket);
 
     /**
      * Embeds a client window whose id is already known, without relying on
      * the client's own cooperation — see {@link
-     * EmbedSocketX11#embedOpaque(long, Duration, int)}. Uses a fixed,
-     * generous poll budget internally; downcast to {@link EmbedSocketX11}
-     * for the tuning overload.
+     * EmbedSocketX11#embedOpaque(long, Duration, int)}. Polls for as long
+     * as {@link #setWindowLookupTimeout} allows; downcast to {@link
+     * EmbedSocketX11} for the overload that takes a budget for this step
+     * alone.
+     *
+     * <p>Throws {@link IllegalStateException} if a client is already
+     * embedded — see {@link #embed(long)}, and {@link
+     * #swapClientOpaque(long)} for the deliberate replacement.
      */
     void embedOpaque(long clientWindowId);
+
+    /**
+     * Releases the currently embedded client and embeds {@code clientPid}'s
+     * window in its place — {@link #detachClient()} followed by {@link
+     * #embed(long)}, as one named operation, so that replacing a client is
+     * something a caller asks for rather than something a repeated {@code
+     * embed} does by accident. The outgoing client goes back to the desktop
+     * as a live top-level window; {@link #onClientDetached} does not fire
+     * for it, exactly as for a plain {@link #detachClient()}.
+     *
+     * <p>The detach half is a no-op when nothing is embedded, so this also
+     * serves a caller that does not know whether the socket is occupied.
+     */
+    void swapClient(long clientPid);
+
+    /** Same as {@link #swapClient(long)}, but for a client window embedded the way {@link #embedOpaque(long)} embeds one. */
+    void swapClientOpaque(long clientWindowId);
 
     /**
      * Starts a background accept loop over a persistent rendezvous socket at
      * {@code socketPath}, embedding each connecting client in turn and,
      * once it detaches, going back to accepting the next one — see {@link
      * EmbedSocketX11#listen}.
+     *
+     * <p><strong>{@code socketPath} is a trust boundary.</strong> A client's
+     * whole handshake is the process id it announces, and nothing proves the
+     * process on the other end is that pid — whatever connects gets a window
+     * of its choosing reparented into this host. The socket is narrowed to
+     * its owner as soon as it is bound, which settles the cross-user case,
+     * but any process of the same user that can reach the path can still
+     * connect. Put it somewhere only trusted processes can: a directory the
+     * owner alone may enter is the robust form, and it also closes the brief
+     * gap between {@code bind} and the permission change.
      */
     void listen(Path socketPath);
 

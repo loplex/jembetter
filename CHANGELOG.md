@@ -33,6 +33,35 @@ Who this breaks, and who it does not:
 interface does not carry. The full list of what stays backend-specific is in
 [X11-only extras](docs/advanced-usage.md#x11-only-extras).
 
+### Breaking: an `EmbedSocket` holds one client at a time, and says so
+
+`embed(long)`, `embed(Path)` and `embedOpaque(long)` now throw
+`IllegalStateException` when a client is already embedded. They used to
+overwrite the tracked window and leave the first client reparented inside the
+socket with nothing watching it — `detachClient()` and `close()` released only
+the second, so on X11 the first was left to the save-set and reappeared on the
+desktop at teardown, and on Win32 it went down with the host window.
+
+Replacing a client deliberately has its own name now:
+
+```java
+socket.swapClient(clientPid);        // detachClient() + embed(clientPid)
+socket.swapClientOpaque(windowId);   // detachClient() + embedOpaque(windowId)
+```
+
+`EmbedSocketX11#open` likewise rejects a second call rather than leaking the
+first socket window and its watcher thread.
+
+Who this breaks, and who it does not:
+
+- **Implementing `EmbedSocket` yourself** — source-incompatible, for the same
+  reason as the change above: two methods were added to the interface.
+- **Embedding once per socket, or re-embedding after a detach** — unaffected.
+  That includes `listen()`'s own accept loop, which detaches before it accepts
+  the next client.
+- **Calling `embed` a second time to swap clients** — that call now throws.
+  Change it to `swapClient`, or call `detachClient()` first.
+
 ### Added
 
 - A Win32 backend, alongside the existing X11 one, dispatched on `os.name` by
@@ -63,7 +92,23 @@ interface does not carry. The full list of what stays backend-specific is in
   `ExecutorService.awaitTermination`'s: best-effort teardown, with whether it
   finished as a separate question.
 
+- [Advanced usage](docs/advanced-usage.md) now documents the threading
+  contract: which methods may be called from which thread, which thread each
+  callback is delivered on (none of them AWT's), and what a callback that
+  blocks costs at teardown. Several of those answers existed only as
+  behaviour before.
+
 ### Changed
+
+- Every public method on `EmbedHost`, `EmbedSocket`, `EmbedPlug` and
+  `EmbedClient` now rejects a null argument with a `NullPointerException`
+  naming the parameter. There were none before, so a null went on to fail
+  somewhere else entirely: a null `setWindowLookupTimeout` only surfaced from
+  `Duration.toMillis()` inside a later `embed()`, and a null callback from the
+  background thread that eventually read the field, where a callback failure
+  is caught and logged as "a misbehaving callback" — which it was not. The
+  `wmClass` arguments are the exception, and keep their documented meaning:
+  null says this process owns a single top-level window.
 
 - `EmbedSocketX11.resize`, `setBounds`, `listen`, `embed` and `embedOpaque`
   now throw `IllegalStateException` when the socket has been closed. They
@@ -107,6 +152,14 @@ interface does not carry. The full list of what stays backend-specific is in
   window manager has not let go yet". The first needs no wait at all and
   never did; the second means something is wrong and is now logged instead
   of passing as the same silent non-event.
+
+- A rendezvous socket is narrowed to its owner as soon as it is bound, so no
+  other user's process can connect to it. A client's whole handshake is the
+  process id it announces, and nothing proves the process on the other end is
+  that pid, so who can reach the socket is what the guarantee rests on —
+  which `EmbedSocket#listen` now says out loud. Where the filesystem has no
+  POSIX modes (any Windows host) the socket's directory is the only lever,
+  and the caller's choice of path is the whole story.
 
 ### Fixed
 

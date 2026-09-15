@@ -23,6 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * The Win32 embed/detach/focus/watch mechanics shared by {@link
@@ -52,7 +53,7 @@ final class Win32EmbedCore {
     };
 
     Win32EmbedCore(Canvas hostCanvas) {
-        this.hostCanvas = hostCanvas;
+        this.hostCanvas = Objects.requireNonNull(hostCanvas, "hostCanvas");
         // Before the watcher, not after: extract() is the step that can fail
         // (no native peer yet), and a watcher created first would be left
         // running with nothing able to close it, since the caller never gets
@@ -76,15 +77,21 @@ final class Win32EmbedCore {
     }
 
     void embed(long clientPid) {
+        requireNoClient();
         long clientHwnd = resolveClientWindow(clientPid);
         reparentAndWatch(clientHwnd, clientPid);
     }
 
     void embed(Path rendezvousSocket) {
+        Objects.requireNonNull(rendezvousSocket, "rendezvousSocket");
+        // Before binding, not after: a core that already holds a client
+        // should say so now rather than after waiting for one to connect.
+        requireNoClient();
         try {
             Files.deleteIfExists(rendezvousSocket);
             try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
                 server.bind(UnixDomainSocketAddress.of(rendezvousSocket));
+                RendezvousSocket.restrictToOwner(rendezvousSocket);
                 try (SocketChannel accepted = server.accept()) {
                     embed(PidHandshake.receive(accepted));
                 }
@@ -97,11 +104,44 @@ final class Win32EmbedCore {
     }
 
     void embedOpaque(long clientWindowId) {
+        requireNoClient();
         reparentAndWatch(clientWindowId, Win32WindowFinder.pidOfWindow(clientWindowId));
     }
 
+    /**
+     * Releases the currently embedded client and embeds {@code clientPid}'s
+     * window in its place — the deliberate replacement a second {@link
+     * #embed(long)} is no longer allowed to stand in for. See {@code
+     * EmbedSocket#swapClient(long)}.
+     */
+    void swapClient(long clientPid) {
+        detachClient();
+        embed(clientPid);
+    }
+
+    /** Same as {@link #swapClient(long)}, but for a window embedded the way {@link #embedOpaque(long)} embeds one. */
+    void swapClientOpaque(long clientWindowId) {
+        detachClient();
+        embedOpaque(clientWindowId);
+    }
+
+    /**
+     * Rejects an embed into a core that already holds a client. Without
+     * this, a second embed overwrote {@code embeddedHwnd} and left the
+     * first client reparented into the host canvas with nothing tracking
+     * it: {@link #detachClient()} released only the second, so the first
+     * stayed a {@code WS_CHILD} of a window that is about to go away,
+     * taking it with it — and unlike X11 there is no save-set to rescue it.
+     */
+    private void requireNoClient() {
+        if (isEmbedded()) {
+            throw new IllegalStateException("A client is already embedded in this socket; call detachClient() first, "
+                    + "or swapClient(long)/swapClientOpaque(long) to replace it in one step");
+        }
+    }
+
     void onDetached(Runnable callback) {
-        onDetached = callback;
+        onDetached = Objects.requireNonNull(callback, "callback");
     }
 
     /** Whether a client is currently embedded — for {@link EmbedSocketWin32}'s accept loop to poll for a detach (voluntary or via death). */
@@ -231,7 +271,7 @@ final class Win32EmbedCore {
 
     /** Parity shim for {@code EmbedSocketX11#setWindowLookupTimeout} — see {@link EmbedSocket#setWindowLookupTimeout}. */
     void setWindowLookupTimeout(Duration timeout) {
-        windowLookupTimeout = timeout;
+        windowLookupTimeout = Objects.requireNonNull(timeout, "timeout");
     }
 
     private long resolveClientWindow(long clientPid) {

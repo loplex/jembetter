@@ -24,6 +24,13 @@ import java.util.function.LongConsumer;
  * EmbedClientX11#onActivationChanged} (host-window activation; Win32's host
  * has no sender to pair with) — lives on {@link EmbedClientX11} only; a
  * caller that needs it downcasts to that class explicitly.
+ *
+ * <p><strong>Null is not a valid argument</strong> to anything here, with
+ * one exception: every method rejects one with a {@link
+ * NullPointerException} naming the parameter, at the call that made the
+ * mistake rather than later from a background thread. The exception is
+ * {@code wmClass}, where null is the ordinary value for a process that owns
+ * a single top-level window.
  */
 public interface EmbedClient extends AutoCloseable {
 

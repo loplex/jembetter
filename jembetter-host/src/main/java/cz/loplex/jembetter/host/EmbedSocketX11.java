@@ -44,6 +44,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntFunction;
 import java.util.function.Predicate;
@@ -158,7 +159,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
     };
 
     public EmbedSocketX11(Frame owner) {
-        this.owner = owner;
+        this.owner = Objects.requireNonNull(owner, "owner");
         // Built here rather than in field initializers so that a failure
         // part-way through can be undone. Each of these opens its own X11
         // connection, and the watchers each start a thread; if the second or
@@ -189,6 +190,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
 
     /** Creates the underlying X11 window at the given screen bounds and starts watching it for inbound XEmbed messages. */
     public void open(int x, int y, int width, int height) {
+        requireNotOpen();
         windowId = RawWindow.createOverrideRedirect(display, x, y, width, height);
         initInboundWatcher(width, height);
     }
@@ -250,6 +252,8 @@ public final class EmbedSocketX11 implements EmbedSocket {
      * here).
      */
     public void open(Canvas hostCanvas) {
+        Objects.requireNonNull(hostCanvas, "hostCanvas");
+        requireNotOpen();
         long canvasWindowId = CanvasNativeHandle.extract(hostCanvas);
         windowId = RawWindow.createChild(display, canvasWindowId, hostCanvas.getWidth(), hostCanvas.getHeight());
         initInboundWatcher(hostCanvas.getWidth(), hostCanvas.getHeight());
@@ -393,6 +397,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     @Override
     public void listen(Path socketPath) {
+        Objects.requireNonNull(socketPath, "socketPath");
         requireOpen();
         synchronized (lifecycleLock) {
             if (listening) {
@@ -402,6 +407,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
                 Files.deleteIfExists(socketPath);
                 server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
                 server.bind(UnixDomainSocketAddress.of(socketPath));
+                RendezvousSocket.restrictToOwner(socketPath);
             } catch (IOException e) {
                 // A channel that was opened but never bound is this method's
                 // to clean up; leaving it behind would hold the file
@@ -486,6 +492,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
     @Override
     public void embed(long clientPid) {
         requireOpen();
+        requireNoClient();
         long clientWindowId = resolveClientWindow(clientPid);
         // watchForSizeContest before the reparent, not after - see its
         // Javadoc for why the ordering itself is the fix.
@@ -513,11 +520,16 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     @Override
     public void embed(Path rendezvousSocket) {
+        Objects.requireNonNull(rendezvousSocket, "rendezvousSocket");
         requireOpen();
+        // Before binding, not after: a socket that already holds a client
+        // should say so now rather than after waiting for one to connect.
+        requireNoClient();
         try {
             Files.deleteIfExists(rendezvousSocket);
             try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
                 server.bind(UnixDomainSocketAddress.of(rendezvousSocket));
+                RendezvousSocket.restrictToOwner(rendezvousSocket);
                 try (SocketChannel accepted = server.accept()) {
                     embed(PidHandshake.receive(accepted));
                 }
@@ -557,7 +569,9 @@ public final class EmbedSocketX11 implements EmbedSocket {
      * ClientMessages despite not being relied on to.
      */
     public void embedOpaque(long clientWindowId, Duration pollInterval, int maxAttempts) {
+        Objects.requireNonNull(pollInterval, "pollInterval");
         requireOpen();
+        requireNoClient();
         display.ifOpen(raw -> XEmbedInfoProperty.write(raw, clientWindowId,
                 new XEmbedInfoProperty.Value(XEmbedInfo.PROTOCOL_VERSION, XEmbedInfo.MAPPED)));
         // watchForSizeContest before the reparent, not after - see its
@@ -574,6 +588,33 @@ public final class EmbedSocketX11 implements EmbedSocket {
         sendActivated(owner.isFocused());
         deathWatcher.watch(clientWindowId, this::handleClientDetached);
         inbound.watchButtonPress(clientWindowId);
+    }
+
+    /**
+     * Releases the currently embedded client and embeds {@code clientPid}'s
+     * window in its place — {@link #detachClient()} followed by {@link
+     * #embed(long)}, as one named operation. This is the swap {@link
+     * #embed(long)} refuses to be mistaken for: the outgoing client goes
+     * back to the desktop as a live top-level window, rather than being
+     * left untracked inside this socket.
+     *
+     * <p>The detach is a no-op when nothing is embedded, so this is also
+     * the call to make when the caller does not know or care whether the
+     * socket is currently occupied.
+     */
+    @Override
+    public void swapClient(long clientPid) {
+        requireOpen();
+        detachClient();
+        embed(clientPid);
+    }
+
+    /** Same as {@link #swapClient(long)}, but for a client window embedded the way {@link #embedOpaque(long)} embeds one. */
+    @Override
+    public void swapClientOpaque(long clientWindowId) {
+        requireOpen();
+        detachClient();
+        embedOpaque(clientWindowId);
     }
 
     private void waitForReparentConfirmed(long clientWindowId, Duration pollInterval, int maxAttempts) {
@@ -607,7 +648,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     @Override
     public void onClientEmbedded(Runnable callback) {
-        onClientEmbedded = callback;
+        onClientEmbedded = Objects.requireNonNull(callback, "callback");
     }
 
     /**
@@ -617,7 +658,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     @Override
     public void onClientDetached(Runnable callback) {
-        onClientDetached = callback;
+        onClientDetached = Objects.requireNonNull(callback, "callback");
     }
 
     /**
@@ -686,12 +727,12 @@ public final class EmbedSocketX11 implements EmbedSocket {
      * Runs on {@link XEmbedInboundWatcher}'s own background thread.
      */
     public void onFocusNext(Runnable callback) {
-        onFocusNext = callback;
+        onFocusNext = Objects.requireNonNull(callback, "callback");
     }
 
     /** Same as {@link #onFocusNext}, but for the tab chain exhausted going backward (XEMBED_FOCUS_PREV). */
     public void onFocusPrev(Runnable callback) {
-        onFocusPrev = callback;
+        onFocusPrev = Objects.requireNonNull(callback, "callback");
     }
 
     /**
@@ -702,6 +743,11 @@ public final class EmbedSocketX11 implements EmbedSocket {
      * window at once; a single-window client resolves unambiguously without
      * this. Applies to every client accepted from here on, including
      * re-embeds after a detach.
+     *
+     * <p>{@code null} is the meaningful value for that single-window case,
+     * and the one argument this class does not reject as null — it clears a
+     * class set earlier, going back to matching whatever single window a
+     * client publishes.
      */
     public void expectClientWindowClass(String wmClass) {
         expectedClientWmClass = wmClass;
@@ -714,7 +760,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     @Override
     public void setWindowLookupTimeout(Duration timeout) {
-        windowLookupTimeout = timeout;
+        windowLookupTimeout = Objects.requireNonNull(timeout, "timeout");
     }
 
     /**
@@ -898,6 +944,46 @@ public final class EmbedSocketX11 implements EmbedSocket {
      * nothing and say nothing. Asking a closed socket to move or embed is a
      * programming error, so it says so.
      */
+    /**
+     * Rejects an embed into a socket that already holds a client. Without
+     * this, a second {@link #embed(long)} or {@link #embedOpaque(long)}
+     * overwrote {@code embeddedWindowId} and left the first client
+     * reparented inside this socket with nothing tracking it any more: the
+     * later {@link #detachClient()} released only the second, {@link
+     * #close()} detached only the second, and the first was left for X11's
+     * save-set to rescue — which it only does by reparenting the window
+     * back to root when this connection itself closes, so the abandoned
+     * client reappeared on the desktop at teardown.
+     *
+     * <p>Replacing one client with another is a reasonable thing to want,
+     * and it now has its own name rather than being spelled as a second
+     * {@code embed}: {@link #swapClient(long)}.
+     */
+    private void requireNoClient() {
+        if (embeddedWindowId >= 0) {
+            throw new IllegalStateException("A client is already embedded in this socket; call detachClient() first, "
+                    + "or swapClient(long)/swapClientOpaque(long) to replace it in one step");
+        }
+    }
+
+    /**
+     * Rejects a second {@code open}. Without this, the second call
+     * overwrote {@code windowId} — leaking the first X11 window — and built
+     * a second {@link XEmbedInboundWatcher} over the first, leaking its
+     * thread and leaving it polling a window nobody would use again.
+     *
+     * <p>{@code windowId} keeps its value past {@link #close()}, so this
+     * also catches an attempt to reopen a closed socket, which is not
+     * something this type supports: the X11 connection the window was
+     * created on is gone. That case reports itself as closed rather than as
+     * open, since that is the more useful half of the truth.
+     */
+    private void requireNotOpen() {
+        if (windowId >= 0) {
+            throw new IllegalStateException(closed.get() ? "This socket is closed" : "This socket is already open");
+        }
+    }
+
     private void requireOpen() {
         if (closed.get()) {
             throw new IllegalStateException("This socket is closed");

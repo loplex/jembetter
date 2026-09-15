@@ -14,6 +14,7 @@ import java.nio.channels.SocketChannel;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.LongConsumer;
 
 /**
@@ -69,6 +70,7 @@ final class EmbedPlugWin32 implements EmbedPlug {
 
     @Override
     public void announce(Path hostSocket, String wmClass) {
+        Objects.requireNonNull(hostSocket, "hostSocket");
         announce(wmClass);
         try {
             UnixDomainSocketAddress address = UnixDomainSocketAddress.of(hostSocket);
@@ -83,12 +85,12 @@ final class EmbedPlugWin32 implements EmbedPlug {
 
     @Override
     public void onEmbedded(LongConsumer callback) {
-        onEmbedded = callback;
+        onEmbedded = Objects.requireNonNull(callback, "callback");
     }
 
     @Override
     public void onHostDetached(Runnable callback) {
-        onHostDetached = callback;
+        onHostDetached = Objects.requireNonNull(callback, "callback");
     }
 
     /**
@@ -106,7 +108,7 @@ final class EmbedPlugWin32 implements EmbedPlug {
      */
     @Override
     public void onFocusChanged(FocusListener callback) {
-        onFocusChanged = callback;
+        onFocusChanged = Objects.requireNonNull(callback, "callback");
     }
 
 
