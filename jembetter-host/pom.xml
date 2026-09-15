@@ -7,13 +7,17 @@
   <parent>
     <groupId>cz.loplex</groupId>
     <artifactId>jembetter-parent</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.2.0-SNAPSHOT</version>
   </parent>
 
   <artifactId>jembetter-host</artifactId>
   <packaging>jar</packaging>
 
   <name>jembetter-host</name>
+
+  <properties>
+    <automatic.module.name>cz.loplex.jembetter.host</automatic.module.name>
+  </properties>
   <description>Embedder-side API: hosts another application's window inside a Swing container.</description>
 
   <dependencies>

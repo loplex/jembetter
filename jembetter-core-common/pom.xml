@@ -7,13 +7,17 @@
   <parent>
     <groupId>cz.loplex</groupId>
     <artifactId>jembetter-parent</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.2.0-SNAPSHOT</version>
   </parent>
 
   <artifactId>jembetter-core-common</artifactId>
   <packaging>jar</packaging>
 
   <name>jembetter-core-common</name>
+
+  <properties>
+    <automatic.module.name>cz.loplex.jembetter.common</automatic.module.name>
+  </properties>
   <description>Platform-independent, JNA-free code shared by the host and client sides: the rendezvous handshake and AWT Canvas-to-native-handle extraction.</description>
 
   <dependencies>

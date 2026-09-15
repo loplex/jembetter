@@ -56,7 +56,7 @@ Then depend on the module(s) you need:
 <dependency>
   <groupId>cz.loplex</groupId>
   <artifactId>jembetter-host</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.2.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -139,14 +139,22 @@ deploys from CI using the built-in `GITHUB_TOKEN` — no secret to configure.
 Cutting a release is therefore:
 
 ```sh
-mvn versions:set -DnewVersion=0.1.0 -DgenerateBackupPoms=false
-git commit -am "Release 0.1.0"
-git tag v0.1.0
+mvn versions:set -DnewVersion=0.2.0 -DgenerateBackupPoms=false
+git commit -am "Release 0.2.0"
+git tag v0.2.0
 git push origin main --tags
 
-mvn versions:set -DnewVersion=0.2.0-SNAPSHOT -DgenerateBackupPoms=false
+mvn versions:set -DnewVersion=0.3.0-SNAPSHOT -DgenerateBackupPoms=false
 git commit -am "Back to snapshot development"
 ```
+
+The same workflow also carries `workflow_dispatch`, and that is how a snapshot
+reaches the registry: there is no tag to hang one off, so it is run by hand
+against whichever ref should be published and deploys the version the poms
+carry at that ref. No `v*` tag exists yet, so everything currently in the
+registry arrived that way. Choose the ref deliberately — what lands in the
+registry names the commit it was built from, and nothing re-resolves that
+afterwards.
 
 Release versions on GitHub Packages are immutable: a given version uploads
 exactly once, and a re-upload is rejected with HTTP 409. A botched release has

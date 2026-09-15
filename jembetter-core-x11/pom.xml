@@ -7,13 +7,22 @@
   <parent>
     <groupId>cz.loplex</groupId>
     <artifactId>jembetter-parent</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.2.0-SNAPSHOT</version>
   </parent>
 
   <artifactId>jembetter-core-x11</artifactId>
   <packaging>jar</packaging>
 
   <name>jembetter-core-x11</name>
+
+  <properties>
+    <!-- Matches the artifactId rather than this module's root package: the
+         root, cz.loplex.jembetter.core, holds only a package-info.java, and
+         naming the module after it makes javadoc fail with "No source files
+         for package". A module name need not prefix every package it ships,
+         and this module also carries .core and .core.xembed. -->
+    <automatic.module.name>cz.loplex.jembetter.core.x11</automatic.module.name>
+  </properties>
   <description>X11 native bindings and the XEmbed protocol implementation shared by the host and client sides.</description>
 
   <dependencies>
