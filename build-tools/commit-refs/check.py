@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
-"""Resolves every commit SHA written into tracked content.
+"""Refuses a commit SHA written into tracked content.
 
-Two surfaces, one question. A commit message makes cross-references; so does
-the prose of a tracked file, and the README of this very checker cited two
-sibling SHAs until 2026-09-15 without anything noticing. Both outlive the
-machine they were written on, and in both a SHA is the only half a machine can
-resolve.
+Commit messages and the text of tracked files both make cross-references that
+outlive the machine they were written on. A SHA is the worst way to write one.
+It is unreadable on its own, it says nothing about what it points at, and it
+stops resolving the moment the branch it names is rewritten - which is a thing
+that happens to every branch here before it lands.
 
-`build-tools/docs-links/check.py` does this job for Markdown links, and its
-README argues the general case: a pointer written as prose cannot be checked
-by anything, so it rots silently.
+An earlier version of this check tried to sort good SHAs from bad by resolving
+them against remote-tracking refs. That works, and it made the verdict a
+property of the remote rather than of the commit: the same message passed on
+one machine and failed on another, and passed before a push and failed after
+one. Two references sat unreported because of it.
 
-A SHA is the half of that problem which *is* mechanically checkable, and it is
-also the half that breaks for someone who clones. A message can cite a commit
-that exists only in the author's object store - a pre-rebase version of one that
-was rewritten, say - and it will resolve for them and for nobody else.
+So the rule is the blunt one instead, and it is a property of the text alone:
+do not write a commit SHA. Write the commit's subject. Subjects are unique
+across this repository's history, so nothing is lost by it, and a subject still
+means something to a reader who has no clone at all.
 
-Prose pointers ("the previous commit") are not checkable and are out of scope.
-See this directory's README for what else is deliberately not checked.
-
-Exits 1 and prints one line per unresolvable reference.
+Exits 1 and prints one line per SHA found.
 """
 
 import re
@@ -29,8 +28,10 @@ import sys
 DEFAULT_RANGE = "origin/main..HEAD"
 
 # Seven hex digits is git's own abbreviation floor and the shortest form worth
-# treating as a reference. Bounded at 40 so a longer hex run - a key, a hash in
-# a quoted log line - is not silently truncated into something that resolves.
+# mistaking for a reference. Bounded at 40, which also makes a longer hex run
+# immune: a sha256 in a quoted log line has no word boundary 40 characters in,
+# so it never matches. `0x`-prefixed constants are immune for the same reason -
+# the `x` is a word character, so there is no boundary before the digits.
 HEX = re.compile(r"\b[0-9a-f]{7,40}\b")
 
 # A run of hex digits that happens to be all decimal is a number, not a SHA:
@@ -44,58 +45,24 @@ def git(*args):
     ).stdout.strip()
 
 
-def commits(rev_range):
-    out = git("rev-list", rev_range)
-    return out.split("\n") if out else []
+def references(rev_range):
+    """Yield (where, token) for every SHA-shaped token in scope.
 
-
-def resolve(token):
-    """(full sha or '', reachable-from-a-remote) for a candidate SHA.
-
-    Reachability is measured against remote-tracking refs *only*, never local
-    ones. That distinction is the whole point: this repository keeps a dozen
-    local backup branches and tags from earlier history cleanups, and a
-    rewritten commit stays reachable from those forever. It resolves on the
-    author's machine and nowhere else, which is exactly the failure being
-    looked for - so counting a local ref as reachable would make the check
-    pass on the very case that motivated it.
-
-    Accuracy therefore depends on the remote-tracking refs being current; the
-    CI step fetches first.
+    Messages are read over the range; tracked files are read at HEAD, through
+    `git grep -I` so binary content is skipped. A file needs no range - text
+    that names a SHA names it now, whichever commit wrote it.
     """
-    full = git("rev-parse", "--verify", "--quiet", f"{token}^{{commit}}")
-    if not full:
-        return "", False
-    # --contains=<sha>, not --contains <sha>: the value is optional, so the
-    # separate form invites git to read the next argument as a ref pattern.
-    refs = git("for-each-ref", f"--contains={full}", "--format=%(refname:short)",
-               "refs/remotes")
-    return full, bool(refs)
-
-
-def references(rev_range, in_range):
-    """Yield (where, token, self_sha) for every SHA-shaped token in scope.
-
-    `self_sha` is set only for a commit message, where a commit abbreviating
-    itself is not a defect. A file has no such exemption.
-    """
-    for sha in sorted(in_range):
-        subject = git("log", "-1", "--format=%s", sha)
-        where = f"{sha[:7]} ({subject})"
+    for sha in [s for s in git("rev-list", rev_range).split("\n") if s]:
+        where = f"{sha[:7]} ({git('log', '-1', '--format=%s', sha)})"
         for token in HEX.findall(git("log", "-1", "--format=%B", sha)):
-            yield where, token, sha
+            yield where, token
 
-    # Tracked files as they stand at HEAD, not as any commit left them: a
-    # reference that is stale now is stale regardless of which commit wrote it.
     # HEX.pattern rather than a second copy: git grep -E reads the same word
     # boundaries Python does here, and two spellings of one rule drift apart.
-    # -I drops binary files, so the walk is over text only.
-    for line in git("grep", "-InE", HEX.pattern).split("\n"):
-        if not line:
-            continue
+    for line in [l for l in git("grep", "-InE", HEX.pattern).split("\n") if l]:
         path, lineno, text = line.split(":", 2)
         for token in HEX.findall(text):
-            yield f"{path}:{lineno}", token, None
+            yield f"{path}:{lineno}", token
 
 
 def main():
@@ -105,56 +72,18 @@ def main():
               f"is the base branch fetched?", file=sys.stderr)
         return 2
 
-    in_range = set(commits(rev_range))
-    problems = 0
-    fragile = 0
-
     seen = set()
-    for where, token, self_sha in references(rev_range, in_range):
+    for where, token in references(rev_range):
         if DECIMAL.match(token) or (where, token) in seen:
             continue
         seen.add((where, token))
-        # A commit citing itself by its own abbreviation cannot be a
-        # defect - it resolves by construction.
-        if self_sha and self_sha.startswith(token):
-            continue
-        full, reachable = resolve(token)
-        if not full:
-            problems += 1
-            print(f"BROKEN   {where}: '{token}' resolves to no commit")
-        elif full in in_range:
-            # Not broken: it is a sibling in the range about to be pushed,
-            # so it will exist for a clone. Reported anyway, because a
-            # rewrite of this branch changes that SHA and turns the
-            # reference into the broken case below.
-            #
-            # Asked before reachability, and the order is the whole of it.
-            # Once the branch has been pushed a sibling *is* contained in a
-            # remote-tracking ref, so testing reachability first takes the
-            # continue below and says nothing - silent on exactly the
-            # branches whose references are about to be rewritten. Range
-            # membership is a property of the commit; reachability is a
-            # property of the remote, and the narrower question goes first.
-            fragile += 1
-            print(f"FRAGILE  {where}: '{token}' is another commit "
-                  f"in this range - a rewrite of the branch will break it")
-        elif reachable:
-            continue
-        else:
-            problems += 1
-            print(f"BROKEN   {where}: '{token}' resolves locally, but "
-                  f"no remote-tracking ref contains it - it does not exist for a clone")
+        print(f"SHA  {where}: '{token}' - name the commit by its subject")
 
-    if problems:
-        print(f"\n{problems} broken commit reference(s) in {rev_range}"
-              + (f", and {fragile} fragile." if fragile else "."))
+    if seen:
+        print(f"\n{len(seen)} commit SHA(s) written into tracked content in "
+              f"{rev_range}. A SHA is not a reference anyone else can follow.")
         return 1
-    if fragile:
-        print(f"\nNo broken references in {rev_range}, but {fragile} would not "
-              f"survive a rewrite of this branch.")
-        return 0
-    print(f"Every commit SHA in {rev_range} and in tracked files resolves "
-          f"for a clone.")
+    print(f"No commit SHAs written into tracked content in {rev_range}.")
     return 0
 
 

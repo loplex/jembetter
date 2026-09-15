@@ -41,7 +41,7 @@ jobs:
 
       # The same argument for the other cross-reference surface. Empty and
       # trivially green on a push to main, where the range is empty.
-      - name: Check commit-message references
+      - name: Check for commit SHAs in tracked content
         run: python3 build-tools/commit-refs/check.py
 
       - name: Install Xvfb + openbox + xdotool
