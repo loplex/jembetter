@@ -21,6 +21,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The commit-reference check below needs the history its range names
+          # and the remote-tracking refs it measures reachability against. The
+          # default shallow checkout has neither, and would leave that check
+          # passing on everything by having nothing to look at.
+          fetch-depth: 0
 
       - uses: actions/setup-java@v4
         with:
@@ -32,6 +38,11 @@ jobs:
       # cross-reference is worth knowing about without waiting out a Wine run.
       - name: Check Markdown links
         run: python3 build-tools/docs-links/check.py
+
+      # The same argument for the other cross-reference surface. Empty and
+      # trivially green on a push to main, where the range is empty.
+      - name: Check commit-message references
+        run: python3 build-tools/commit-refs/check.py
 
       - name: Install Xvfb + openbox + xdotool
         run: sudo apt-get update && sudo apt-get install -y xvfb openbox xdotool
