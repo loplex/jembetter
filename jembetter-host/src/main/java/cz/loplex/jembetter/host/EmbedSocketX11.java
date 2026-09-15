@@ -465,6 +465,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
                     LOG.warn("Embedding an accepted client failed; still listening for the next client", e);
                     continue;
                 }
+                announceEmbedded();
                 onClientEmbedded.run();
                 awaitDetach();
                 closeQuietly(controlChannel);
@@ -787,6 +788,35 @@ public final class EmbedSocketX11 implements EmbedSocket {
         display.ifOpen(raw -> XEmbedMessages.send(raw, id, modal ? XEmbedMessage.MODALITY_ON
                 : XEmbedMessage.MODALITY_OFF, 0, 0, 0));
         sendControlMessage(ControlMessage.of(ControlMessage.Type.MODALITY, modal));
+    }
+
+    /**
+     * Tells the {@link #listen} client that the reparent it is about to see,
+     * or has just seen, was this host embedding it.
+     *
+     * <p>The delivered counterpart of the {@code XEMBED_EMBEDDED_NOTIFY} this
+     * class also sends: that {@code ClientMessage} goes out on a zero event
+     * mask, as XEmbed requires, so it only ever reaches the connection that
+     * created the client's window — AWT's own, not the client's
+     * {@code X11Display}. {@code EmbedClientX11#onEmbedded} documents that
+     * restriction as the reason it reads {@code ReparentNotify} instead.
+     *
+     * <p>Reading the reparent is enough to see <em>that</em> a reparent
+     * happened and not <em>whether it was an embed</em>: a window manager
+     * reparents any ordinary top-level window into its own decoration frame,
+     * including one just released by {@link #detachClient()}. A client
+     * therefore accepts only its first reparent, which costs it every later
+     * one, a genuine re-embed included. This frame carries the missing bit on
+     * a channel the client can actually read; the client supplies the window
+     * id by reading its own parent.
+     *
+     * <p>Sent after the embed, so it states something that has happened
+     * rather than predicting it. A client that has already seen and filtered
+     * the reparent reads its own parent when this arrives; one that has not
+     * yet seen it arms itself for the reparent still to come.
+     */
+    private void announceEmbedded() {
+        sendControlMessage(ControlMessage.embedded());
     }
 
     /**

@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
+import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
@@ -371,6 +372,73 @@ class EmbedClientX11Test {
 
             assertEquals(Boolean.TRUE, modality.poll(5, TimeUnit.SECONDS), "onModalityChanged(true) never fired");
             assertEquals(Boolean.FALSE, activation.poll(5, TimeUnit.SECONDS), "onActivationChanged(false) never fired");
+        } finally {
+            Files.deleteIfExists(socketPath);
+        }
+    }
+
+    /**
+     * A client older than its host receives a frame type that is not in its
+     * build — the situation adding a {@link ControlMessage.Type} creates, and
+     * the one {@code EMBEDDED} created for anything built before it.
+     *
+     * <p>The frame has to be skipped rather than end the reader. It used to end
+     * it: {@code Type.ofCode} throws for a code it does not know, the reader
+     * caught only {@code IOException}, and the exception left the loop and the
+     * daemon thread with it — so modality, activation and every later frame
+     * went missing with nothing said. What makes skipping sound is the fixed
+     * two-byte framing: the frame is fully consumed before it is decoded, so
+     * the stream is left exactly where the next one starts.
+     *
+     * <p>Asserting on the frame <em>after</em> the unknown one is the point. A
+     * test that only asserted the unknown frame caused no callback would pass
+     * against a dead reader, which is the defect.
+     */
+    @Test
+    void anUnrecognisedControlFrameIsSkippedAndTheNextOneStillArrives() throws IOException, InterruptedException {
+        frame = new JFrame("jembetter-client EmbedClientX11Test");
+        frame.setBounds(0, 0, 50, 50);
+        frame.setVisible(true);
+
+        Path socketPath = Files.createTempFile("jembetter-client-test-", ".sock");
+        Files.delete(socketPath);
+        UnixDomainSocketAddress address = UnixDomainSocketAddress.of(socketPath);
+
+        try {
+            CountDownLatch hostReady = new CountDownLatch(1);
+            Thread host = new Thread(() -> {
+                try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
+                    server.bind(address);
+                    hostReady.countDown();
+                    try (SocketChannel accepted = server.accept()) {
+                        PidHandshake.receive(accepted);
+                        // Codes 1-4 are MODALITY, ACTIVATION, FOCUS_REQUEST and
+                        // EMBEDDED. 5 is whatever gets added next, written by
+                        // hand because ControlMessage cannot express a type it
+                        // does not have.
+                        ByteBuffer unknown = ByteBuffer.wrap(new byte[] {(byte) 5, (byte) 1});
+                        while (unknown.hasRemaining()) {
+                            accepted.write(unknown);
+                        }
+                        Thread.sleep(200); // let the reader reach and skip it
+                        ControlMessage.of(ControlMessage.Type.MODALITY, true).writeTo(accepted);
+                        Thread.sleep(500); // keep the channel open past the assertion
+                    }
+                } catch (IOException | InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            host.setDaemon(true);
+            host.start();
+            assertTrue(hostReady.await(5, TimeUnit.SECONDS), "fake host never started listening");
+
+            BlockingQueue<Boolean> modality = new ArrayBlockingQueue<>(4);
+            client = new EmbedClientX11();
+            client.onModalityChanged(modality::add);
+            client.offer(socketPath);
+
+            assertEquals(Boolean.TRUE, modality.poll(5, TimeUnit.SECONDS),
+                    "the frame after an unrecognised one never arrived - the reader died on it");
         } finally {
             Files.deleteIfExists(socketPath);
         }

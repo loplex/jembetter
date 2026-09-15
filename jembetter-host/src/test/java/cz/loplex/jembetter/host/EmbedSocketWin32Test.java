@@ -200,6 +200,15 @@ class EmbedSocketWin32Test {
             PidHandshake.send(channel, clientPid);
             assertTrue(embedded.await(5, TimeUnit.SECONDS), "client was never embedded via listen()");
 
+            // listen() announces the embed on the channel first - the frame
+            // that tells a client which reparent was an embed rather than
+            // leaving it to guess. Asserted here, in order, because this test
+            // reads the channel positionally: anything added to what listen()
+            // writes has to show up here or every frame after it is read as
+            // the wrong thing.
+            assertControlFrame(readFrame(channel), ControlMessage.Type.EMBEDDED, true,
+                    "listen() did not announce the embed on the control channel");
+
             socket.setModal(true);
             assertControlFrame(readFrame(channel), ControlMessage.Type.MODALITY, true,
                     "setModal(true) did not write a MODALITY=true frame into the control channel");

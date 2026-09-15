@@ -55,7 +55,28 @@ public final class ControlMessage {
          * XEMBED_REQUEST_FOCUS} as a real {@code ClientMessage} the host can
          * actually read, so its channel is host&rarr;client only.
          */
-        FOCUS_REQUEST((byte) 3);
+        FOCUS_REQUEST((byte) 3),
+
+        /**
+         * host&rarr;client: "I have just embedded your window". {@code flag}
+         * is unused (always {@code true}). The delivered counterpart of
+         * {@code XEMBED_EMBEDDED_NOTIFY}, which — like {@code MODALITY} and
+         * {@code ACTIVATION} above — cannot be read on the client's own X11
+         * connection, since a zero-mask {@code XSendEvent} reaches only the
+         * connection that created the destination window.
+         *
+         * <p><strong>Carries no window id, deliberately.</strong> XEmbed's own
+         * {@code EMBEDDED_NOTIFY} passes the embedder's window, and an id does
+         * not fit the fixed 2-byte frame this channel is built on. It does not
+         * need to: the client can read its own window's parent, and that
+         * parent <em>is</em> the embedder. What a client cannot determine for
+         * itself is <em>which</em> reparent was an embed — a window manager or
+         * a desktop shell reparents an ordinary top-level window into a
+         * decoration frame of its own, and from the client's side that is
+         * indistinguishable from a host doing it. This frame supplies exactly
+         * that missing bit; the client supplies the id.
+         */
+        EMBEDDED((byte) 4);
 
         private final byte code;
 
@@ -94,6 +115,11 @@ public final class ControlMessage {
     /** A {@link Type#FOCUS_REQUEST} message (its payload byte is unused). */
     public static ControlMessage focusRequest() {
         return new ControlMessage(Type.FOCUS_REQUEST, false);
+    }
+
+    /** An {@link Type#EMBEDDED} message (its payload byte is unused). */
+    public static ControlMessage embedded() {
+        return new ControlMessage(Type.EMBEDDED, true);
     }
 
     public Type type() {

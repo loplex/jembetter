@@ -27,12 +27,19 @@ import java.util.function.BooleanSupplier;
  * only ever exercise each against a hand-rolled stand-in for the other, since
  * the two modules don't depend on one another, and only under Wine.
  *
- * <p>Six gated transitions against a real {@link EmbedClientProcessMain}
+ * <p>Seven gated transitions against a real {@link EmbedClientProcessMain}
  * child JVM embedded via {@link EmbedSocketWin32#listen}:
  *
  * <ol>
  *   <li><b>embed:</b> the client's {@code onEmbedded} fires with the host
  *       canvas HWND as the embedder.</li>
+ *   <li><b>modality on the client's own embed signal:</b> a {@code
+ *       setModal(true)} written the instant the client says it is embedded,
+ *       rather than when the host says so. The earlier of the two signals,
+ *       and the one that used to lose the frame — this is the only place the
+ *       interval between them was ever observable, so it is the only guard
+ *       the control channel's assignment order has. See step (2a) in the
+ *       code for what a {@code false} here means.</li>
  *   <li><b>modality both ways:</b> {@link EmbedSocketWin32#setModal(boolean)}
  *       {@code true} then {@code false} each reach the client's {@code
  *       onModalityChanged} over the kept-open control channel.</li>
@@ -84,6 +91,7 @@ final class SocketClientWin32Check {
         boolean qResize;
         boolean qDetach;
         boolean qReembed;
+        boolean qEarlyModal;
 
         try (EmbedSocketWin32 socket = new EmbedSocketWin32(canvas)) {
             // The host's own embed signal, which the client's EMBEDDED line is
@@ -110,6 +118,30 @@ final class SocketClientWin32Check {
             System.out.println("SOCKETCLIENT: (1) embed - client reported parent=0x"
                     + Long.toHexString(reportedParent) + " (want 0x" + Long.toHexString(canvasHwnd)
                     + ") => " + qEmbed);
+
+            // (2a) modality written the moment the CLIENT says it is embedded,
+            // which is the earlier of the two signals and the racy one.
+            //
+            // This is deliberately the send that used to be lossy. listen()
+            // once assigned the control channel after the embed, so a write
+            // between the client seeing its reparent and that assignment hit
+            // setModal's "no channel" early return and vanished: 2 of 15 runs
+            // on 2026-09-14, always as on=false off=true. Step (2) below was
+            // changed to wait for the host instead, which stopped the failures
+            // and also stopped anything measuring the interval - so this step
+            // exists to keep measuring it. The channel is now assigned before
+            // the embed, which closes the interval by construction; if this
+            // line ever reads on=false again, that ordering has regressed.
+            //
+            // Real Windows is the only place this was ever observable, which
+            // is why it lives here and not in the test suite: under Wine the
+            // gap is too short for a poll to land in.
+            socket.setModal(true);
+            qEarlyModal = awaitLine("MODALITY=true", 0, 5000) != null;
+            System.out.println("SOCKETCLIENT: (2a) modality on the client's own embed signal => "
+                    + qEarlyModal);
+            socket.setModal(false);
+            awaitLine("MODALITY=false", 0, 5000);
 
             // (2) modality, both directions.
             //
@@ -162,9 +194,11 @@ final class SocketClientWin32Check {
             Files.deleteIfExists(socketPath);
         }
 
-        boolean passed = qEmbed && qModalOn && qModalOff && qFocus && qResize && qDetach && qReembed;
+        boolean passed = qEmbed && qEarlyModal && qModalOn && qModalOff && qFocus && qResize && qDetach
+                && qReembed;
         System.out.println("SOCKETCLIENT: " + (passed ? "PASS" : "FAIL")
-                + " (embed=" + qEmbed + ", modalOn=" + qModalOn + ", modalOff=" + qModalOff
+                + " (embed=" + qEmbed + ", earlyModal=" + qEarlyModal
+                + ", modalOn=" + qModalOn + ", modalOff=" + qModalOff
                 + ", focus=" + qFocus + ", resize=" + qResize + ", detach=" + qDetach
                 + ", reembed=" + qReembed + ")");
         System.exit(passed ? 0 : 1);

@@ -11,6 +11,7 @@ import cz.loplex.jembetter.core.x11.WindowConfigureWatcher;
 import cz.loplex.jembetter.core.x11.WindowFinder;
 import cz.loplex.jembetter.core.x11.WindowFocusWatcher;
 import cz.loplex.jembetter.core.x11.WindowReparentWatcher;
+import cz.loplex.jembetter.core.x11.WindowTree;
 import cz.loplex.jembetter.core.x11.X11Display;
 import cz.loplex.jembetter.core.xembed.XEmbedInfo;
 import cz.loplex.jembetter.core.xembed.XEmbedInfoProperty;
@@ -167,6 +168,27 @@ public final class EmbedClientX11 implements EmbedClient {
      * cz.loplex.jembetter.host.EmbedSocket#detachClient()} — without this
      * filter, that second, unrelated reparent would be mistaken for a new
      * embed. Runs on {@link WindowReparentWatcher}'s own background thread.
+     *
+     * <p><strong>How often this fires depends on how the client was set
+     * up.</strong> The filter above is the reason, and there are two ways out
+     * of it:
+     *
+     * <ul>
+     *   <li>{@link #offer(Path)} against a host's {@code
+     *       EmbedSocket#listen} socket opens a control channel, and the host
+     *       sends a {@link ControlMessage.Type#EMBEDDED} frame on it for
+     *       every embed. That frame says which reparent was an embed instead
+     *       of leaving this class to guess, so a client embedded this way is
+     *       told about a re-embed after {@code detachClient()} as well as
+     *       about the first one.</li>
+     *   <li>{@link #announce()} and {@link #watchOwnWindow(long)} open no
+     *       channel, so they have only the reparent to go on and this fires
+     *       <em>once</em>: the first embed after the call. To hear about a
+     *       later one, call {@link #watchOwnWindow(long)} again with the same
+     *       window id — it re-arms the filter, and re-watching a window
+     *       already watched replaces its callbacks rather than adding a
+     *       second set.</li>
+     * </ul>
      */
     @Override
     public void onEmbedded(LongConsumer callback) {
@@ -356,14 +378,34 @@ public final class EmbedClientX11 implements EmbedClient {
     private void readControlChannel() {
         SocketChannel channel = controlChannel;
         try {
-            ControlMessage message;
-            while ((message = ControlMessage.readFrom(channel)) != null) {
+            while (true) {
+                ControlMessage message;
+                try {
+                    message = ControlMessage.readFrom(channel);
+                } catch (IllegalArgumentException e) {
+                    // A host that has learned a frame type this build does not
+                    // know - the case a client older than its host is in, which
+                    // is what adding a type creates. Skipping is safe because
+                    // the framing is a fixed two bytes: readFrom has already
+                    // consumed the whole frame before decoding it, so the
+                    // stream cannot be left mid-frame and there is no length to
+                    // misread. Letting it out instead would end this thread and
+                    // take modality, activation and every later frame with it,
+                    // in a daemon thread nobody joins.
+                    LOG.debug("Ignoring an unrecognised control frame", e);
+                    continue;
+                }
+                if (message == null) {
+                    return;
+                }
                 switch (message.type()) {
                     case MODALITY -> onModalityChanged.modalityChanged(message.flag());
                     case ACTIVATION -> onActivationChanged.activationChanged(message.flag());
+                    case EMBEDDED -> handleEmbeddedFrame();
                     default -> {
-                        // FOCUS_REQUEST is client->host and never arrives here;
-                        // any future host->client type not yet handled is ignored.
+                        // FOCUS_REQUEST is client->host and never arrives here.
+                        // A known-but-unhandled type lands here; an unknown one
+                        // is skipped above, before it can reach a switch.
                     }
                 }
             }
@@ -407,6 +449,49 @@ public final class EmbedClientX11 implements EmbedClient {
         reparentWatcher.watch(windowId, this::handleReparented);
         configureWatcher.watch(windowId, (width, height) -> onResized.resized(width, height));
         focusWatcher.watch(windowId, focused -> onFocusChanged.focusChanged(focused));
+    }
+
+    /**
+     * The host has said, on the control channel, that it embedded this
+     * window — {@link ControlMessage.Type#EMBEDDED}.
+     *
+     * <p>{@link #onEmbedded} explains why the reparent alone cannot answer
+     * this: {@code EMBEDDED_NOTIFY} is unreadable on this class's connection,
+     * so {@link #handleReparented} accepts the first non-root reparent after
+     * {@link #offer}/{@link #announce} and filters the rest — which it must,
+     * since a window manager reparents any released top-level window into its
+     * own decoration frame. The cost of that filter is every later reparent,
+     * a genuine re-embed included. This frame carries the one bit the filter
+     * was standing in for, on a channel that does reach this connection.
+     *
+     * <p>Both orders are handled, because this runs on the reader thread
+     * while the reparent is seen by {@link WindowReparentWatcher}'s: if the
+     * reparent has already landed, its parent is read directly here; if it
+     * has not, the gate is re-armed so the watcher reports it when it does.
+     * A parent already reported is not reported again.
+     */
+    private void handleEmbeddedFrame() {
+        if (windowId < 0) {
+            return;
+        }
+        long parent;
+        try {
+            parent = WindowTree.parentOf(display, windowId);
+        } catch (IllegalStateException e) {
+            // A query against a closed connection throws by design - see
+            // X11Display. Nothing to report if this client is shutting down.
+            return;
+        }
+        if (parent == display.defaultRootWindow().longValue()) {
+            // The reparent is still to come; let the watcher report it.
+            awaitingEmbed = true;
+            return;
+        }
+        if (parent != embedderWindowId) {
+            awaitingEmbed = false;
+            embedderWindowId = parent;
+            onEmbedded.accept(parent);
+        }
     }
 
     private void handleReparented(long newParentId) {

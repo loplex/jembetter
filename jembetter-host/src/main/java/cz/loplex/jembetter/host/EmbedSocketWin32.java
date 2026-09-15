@@ -200,8 +200,9 @@ public final class EmbedSocketWin32 implements EmbedSocket {
                     }
                     throw new UncheckedIOException(e);
                 }
+                long clientPid;
                 try {
-                    core.embed(PidHandshake.receive(accepted));
+                    clientPid = PidHandshake.receive(accepted);
                 } catch (RuntimeException e) {
                     // A failed/aborted handshake must not take the accept
                     // loop down; the socket keeps listening for the next
@@ -212,13 +213,32 @@ public final class EmbedSocketWin32 implements EmbedSocket {
                 }
                 // Kept open, unlike embed(Path)'s one-shot handshake: this is
                 // this client's control channel for the rest of its embed,
-                // e.g. for setModal(boolean) to write into. Closed once this
-                // client detaches, below.
+                // e.g. for setModal(boolean) to write into. Set before
+                // embed(), as on the X11 backend: the embed is what the client
+                // sees, and it reacts to it - so assigning afterwards leaves an
+                // interval in which the client considers itself embedded while
+                // setModal is still taking its "no channel" early return and
+                // dropping the frame. Measured at about one run in seven by
+                // win32-real-machine-checks/SocketClientWin32Check, whose
+                // modality step reported on=false off=true: the MODALITY=true
+                // written on seeing the client embedded was silently dropped,
+                // and the MODALITY=false five seconds later landed. Closed once
+                // this client detaches, below.
                 controlChannel = accepted;
                 controlChannelReaderThread = new Thread(() -> readControlChannel(accepted),
                         "jembetter-win32-embed-socket-control-reader");
                 controlChannelReaderThread.setDaemon(true);
                 controlChannelReaderThread.start();
+                try {
+                    core.embed(clientPid);
+                } catch (RuntimeException e) {
+                    closeQuietly(accepted);
+                    controlChannel = null;
+                    joinControlChannelReader();
+                    LOG.warn("Embedding an accepted client failed; still listening for the next client", e);
+                    continue;
+                }
+                announceEmbedded(accepted);
                 onClientEmbedded.run();
                 awaitDetach();
                 closeQuietly(controlChannel);
@@ -242,12 +262,30 @@ public final class EmbedSocketWin32 implements EmbedSocket {
      * jembetter-client.EmbedClientWin32#requestFocus()}) gives the currently
      * embedded client input focus, the same as {@link #focusClient()}. Any
      * other frame type is ignored — nothing else flows in this direction on
-     * this backend today.
+     * this backend today, and a type this build does not recognise at all is
+     * skipped rather than ending this reader.
      */
     private void readControlChannel(SocketChannel channel) {
         try {
-            ControlMessage message;
-            while ((message = ControlMessage.readFrom(channel)) != null) {
+            while (true) {
+                ControlMessage message;
+                try {
+                    message = ControlMessage.readFrom(channel);
+                } catch (IllegalArgumentException e) {
+                    // The client-to-host direction of the same exposure
+                    // EmbedClientX11's reader records: a client newer than this
+                    // host sends a frame type that is not in this build. The
+                    // fixed two-byte framing means readFrom consumed the whole
+                    // frame before decoding, so skipping it leaves the stream
+                    // where the next frame starts. Letting it out would end this
+                    // reader and lose the client's focus requests for the rest
+                    // of the embed.
+                    LOG.debug("Ignoring an unrecognised control frame from the client", e);
+                    continue;
+                }
+                if (message == null) {
+                    return;
+                }
                 if (message.type() == ControlMessage.Type.FOCUS_REQUEST) {
                     core.requestFocus();
                 }
@@ -257,6 +295,39 @@ public final class EmbedSocketWin32 implements EmbedSocket {
             // this read() as its shutdown signal once the client detaches;
             // anything else means the client's end is simply gone - either
             // way, nothing left to read.
+        }
+    }
+
+    /**
+     * Tells the client on {@code channel} that the reparent it is about to
+     * see, or has just seen, was this host embedding it.
+     *
+     * <p>A client cannot work that out from the reparent alone: a window
+     * manager or desktop shell reparents an ordinary top-level window into a
+     * decoration frame of its own, which from the client's side looks exactly
+     * like a host. Clients therefore accept only the first reparent after
+     * they announce themselves, which costs them every later one — including
+     * a genuine re-embed after {@link #detachClient()}. This frame is the
+     * signal that makes a reparent identifiable rather than guessed, so a
+     * client with a control channel need not rely on that filter.
+     *
+     * <p>Sent after the embed, so it is a statement about something that has
+     * happened rather than a prediction. A client that has already seen and
+     * ignored the reparent reads its own parent when this arrives; one that
+     * has not yet seen it arms itself for the reparent still to come. Sending
+     * before the embed would make the first case impossible to distinguish
+     * from an embed that then failed.
+     *
+     * <p>Best-effort, like {@link #setModal}: the channel needs no live
+     * reader, and a client using the narrow {@code EmbedPlugWin32} facade has
+     * already closed its end.
+     */
+    private void announceEmbedded(SocketChannel channel) {
+        try {
+            ControlMessage.embedded().writeTo(channel);
+        } catch (IOException e) {
+            // Best-effort, no-receiver-required send - same contract as
+            // setModal(boolean); see its Javadoc.
         }
     }
 
