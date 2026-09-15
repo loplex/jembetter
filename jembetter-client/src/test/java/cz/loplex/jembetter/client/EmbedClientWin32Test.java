@@ -365,6 +365,118 @@ class EmbedClientWin32Test {
     }
 
     /**
+     * A client with a control channel is told about a second embed, not only
+     * its first.
+     *
+     * <p>The reparent alone cannot say whether it was an embed — a desktop
+     * shell reparents an ordinary top-level window into a frame of its own —
+     * so {@link EmbedClientWin32#onEmbedded} accepts the first reparent after
+     * the window is watched and filters the rest. That filter also discards a
+     * genuine re-embed after a host releases the client, which a host can do
+     * through {@code EmbedSocketWin32#detachClient()} followed by another
+     * embed. A {@link ControlMessage.Type#EMBEDDED} frame supplies the bit
+     * the filter was standing in for, and this asserts it arrives and is
+     * acted on.
+     *
+     * <p>The second embed is the whole point: the first one would be reported
+     * by the reparent watcher with no frame involved at all. Watch which
+     * assertion fails before concluding the frame is broken.
+     *
+     * <p>Also asserts <strong>exactly two</strong> callbacks, because the
+     * frame and the reparent are seen on different threads and either can win.
+     * Whichever arrives first reports; the other must not report the same
+     * embedder again. A test that only counted "at least two" would pass
+     * while double-reporting every embed.
+     *
+     * <p>Uses {@link Win32TestWindow} rather than the {@link JFrame} the
+     * announce-path tests use, for two reasons: it is the window kind a shell
+     * leaves alone (see {@code watchOwnWindowDetectsBeingEmbeddedAndReleased…}),
+     * and {@link EmbedClientWin32#watchOwnWindow} plus {@link
+     * EmbedClientWin32#connect} is the only combination that watches a
+     * non-AWT window <em>and</em> opens a control channel.
+     */
+    @Test
+    void aSecondEmbedIsReportedWhenTheHostSaysSoOnTheControlChannel() throws Exception {
+        opaqueClientHwnd = Win32TestWindow.create("EmbedClientWin32Test re-embed client");
+        fakeHostHwnd = Win32TestWindow.create("EmbedClientWin32Test fake host (re-embed)");
+
+        socketPath = Files.createTempFile("jembetter-client-win32-reembed-test-", ".sock");
+        Files.delete(socketPath);
+        server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
+        server.bind(UnixDomainSocketAddress.of(socketPath));
+
+        CountDownLatch firstEmbed = new CountDownLatch(1);
+        CountDownLatch detached = new CountDownLatch(1);
+        CountDownLatch secondEmbed = new CountDownLatch(2);
+        AtomicInteger embedCallbacks = new AtomicInteger();
+        AtomicLong lastEmbedder = new AtomicLong(-1);
+
+        // Only the socket frames run on this thread. Every window operation
+        // stays on the test thread, which created both windows: a cross-thread
+        // SetParent sends WM_WINDOWPOSCHANGING to the owning thread and blocks
+        // until it pumps, and this test's own thread is sitting on a latch
+        // rather than pumping. The tests above reparent from the test thread
+        // for the same reason.
+        CountDownLatch pidReceived = new CountDownLatch(1);
+        CountDownLatch sendFirstFrame = new CountDownLatch(1);
+        CountDownLatch sendSecondFrame = new CountDownLatch(1);
+        Thread fakeHost = new Thread(() -> {
+            try (SocketChannel accepted = server.accept()) {
+                PidHandshake.receive(accepted);
+                pidReceived.countDown();
+
+                if (sendFirstFrame.await(5, TimeUnit.SECONDS)) {
+                    ControlMessage.embedded().writeTo(accepted);
+                }
+                if (sendSecondFrame.await(10, TimeUnit.SECONDS)) {
+                    ControlMessage.embedded().writeTo(accepted);
+                }
+                // Hold the channel open past the last assertion; closing it
+                // here would be indistinguishable from the host dying.
+                Thread.sleep(2000);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }, "fake-host-reembed");
+        fakeHost.setDaemon(true);
+        fakeHost.start();
+
+        client = new EmbedClientWin32();
+        client.onEmbedded(id -> {
+            embedCallbacks.incrementAndGet();
+            lastEmbedder.set(id);
+            firstEmbed.countDown();
+            secondEmbed.countDown();
+        });
+        client.onHostDetached(detached::countDown);
+        client.watchOwnWindow(opaqueClientHwnd);
+        client.connect(socketPath);
+        assertTrue(pidReceived.await(5, TimeUnit.SECONDS), "the fake host never received the pid handshake");
+
+        Win32Reparent.reparent(opaqueClientHwnd, fakeHostHwnd, 0, 0);
+        sendFirstFrame.countDown();
+        assertTrue(firstEmbed.await(5, TimeUnit.SECONDS), "onEmbedded was never invoked for the first embed");
+
+        Win32Reparent.release(opaqueClientHwnd, 0, 0);
+        assertTrue(detached.await(5, TimeUnit.SECONDS), "onHostDetached was never invoked after the release");
+
+        Win32Reparent.reparent(opaqueClientHwnd, fakeHostHwnd, 0, 0);
+        sendSecondFrame.countDown();
+        assertTrue(secondEmbed.await(5, TimeUnit.SECONDS),
+                "onEmbedded was not invoked a second time after the host re-embedded the client and said so "
+                        + "on the control channel; the reparent filter discarded it and the EMBEDDED frame "
+                        + "did not override that");
+        assertEquals(fakeHostHwnd, lastEmbedder.get(), "the second embed reported the wrong embedder handle");
+
+        // Nothing else may arrive: the frame and the reparent race, and only
+        // one of them may report each embed.
+        Thread.sleep(500);
+        assertEquals(2, embedCallbacks.get(),
+                "onEmbedded fired more than twice for two embeds - the EMBEDDED frame and the reparent "
+                        + "watcher both reported the same one");
+    }
+
+    /**
      * {@link EmbedClientWin32#onResized} on the {@link
      * EmbedClientWin32#watchOwnWindow} path — how a toolkit-opaque client
      * learns its on-screen size once the host resizes it, with no handshake

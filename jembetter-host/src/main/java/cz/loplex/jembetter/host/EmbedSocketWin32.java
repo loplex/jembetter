@@ -238,6 +238,7 @@ public final class EmbedSocketWin32 implements EmbedSocket {
                     LOG.warn("Embedding an accepted client failed; still listening for the next client", e);
                     continue;
                 }
+                announceEmbedded(accepted);
                 onClientEmbedded.run();
                 awaitDetach();
                 closeQuietly(controlChannel);
@@ -276,6 +277,39 @@ public final class EmbedSocketWin32 implements EmbedSocket {
             // this read() as its shutdown signal once the client detaches;
             // anything else means the client's end is simply gone - either
             // way, nothing left to read.
+        }
+    }
+
+    /**
+     * Tells the client on {@code channel} that the reparent it is about to
+     * see, or has just seen, was this host embedding it.
+     *
+     * <p>A client cannot work that out from the reparent alone: a window
+     * manager or desktop shell reparents an ordinary top-level window into a
+     * decoration frame of its own, which from the client's side looks exactly
+     * like a host. Clients therefore accept only the first reparent after
+     * they announce themselves, which costs them every later one — including
+     * a genuine re-embed after {@link #detachClient()}. This frame is the
+     * signal that makes a reparent identifiable rather than guessed, so a
+     * client with a control channel need not rely on that filter.
+     *
+     * <p>Sent after the embed, so it is a statement about something that has
+     * happened rather than a prediction. A client that has already seen and
+     * ignored the reparent reads its own parent when this arrives; one that
+     * has not yet seen it arms itself for the reparent still to come. Sending
+     * before the embed would make the first case impossible to distinguish
+     * from an embed that then failed.
+     *
+     * <p>Best-effort, like {@link #setModal}: the channel needs no live
+     * reader, and a client using the narrow {@code EmbedPlugWin32} facade has
+     * already closed its end.
+     */
+    private void announceEmbedded(SocketChannel channel) {
+        try {
+            ControlMessage.embedded().writeTo(channel);
+        } catch (IOException e) {
+            // Best-effort, no-receiver-required send - same contract as
+            // setModal(boolean); see its Javadoc.
         }
     }
 

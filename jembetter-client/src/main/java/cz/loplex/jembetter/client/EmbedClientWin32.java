@@ -8,6 +8,7 @@ import cz.loplex.jembetter.common.ipc.ControlMessage;
 import cz.loplex.jembetter.common.ipc.PidHandshake;
 import cz.loplex.jembetter.core.win32.Win32ConfigureWatcher;
 import cz.loplex.jembetter.core.win32.Win32FocusWatcher;
+import cz.loplex.jembetter.core.win32.Win32Reparent;
 import cz.loplex.jembetter.core.win32.Win32ReparentWatcher;
 import cz.loplex.jembetter.core.win32.Win32WindowFinder;
 
@@ -214,6 +215,29 @@ public final class EmbedClientWin32 implements EmbedClient {
      * EmbedClientX11#onEmbedded} applies: a desktop shell reparents an
      * ordinary top-level window into a frame of its own, and without this
      * that would be indistinguishable from a host embedding it.
+     *
+     * <p><strong>How often this fires depends on how the client was set
+     * up.</strong> The filter above is the reason, and there are two ways out
+     * of it:
+     *
+     * <ul>
+     *   <li>{@link #offer(Path)} against a host's {@code
+     *       EmbedSocketWin32#listen} socket opens a control channel, and the
+     *       host sends a {@link ControlMessage.Type#EMBEDDED} frame on it for
+     *       every embed. That frame says which reparent was an embed instead
+     *       of leaving this class to guess, so a client embedded this way is
+     *       told about a re-embed after {@code detachClient()} as well as
+     *       about the first one.</li>
+     *   <li>{@link #announce()} and {@link #watchOwnWindow(long)} open no
+     *       channel, so they have only the reparent to go on and this fires
+     *       <em>once</em>: the first embed after the call. To hear about a
+     *       later one, call {@link #watchOwnWindow(long)} again with the same
+     *       window id — it re-arms the filter, and re-watching a window
+     *       already watched replaces its callbacks rather than adding a
+     *       second set. On this backend that is also the only way back in,
+     *       since an embedded window is a {@code WS_CHILD} and {@link
+     *       #announce()}'s pid lookup no longer finds it.</li>
+     * </ul>
      */
     @Override
     public void onEmbedded(LongConsumer callback) {
@@ -318,6 +342,57 @@ public final class EmbedClientWin32 implements EmbedClient {
         }
     }
 
+    /**
+     * The host has said, on the control channel, that it embedded this
+     * window — {@link ControlMessage.Type#EMBEDDED}.
+     *
+     * <p>This is the only signal on this backend that identifies a reparent
+     * as an embed rather than merely reporting one. {@link
+     * #handleParentChanged} has to guess, and guesses by accepting the first
+     * non-zero parent after {@link #announce}/{@link #watchOwnWindow}; that
+     * filter exists because a desktop shell reparents an ordinary top-level
+     * window into a frame of its own, but it also means every reparent after
+     * the first is discarded, a genuine re-embed included.
+     *
+     * <p>Two orders are possible and both are handled, because the frame is
+     * read on this thread while the reparent is seen by the watcher's:
+     *
+     * <ul>
+     *   <li>The reparent has already landed — read the parent directly and
+     *       report it, whether or not the watcher filtered it.</li>
+     *   <li>The reparent has not landed yet — re-arm the gate so the watcher
+     *       reports it when it does.</li>
+     * </ul>
+     *
+     * <p>Nothing is reported for a parent already known, so a host that sends
+     * this for an embed the watcher had already reported does not produce a
+     * second {@code onEmbedded} for the same embedder.
+     */
+    private void handleEmbeddedFrame() {
+        if (windowId < 0) {
+            return;
+        }
+        long parent = Win32Reparent.parentOf(windowId);
+        if (parent == 0) {
+            // The reparent is still to come; let the watcher report it.
+            awaitingEmbed = true;
+            return;
+        }
+        if (parent != embedderHwnd) {
+            awaitingEmbed = false;
+            embedderHwnd = parent;
+            // Resync the watcher's idea of the parent before reporting.
+            // Win32ReparentWatcher is poll-based, and this frame can arrive
+            // before its next poll - so without this it would still hold the
+            // pre-embed parent, see no transition when the host later
+            // releases the client, and never report the detach. watch() takes
+            // a fresh reading of the current parent, and re-watching a window
+            // already watched replaces its entry rather than adding one.
+            reparentWatcher.watch(windowId, this::handleParentChanged, this::handleWindowDestroyed);
+            onEmbedded.accept(parent);
+        }
+    }
+
     private void handleParentChanged(long newParent) {
         if (newParent == 0) {
             if (embedderHwnd >= 0) {
@@ -412,10 +487,14 @@ public final class EmbedClientWin32 implements EmbedClient {
         try {
             ControlMessage message;
             while ((message = ControlMessage.readFrom(channel)) != null) {
-                if (message.type() == ControlMessage.Type.MODALITY) {
-                    onModalityChanged.modalityChanged(message.flag());
+                switch (message.type()) {
+                    case MODALITY -> onModalityChanged.modalityChanged(message.flag());
+                    case EMBEDDED -> handleEmbeddedFrame();
+                    default -> {
+                        // FOCUS_REQUEST is client->host and never arrives here;
+                        // any future host->client type not yet handled is ignored.
+                    }
                 }
-                // No other frame type flows host->client on this backend today.
             }
         } catch (IOException e) {
             // close() closes the channel to unblock this read() as its

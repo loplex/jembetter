@@ -180,6 +180,16 @@ class EmbedSocketX11Test {
             assertEquals(ControlMessage.Type.ACTIVATION, readFrame(channel).type(),
                     "listen() embed did not open with a WINDOW_ACTIVATE control frame");
 
+            // Then the embed itself is announced, after embed() returns and
+            // before onClientEmbedded runs - the frame that tells a client
+            // which reparent was an embed rather than leaving it to guess
+            // from the reparent alone. Asserted here, in order, because this
+            // test reads the channel positionally: anything added to what
+            // listen() writes has to show up here or the frames after it are
+            // being read as the wrong thing.
+            assertEquals(ControlMessage.Type.EMBEDDED, readFrame(channel).type(),
+                    "listen() did not announce the embed on the control channel");
+
             socket.setModal(true);
             ControlMessage modalOn = readFrame(channel);
             assertEquals(ControlMessage.Type.MODALITY, modalOn.type());
