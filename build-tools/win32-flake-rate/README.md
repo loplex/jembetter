@@ -21,14 +21,26 @@ separates them.
 
 ## Running it
 
-`Win32 flake rate`, manually via `workflow_dispatch`:
+Two routes. The workflow measures both platforms and is the one that can reach
+a verdict; the script by hand measures Wine alone, and is the one nothing
+caps.
 
-| Input         | Meaning                                                        | Default                |
-|---------------|----------------------------------------------------------------|------------------------|
-| `test`        | Surefire `-Dtest` selector; empty runs the whole suite          | `EmbedClientWin32Test` |
-| `iterations`  | Iterations per platform                                         | `10`                   |
-| `platforms`   | `both`, `wine`, or `windows`                                    | `both`                 |
-| `reuse-forks` | `false` runs one JVM per test class                             | `true`                 |
+### From CI, via `workflow_dispatch`
+
+The `Win32 flake rate` workflow:
+
+| Input         | Meaning                                                | Default              |
+|---------------|--------------------------------------------------------|----------------------|
+| `test`        | Surefire `-Dtest` selector; empty runs the whole suite  | *(empty)*            |
+| `iterations`  | Iterations per platform                                 | `10`                 |
+| `platforms`   | `both`, `wine`, or `windows`                            | `both`               |
+| `reuse-forks` | `false` runs one JVM per test class                     | `true`               |
+
+`test` defaults to empty on purpose, so an unsupplied selector measures the
+same thing a push does. It once defaulted to a test class name instead, and a
+dispatch with the field cleared measured that one class while the verdict
+read "Clean on both" — a true statement about one class that reads as a clean
+whole suite.
 
 Samples after the first are cheap — only the first iteration compiles.
 
@@ -38,6 +50,37 @@ that follow, and a failure that disappears under one-JVM-per-class belongs to
 test isolation rather than to the code under test. The real-machine checks in
 [`win32-real-machine-checks`](../win32-real-machine-checks/README.md) run one
 check per process for the same reason.
+
+### Locally, by hand
+
+`probe.sh` is an ordinary script and needs no CI. Run it from the repository
+root — it drives `mvn` and writes per-iteration logs to `logs/` there, a path
+`.gitignore` already carries for this:
+
+```sh
+build-tools/win32-flake-rate/probe.sh "" 40                 # whole suite
+build-tools/win32-flake-rate/probe.sh EmbedClientWin32Test 10
+```
+
+The same tables land on stdout, and `logs/iteration-N.log` keeps each
+iteration's full Maven output. `FORK_TIMEOUT_SECONDS`, `RUN_TIMEOUT_SECONDS`
+and `REUSE_FORKS`, documented at the top of the script, are the knobs the
+workflow sets for itself rather than exposing as dispatch inputs.
+
+Two differences from the dispatch, both worth knowing before choosing this
+route:
+
+- **It measures Wine only.** `probe.ps1` is the real-Windows half and wants a
+  Windows machine. Without both halves there is no cross-platform comparison,
+  so a local run can establish that a test is flaky but cannot on its own
+  justify `@Tag("wine-incompatible")` — see [Reading the
+  result](#reading-the-result) for why that verdict needs the other platform.
+- **Nothing caps it.** Both measuring jobs carry `timeout-minutes: 90`, and a
+  whole-suite Wine run of 40 iterations has been observed to need most of
+  that. Wine costs roughly four times as much per iteration as real Windows
+  does, so the Wine job is the one that runs out of room first. A local run
+  has no ceiling, which makes it the route for an iteration count the job
+  cannot fit.
 
 ## Reading the result
 
