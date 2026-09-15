@@ -148,6 +148,14 @@ mvn versions:set -DnewVersion=0.3.0-SNAPSHOT -DgenerateBackupPoms=false
 git commit -am "Back to snapshot development"
 ```
 
+The same workflow also carries `workflow_dispatch`, and that is how a snapshot
+reaches the registry: there is no tag to hang one off, so it is run by hand
+against whichever ref should be published and deploys the version the poms
+carry at that ref. No `v*` tag exists yet, so everything currently in the
+registry arrived that way. Choose the ref deliberately — what lands in the
+registry names the commit it was built from, and nothing re-resolves that
+afterwards.
+
 Release versions on GitHub Packages are immutable: a given version uploads
 exactly once, and a re-upload is rejected with HTTP 409. A botched release has
 to be superseded by a new version, not replaced. `-SNAPSHOT` versions are
