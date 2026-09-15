@@ -65,18 +65,29 @@ for i in $(seq 1 "$ITERATIONS"); do
     names=$(grep -oE '\[ERROR\][[:space:]]+([A-Za-z0-9_]+Test\.[A-Za-z0-9_]+)' "$log" \
             | sed -E 's/.*[[:space:]]//' | sort -u || true)
 
+    # Either cap ending an iteration counts as one hang, and an iteration that
+    # hits both counts once. The count has to mean the same thing as the one
+    # probe.ps1 produces, because the verdict job compares the two platforms and
+    # a number that counts different endings on each is not comparable. Keep
+    # this rule and probe.ps1's in step.
+    hung_this_iter=0
+
     # A capped fork reports "There was a timeout in the fork" and names no
     # test, so without this a hung iteration would show a failing exit code
     # beside an empty failure list - precisely the blank the cap exists to
     # capture.
     if grep -q "There was a timeout in the fork" "$log"; then
         names=$(printf '%s\n<fork timeout>' "$names")
+        hung_this_iter=1
     fi
     # The outer cap fired: Maven was killed before reporting anything. Under
     # Wine this is the usual way a hung iteration ends, not an exceptional one.
     if [ "$code" -eq 124 ]; then
-        hung=$((hung + 1))
         names=$(printf '%s\n<killed at %ss>' "$names" "$RUN_TIMEOUT")
+        hung_this_iter=1
+    fi
+    if [ "$hung_this_iter" -eq 1 ]; then
+        hung=$((hung + 1))
     fi
     # A crashed fork names no test either, and unlike a fork timeout it says
     # so in Maven's own words rather than Surefire's.

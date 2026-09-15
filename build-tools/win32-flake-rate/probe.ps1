@@ -96,19 +96,28 @@ for ($i = 1; $i -le $Iterations; $i++) {
                ForEach-Object { $_.Matches[0].Groups[1].Value } |
                Sort-Object -Unique
 
+    # Either cap ending an iteration counts as one hang, and an iteration that
+    # hits both counts once - it used to count twice here, which could put the
+    # tally above the iteration count. The count has to mean the same thing as
+    # the one probe.sh produces, because the verdict job compares the two
+    # platforms and a number that counts different endings on each is not
+    # comparable. Keep this rule and probe.sh's in step.
+    $hungThisIter = $false
+
     # A capped fork reports "There was a timeout in the fork" and names no
     # test, so without this a hung iteration would show a failing exit code
     # beside an empty failure list - precisely the blank the cap exists to
     # capture.
     if (Select-String -Path $log -Pattern 'There was a timeout in the fork' -Quiet) {
         $names = @($names) + '<fork timeout>' | Where-Object { $_ }
-        $hung++
+        $hungThisIter = $true
     }
     # The outer cap fired: Maven was killed before reporting anything.
     if ($killed) {
         $names = @($names) + "<killed at ${runTimeout}s>" | Where-Object { $_ }
-        $hung++
+        $hungThisIter = $true
     }
+    if ($hungThisIter) { $hung++ }
     # A crashed fork names no test either, and unlike a fork timeout it says
     # so in Maven's own words rather than Surefire's.
     if (Select-String -Path $log -Pattern 'The forked VM terminated without properly saying goodbye' -Quiet) {

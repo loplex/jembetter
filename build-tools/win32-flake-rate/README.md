@@ -114,6 +114,33 @@ The verdict job then compares the platforms:
 - **Nothing was measured** — one of the probes ran no tests, so none of the
   above applies. Fix the selector and run it again.
 
+Either of the first two splits further on whether the failures were hangs. A
+wedged fork is not a behavioural difference, so a Wine-only run of hangs does
+not justify a tag, and a real-Windows run of hangs points at
+`RUN_TIMEOUT_SECONDS`, the wrapper and the runner's load rather than at the
+test. The verdict says which case it is; [Hangs](#hangs) is what to read next.
+
+### The two probes must agree on what they count
+
+`probe.sh` and `probe.ps1` are separate implementations of one measurement, and
+the verdict compares their numbers directly. A number that counts different
+things on each platform is not comparable, so the four each writes to
+`$GITHUB_OUTPUT` have to mean the same thing on both:
+
+| output | what it counts |
+|---|---|
+| `iterations` | iterations requested, not iterations completed |
+| `failed` | iterations whose Maven exit code was non-zero |
+| `hung` | iterations ended by *either* cap, counted once even if both fired |
+| `tests` | test methods run, summed over Surefire's per-class lines |
+
+`hung` is a breakdown of `failed`, not a category beside it: a hung iteration
+always exits non-zero, so it is counted in both. It was briefly not comparable
+— the PowerShell probe counted the inner and outer caps separately, so an
+iteration that hit both counted twice and the tally could exceed `iterations`.
+Both probes now set a per-iteration flag instead. Keep the two rules in step
+when either changes.
+
 ## Hangs
 
 A hung fork must cost one iteration, not the measurement. Both halves therefore
