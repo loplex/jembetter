@@ -46,6 +46,17 @@ interface does not carry. The full list of what stays backend-specific is in
   watch on an already-embedded window, which is a `WS_CHILD` and so no longer
   enumerable as a top-level window.
 
+### Changed
+
+- `EmbedSocketX11.resize`, `setBounds`, `listen`, `embed` and `embedOpaque`
+  now throw `IllegalStateException` when the socket has been closed. They
+  used to fall through the "open() must be called first" guard — a closed
+  socket keeps its window id — and, with native calls skipped against a
+  closed connection, did nothing at all and reported nothing. The
+  `ComponentListener` `open(Canvas)` attaches is unaffected: a resize
+  notification queued before the socket closed is dropped, not thrown on
+  AWT's event thread.
+
 ### Fixed
 
 - A JVM crash (`SIGSEGV` inside Xlib) when an X11 display connection was
@@ -64,6 +75,28 @@ interface does not carry. The full list of what stays backend-specific is in
   one indivisible step. Commands (moving a window, setting focus) are
   skipped once the connection is gone; queries, which have no honest value
   to fall back on, throw `IllegalStateException` instead.
+- Closing an X11 `EmbedSocket`, or an `X11Display` itself, twice is now a
+  no-op rather than a second teardown of the same resources. A socket opened
+  on a `Canvas` can be closed by its own `HierarchyListener` and by its
+  caller at the same moment.
+- An X11 or Win32 `EmbedSocket` opened on a `Canvas` now takes its own AWT
+  listeners back off that canvas when it is closed. They used to stay
+  attached for the canvas's whole life, firing resize and displayability
+  callbacks into a socket that was already torn down, and keeping that
+  socket reachable so it could never be collected.
+- Closing an `EmbedSocket` from a different thread than the one that opened
+  it no longer risks leaving its background watcher, its server channel or
+  its accept thread running. Those fields were not safely published, so the
+  closing thread could read them as still-unset — reachable in practice
+  because a `Canvas`-attached socket is closed by AWT's own event thread.
+- Two threads calling `listen()` on the same `EmbedSocket` at the same time
+  could both get past its "already listening" check and bind two server
+  channels to one path; a close landing in the middle of a `listen()` could
+  miss the channel and thread it was about to create. Both transitions now
+  happen under one lock. A `listen()` whose `bind` fails no longer leaves the
+  opened channel behind either, and a `close()` whose server channel refuses
+  to close now finishes the rest of the teardown instead of throwing out of
+  it.
 
 ### Published artifacts
 

@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
+import java.nio.channels.Channel;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
@@ -75,12 +76,29 @@ public final class EmbedSocketWin32 implements EmbedSocket {
 
     private final Win32EmbedCore core;
     private volatile boolean listening = false;
-    private ServerSocketChannel server;
-    private Thread acceptThread;
+    // volatile for the same reason every other mutable field here is:
+    // listen() runs on the caller's thread and close() need not, and a close
+    // that reads a stale null leaves the server channel and the accept
+    // thread running.
+    private volatile ServerSocketChannel server;
+    private volatile Thread acceptThread;
     private volatile Runnable onClientEmbedded = () -> {
     };
     private volatile SocketChannel controlChannel;
     private volatile Thread controlChannelReaderThread;
+    /**
+     * Guards the {@link #listen}-to-teardown transition of {@code
+     * listening}, {@code server} and {@code acceptThread} so it happens as
+     * one step: two callers cannot both get past the "already listening"
+     * check, and a close cannot land in the middle of a listen and miss the
+     * channel or the thread it was about to create.
+     *
+     * <p>Deliberately never held across {@link Thread#join} or across a
+     * callback: the accept loop runs caller-supplied code, which is free to
+     * call {@code close()} back, and a teardown that joined that thread
+     * while holding this lock would stall until the join timed out.
+     */
+    private final Object lifecycleLock = new Object();
 
     public EmbedSocketWin32(Canvas hostCanvas) {
         this.core = new Win32EmbedCore(hostCanvas);
@@ -120,20 +138,27 @@ public final class EmbedSocketWin32 implements EmbedSocket {
      */
     @Override
     public void listen(Path socketPath) {
-        if (listening) {
-            throw new IllegalStateException("Already listening");
+        synchronized (lifecycleLock) {
+            if (listening) {
+                throw new IllegalStateException("Already listening");
+            }
+            try {
+                Files.deleteIfExists(socketPath);
+                server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
+                server.bind(UnixDomainSocketAddress.of(socketPath));
+            } catch (IOException e) {
+                // A channel that was opened but never bound is this method's
+                // to clean up; leaving it behind would hold the file
+                // descriptor for nothing and let a retry fail differently.
+                closeQuietly(server);
+                server = null;
+                throw new UncheckedIOException(e);
+            }
+            listening = true;
+            acceptThread = new Thread(() -> acceptLoop(socketPath), "jembetter-win32-embed-socket-accept-loop");
+            acceptThread.setDaemon(true);
+            acceptThread.start();
         }
-        try {
-            Files.deleteIfExists(socketPath);
-            server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
-            server.bind(UnixDomainSocketAddress.of(socketPath));
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-        listening = true;
-        acceptThread = new Thread(() -> acceptLoop(socketPath), "jembetter-win32-embed-socket-accept-loop");
-        acceptThread.setDaemon(true);
-        acceptThread.start();
     }
 
     private void acceptLoop(Path socketPath) {
@@ -223,7 +248,10 @@ public final class EmbedSocketWin32 implements EmbedSocket {
         }
     }
 
-    private static void closeQuietly(SocketChannel channel) {
+    private static void closeQuietly(Channel channel) {
+        if (channel == null) {
+            return;
+        }
         try {
             channel.close();
         } catch (IOException e) {
@@ -318,21 +346,20 @@ public final class EmbedSocketWin32 implements EmbedSocket {
     }
 
     private void stopListening() {
-        listening = false;
-        if (server != null) {
-            try {
-                server.close();
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
+        // Best-effort throughout: close() calls this before core.close(), so
+        // a throw here would leave the click-to-focus hook installed, which
+        // is worse than losing the reason the channel would not close.
+        Thread accept;
+        synchronized (lifecycleLock) {
+            listening = false;
+            closeQuietly(server);
+            accept = acceptThread;
         }
-        SocketChannel channel = controlChannel;
-        if (channel != null) {
-            closeQuietly(channel);
-        }
-        if (acceptThread != null) {
+        closeQuietly(controlChannel);
+        if (accept != null) {
             try {
-                acceptThread.join(1000);
+                // Outside lifecycleLock on purpose - see its Javadoc.
+                accept.join(1000);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }

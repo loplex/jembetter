@@ -24,7 +24,9 @@ import java.awt.Canvas;
 import java.awt.Frame;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.ComponentListener;
 import java.awt.event.HierarchyEvent;
+import java.awt.event.HierarchyListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.event.WindowFocusListener;
@@ -32,12 +34,14 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
+import java.nio.channels.Channel;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntFunction;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -74,14 +78,19 @@ public final class EmbedSocketX11 implements EmbedSocket {
     private final X11Display display = X11Display.open(null);
     private final WindowDeathWatcher deathWatcher = new WindowDeathWatcher();
     private final WindowConfigureWatcher configureWatcher = new WindowConfigureWatcher();
-    private XEmbedInboundWatcher inbound;
-    private long windowId = -1;
+    // volatile, like every other mutable field here: open()/listen() run on
+    // whatever thread the caller uses, while close() can arrive from the AWT
+    // event thread via the HierarchyListener open(Canvas) attaches. Without
+    // it that close can read a stale null and leave the watcher, the server
+    // channel and the accept thread running.
+    private volatile XEmbedInboundWatcher inbound;
+    private volatile long windowId = -1;
     private volatile int width = -1;
     private volatile int height = -1;
     private volatile long embeddedWindowId = -1;
     private volatile boolean listening = false;
-    private ServerSocketChannel server;
-    private Thread acceptThread;
+    private volatile ServerSocketChannel server;
+    private volatile Thread acceptThread;
     /**
      * The current {@link #listen}-embedded client's control channel — the
      * same {@link SocketChannel} the accept loop took the pid handshake on,
@@ -105,7 +114,31 @@ public final class EmbedSocketX11 implements EmbedSocket {
     };
     private volatile String expectedClientWmClass;
     private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
-    private volatile boolean closed = false;
+    private volatile Canvas hostCanvas;
+    private volatile ComponentListener hostCanvasResizeListener;
+    private volatile HierarchyListener hostCanvasDisplayabilityListener;
+    /**
+     * Atomic rather than a {@code volatile boolean}: the {@link
+     * java.awt.event.HierarchyListener} attached by {@link #open(Canvas)}
+     * closes this socket from the AWT event thread, and a caller can close
+     * it from its own at the same moment. A read-then-set would let both
+     * past the guard and tear the socket down twice.
+     */
+    private final AtomicBoolean closed = new AtomicBoolean(false);
+    /**
+     * Guards the {@link #listen}-to-teardown transition of {@code
+     * listening}, {@code server} and {@code acceptThread} so it happens as
+     * one step: two callers cannot both get past the "already listening"
+     * check, and a close cannot land in the middle of a listen and miss the
+     * channel or the thread it was about to create.
+     *
+     * <p>Deliberately never held across {@link Thread#join} or across a
+     * callback: the accept loop runs caller-supplied code, which is free to
+     * call {@code close()} back, and a teardown that joined that thread
+     * while holding this lock would stall until the join timed out.
+     */
+    private final Object lifecycleLock = new Object();
+
 
     private final WindowFocusListener ownerFocusListener = new WindowAdapter() {
         @Override
@@ -190,18 +223,25 @@ public final class EmbedSocketX11 implements EmbedSocket {
         long canvasWindowId = CanvasNativeHandle.extract(hostCanvas);
         windowId = RawWindow.createChild(display, canvasWindowId, hostCanvas.getWidth(), hostCanvas.getHeight());
         initInboundWatcher(hostCanvas.getWidth(), hostCanvas.getHeight());
-        hostCanvas.addComponentListener(new ComponentAdapter() {
+        // Both listeners are kept in fields so close() can take them off
+        // again: a listener left on a canvas that outlives this socket goes
+        // on firing into a torn-down socket, and holds the socket reachable
+        // for as long as the canvas lives.
+        this.hostCanvas = hostCanvas;
+        this.hostCanvasResizeListener = new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent event) {
-                resize(hostCanvas.getWidth(), hostCanvas.getHeight());
+                resizeFromHostCanvas(hostCanvas.getWidth(), hostCanvas.getHeight());
             }
-        });
-        hostCanvas.addHierarchyListener(event -> {
+        };
+        hostCanvas.addComponentListener(hostCanvasResizeListener);
+        this.hostCanvasDisplayabilityListener = event -> {
             if ((event.getChangeFlags() & HierarchyEvent.DISPLAYABILITY_CHANGED) != 0
                     && !hostCanvas.isDisplayable()) {
                 close();
             }
-        });
+        };
+        hostCanvas.addHierarchyListener(hostCanvasDisplayabilityListener);
     }
 
     private void initInboundWatcher(int width, int height) {
@@ -229,6 +269,27 @@ public final class EmbedSocketX11 implements EmbedSocket {
      */
     public void resize(int width, int height) {
         requireOpen();
+        applyResize(width, height);
+    }
+
+    /**
+     * The host canvas's own way into {@link #resize}. A resize
+     * <em>notification</em> that arrives after {@link #close()} is not a
+     * caller error the way a direct {@code resize()} call is — AWT can still
+     * have one queued from before {@code close()} took the listener off — so
+     * this drops it instead of throwing on the event thread.
+     */
+    private void resizeFromHostCanvas(int width, int height) {
+        if (closed.get()) {
+            return;
+        }
+        // Losing this check to a concurrent close() is harmless: the native
+        // calls below are skipped against a closed connection anyway. Only a
+        // caller's own resize() has to fail.
+        applyResize(width, height);
+    }
+
+    private void applyResize(int width, int height) {
         WindowGeometry.moveResize(display, windowId, 0, 0, width, height);
         applySize(width, height);
     }
@@ -303,20 +364,27 @@ public final class EmbedSocketX11 implements EmbedSocket {
     @Override
     public void listen(Path socketPath) {
         requireOpen();
-        if (listening) {
-            throw new IllegalStateException("Already listening");
+        synchronized (lifecycleLock) {
+            if (listening) {
+                throw new IllegalStateException("Already listening");
+            }
+            try {
+                Files.deleteIfExists(socketPath);
+                server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
+                server.bind(UnixDomainSocketAddress.of(socketPath));
+            } catch (IOException e) {
+                // A channel that was opened but never bound is this method's
+                // to clean up; leaving it behind would hold the file
+                // descriptor for nothing and let a retry fail differently.
+                closeQuietly(server);
+                server = null;
+                throw new UncheckedIOException(e);
+            }
+            listening = true;
+            acceptThread = new Thread(() -> acceptLoop(socketPath), "xembed-socket-accept-loop");
+            acceptThread.setDaemon(true);
+            acceptThread.start();
         }
-        try {
-            Files.deleteIfExists(socketPath);
-            server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
-            server.bind(UnixDomainSocketAddress.of(socketPath));
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-        listening = true;
-        acceptThread = new Thread(() -> acceptLoop(socketPath), "xembed-socket-accept-loop");
-        acceptThread.setDaemon(true);
-        acceptThread.start();
     }
 
     private void acceptLoop(Path socketPath) {
@@ -791,7 +859,19 @@ public final class EmbedSocketX11 implements EmbedSocket {
         throw new IllegalStateException(timeoutMessage);
     }
 
+    /**
+     * Rejects a call that cannot do what its caller is asking for: this
+     * socket was never opened, or it has been closed. The closed case used
+     * to fall through — {@code windowId} keeps its value past {@link
+     * #close()}, so the check below never caught it, and with native calls
+     * now skipped against a closed connection the call would simply do
+     * nothing and say nothing. Asking a closed socket to move or embed is a
+     * programming error, so it says so.
+     */
     private void requireOpen() {
+        if (closed.get()) {
+            throw new IllegalStateException("This socket is closed");
+        }
         if (windowId < 0) {
             throw new IllegalStateException("open() must be called first");
         }
@@ -819,7 +899,7 @@ public final class EmbedSocketX11 implements EmbedSocket {
         }
     }
 
-    private static void closeQuietly(SocketChannel channel) {
+    private static void closeQuietly(Channel channel) {
         if (channel == null) {
             return;
         }
@@ -847,10 +927,9 @@ public final class EmbedSocketX11 implements EmbedSocket {
     }
 
     private void closeImpl(boolean destroyClient) {
-        if (closed) {
+        if (!closed.compareAndSet(false, true)) {
             return;
         }
-        closed = true;
         // owner.dispose() posts window (de)activation events onto the AWT
         // EventQueue asynchronously, and in a reuseForks Surefire run that
         // queue's thread outlives any one test method - a stale listener
@@ -858,22 +937,34 @@ public final class EmbedSocketX11 implements EmbedSocket {
         // freed native Display*, crashing the JVM instead of throwing.
         // Removing it here, before anything else, closes that window.
         owner.removeWindowFocusListener(ownerFocusListener);
-        listening = false;
-        if (server != null) {
-            try {
-                server.close();
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
+        // Same reasoning for the canvas listeners, with one addition: the
+        // HierarchyListener is very likely what called this. Removing a
+        // listener from inside its own dispatch is fine - AWT iterates a
+        // snapshot - and stops a later displayability change from calling
+        // back into a socket that is already gone.
+        Canvas canvas = hostCanvas;
+        if (canvas != null) {
+            canvas.removeComponentListener(hostCanvasResizeListener);
+            canvas.removeHierarchyListener(hostCanvasDisplayabilityListener);
+        }
+        // Best-effort, like every other step here: a close() that threw
+        // part-way would leave the display, the watchers and the socket
+        // window behind, which is worse than losing the reason the channel
+        // would not close.
+        Thread accept;
+        synchronized (lifecycleLock) {
+            listening = false;
+            closeQuietly(server);
+            accept = acceptThread;
         }
         // Unblocks the accept loop's awaitDetach() path and covers the case
-        // where the acceptThread.join() below times out before the loop
-        // closes this itself.
+        // where the join below times out before the loop closes this itself.
         closeQuietly(controlChannel);
         controlChannel = null;
-        if (acceptThread != null) {
+        if (accept != null) {
             try {
-                acceptThread.join(1000);
+                // Outside lifecycleLock on purpose - see its Javadoc.
+                accept.join(1000);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }

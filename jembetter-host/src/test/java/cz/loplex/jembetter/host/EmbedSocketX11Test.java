@@ -34,13 +34,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -545,6 +548,130 @@ class EmbedSocketX11Test {
             clientProcess.destroy();
             clientProcess.waitFor(5, TimeUnit.SECONDS);
         }
+    }
+
+    /**
+     * A closed socket rejects the calls that cannot mean anything any more,
+     * rather than absorbing them. This became reachable when native calls
+     * started being skipped against a closed connection: {@code windowId}
+     * survives {@code close()}, so the old "open() must be called first"
+     * guard never fired, and a {@code resize()} on a closed socket did
+     * nothing at all and reported nothing.
+     */
+    @Test
+    void aClosedSocketRejectsCallsInsteadOfSilentlyDoingNothing() {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketX11Test owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+
+        socket = new EmbedSocketX11(owner);
+        socket.open(canvas);
+        socket.close();
+
+        assertThrows(IllegalStateException.class, () -> socket.resize(120, 120),
+                "resize() on a closed socket silently did nothing");
+        assertThrows(IllegalStateException.class, () -> socket.setBounds(0, 0, 120, 120),
+                "setBounds() on a closed socket silently did nothing");
+        assertThrows(IllegalStateException.class, () -> socket.listen(Path.of("never-touched.sock")),
+                "listen() on a closed socket silently did nothing");
+    }
+
+    /**
+     * {@code listen()} guards itself with "already listening", which used to
+     * be a read of one flag followed by a write of it — two callers could
+     * both get through and bind two server channels to the same path.
+     *
+     * <p>A stress test, not a strict repro: it cannot force the interleaving,
+     * only assert the invariant survives a crowd. What it does pin down is
+     * that exactly one caller wins, whatever the scheduling.
+     */
+    @Test
+    void onlyOneOfSeveralConcurrentListenCallersStartsListening() throws Exception {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketX11Test owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+
+        socket = new EmbedSocketX11(owner);
+        socket.open(canvas);
+
+        Path socketPath = Files.createTempDirectory("jembetter-listen-race").resolve("socket");
+        int callers = 8;
+        CountDownLatch start = new CountDownLatch(1);
+        CountDownLatch done = new CountDownLatch(callers);
+        AtomicInteger started = new AtomicInteger();
+        List<Throwable> unexpected = new CopyOnWriteArrayList<>();
+        for (int i = 0; i < callers; i++) {
+            Thread caller = new Thread(() -> {
+                try {
+                    start.await();
+                    socket.listen(socketPath);
+                    started.incrementAndGet();
+                } catch (IllegalStateException e) {
+                    // "Already listening" - expected for every caller but one.
+                } catch (Throwable e) {
+                    unexpected.add(e);
+                } finally {
+                    done.countDown();
+                }
+            }, "listen-race-caller-" + i);
+            caller.setDaemon(true);
+            caller.start();
+        }
+        start.countDown();
+
+        assertTrue(done.await(10, TimeUnit.SECONDS), "the listen() callers never finished");
+        assertTrue(unexpected.isEmpty(), "a listen() caller failed with something other than IllegalStateException: "
+                + unexpected);
+        assertEquals(1, started.get(),
+                "more than one caller started listening on the same socket path");
+    }
+
+    /**
+     * The other half of {@link
+     * #disposingTheHostFrameWithoutClosingAutoClosesTheSocket}: the
+     * listeners that wiring installs have to come back off again. One left
+     * behind goes on calling into a socket that is already closed — the same
+     * shape as the owner {@link Frame}'s focus listener, whose callbacks
+     * used to reach a freed X11 display and crash the JVM — and holds the
+     * closed socket reachable for as long as the canvas does.
+     */
+    @Test
+    void closingTakesTheSocketsOwnListenersBackOff() {
+        Canvas canvas = new Canvas();
+        canvas.setPreferredSize(new Dimension(100, 100));
+        owner = new Frame("EmbedSocketX11Test owner");
+        owner.add(canvas);
+        owner.pack();
+        owner.setVisible(true);
+
+        int componentListeners = canvas.getComponentListeners().length;
+        int hierarchyListeners = canvas.getHierarchyListeners().length;
+        int focusListeners = owner.getWindowFocusListeners().length;
+
+        socket = new EmbedSocketX11(owner);
+        socket.open(canvas);
+
+        assertEquals(componentListeners + 1, canvas.getComponentListeners().length,
+                "test setup: open(Canvas) should have added its resize listener");
+        assertEquals(hierarchyListeners + 1, canvas.getHierarchyListeners().length,
+                "test setup: open(Canvas) should have added its displayability listener");
+        assertEquals(focusListeners + 1, owner.getWindowFocusListeners().length,
+                "test setup: the constructor should have added the owner focus listener");
+
+        socket.close();
+
+        assertEquals(componentListeners, canvas.getComponentListeners().length,
+                "close() left its resize listener on the host canvas");
+        assertEquals(hierarchyListeners, canvas.getHierarchyListeners().length,
+                "close() left its displayability listener on the host canvas");
+        assertEquals(focusListeners, owner.getWindowFocusListeners().length,
+                "close() left its focus listener on the owner frame");
     }
 
     /**

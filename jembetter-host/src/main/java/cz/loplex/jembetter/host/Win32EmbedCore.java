@@ -12,6 +12,7 @@ import cz.loplex.jembetter.core.win32.Win32WindowGeometry;
 import java.awt.Canvas;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.ComponentListener;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.StandardProtocolFamily;
@@ -45,6 +46,7 @@ final class Win32EmbedCore {
     private final Canvas hostCanvas;
     private final long hostCanvasHwnd;
     private final Win32ClickWatcher clickWatcher = new Win32ClickWatcher();
+    private final ComponentListener hostCanvasResizeListener;
     private volatile long embeddedHwnd = -1;
     private volatile Duration windowLookupTimeout = Duration.ofSeconds(5);
     private volatile Runnable onDetached = () -> {
@@ -53,7 +55,11 @@ final class Win32EmbedCore {
     Win32EmbedCore(Canvas hostCanvas) {
         this.hostCanvas = hostCanvas;
         this.hostCanvasHwnd = CanvasNativeHandle.extract(hostCanvas);
-        hostCanvas.addComponentListener(new ComponentAdapter() {
+        // Kept in a field so close() can take it off again: a listener left
+        // on a canvas that outlives this core goes on resizing an HWND this
+        // instance no longer manages, and holds the instance reachable for
+        // as long as the canvas lives.
+        this.hostCanvasResizeListener = new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent event) {
                 long id = embeddedHwnd;
@@ -61,7 +67,8 @@ final class Win32EmbedCore {
                     Win32WindowGeometry.moveResize(id, 0, 0, hostCanvas.getWidth(), hostCanvas.getHeight());
                 }
             }
-        });
+        };
+        hostCanvas.addComponentListener(hostCanvasResizeListener);
     }
 
     void embed(long clientPid) {
@@ -139,6 +146,7 @@ final class Win32EmbedCore {
         // window), so its lifecycle belongs to the caller's own AWT tree -
         // nothing to release there. The click-to-focus hook is this
         // instance's own resource, though, and must be unhooked.
+        hostCanvas.removeComponentListener(hostCanvasResizeListener);
         clickWatcher.close();
     }
 
@@ -152,6 +160,7 @@ final class Win32EmbedCore {
      * uses.
      */
     void tryDestroy() {
+        hostCanvas.removeComponentListener(hostCanvasResizeListener);
         clickWatcher.close();
         long id = embeddedHwnd;
         if (id >= 0) {
